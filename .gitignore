@@ -1,0 +1,24 @@
+﻿# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime data: jobs, logs, build leftovers, SolidWorks lock files
+storage/
+logs/
+*.log
+*.sqlite*
+build/
+~$*
+
+# Other people's code (AGPL): fetch it yourself, see third_party/README.md
+third_party/*
+!third_party/README.md
+solidpilot/

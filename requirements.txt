@@ -1,0 +1,13 @@
+# Pinned runtime dependencies (Python 3.14, Windows; first pinned on 3.12). Install into a virtual environment:  python -m pip install -r requirements.txt
+# The first three are also what the SolidWorks MCP adapter in third_party/ needs; it runs in the same environment.
+mcp==2.3.0
+httpx==0.28.1
+python-dotenv==1.2.4
+ezdxf==1.4.4
+pydantic==2.14.0
+numpy==2.5.4
+matplotlib==3.11.2
+google-genai==2.29.0
+pywin32==312
+langgraph==1.2.14
+langgraph-checkpoint-sqlite==3.1.2

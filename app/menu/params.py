@@ -1,0 +1,296 @@
+"""The parameters of every menu feature, as the LIST ITEM writes them (pydantic: validation + JSON schema + the text the reader sees).
+
+Words and frames are the drawing reader's, so a human can compare each number with the drawing:
+- the part is read in the FRONT view: x to the right, y up, thickness measured from the BACK face toward the viewer (the FRONT datum);
+- a position is a feature's CENTRE: {"x": 15, "x_from": "left_edge", "y": 15, "y_from": "bottom_edge"} (`centre` = the centre of the BASE outline);
+- outlines (polygon points, segments, regions) are written in the BASE frame: the origin is the lower-left corner of the base outline;
+- `face` is "front" (the face you see) or "back" (the opposite face) of the BASE plate.
+Numbers are in the list's unit (mm or inch), exactly as printed; nothing is converted here.
+"""
+from __future__ import annotations
+
+from typing import Annotated, Literal, Union
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .patterns import Pattern, seeds_problem
+from .position import Pos
+from .tangent_chain import TangentChain
+
+
+class Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+Face = Literal["front", "back", "top", "bottom", "left", "right"]
+
+
+EDGE_ZONE_DOC = ("written by a HUMAN, never by a model: accept that this hole / cut / ring cut, placed on a SIDE of a boss, reaches past the straight part of that side into "
+                 "the rounded or stepped zone, so it cuts less material than its full size. Without it such an item is refused (needs_human). With it the volume is only checked "
+                 "as an upper bound")
+
+ON_DOC = ("a flat face made by an EARLIER item, written `<item id>.<role>`, instead of `face`: `F3.top` = the FREE END of a boss (whichever way it looks), `F6.up` / `.down` / `.left` / "
+          "`.right` / `.front` / `.back` = the flat side of an extruded boss that looks that way in the front view (several the same way: `right1`, `right2`, lowest position first), "
+          "`F5.end` = the open end of a 90-degree bend. Positions on it are written from that face's own centre (or the FULL OUTER edges of the outline), as seen LOOKING AT THE FACE "
+          "FROM OUTSIDE: u to the right, v up. Do not compute offsets: `offset` must stay 0")
+
+
+def face_or_on_problem(face: object, on: object, base_without_face: bool = False) -> str | None:
+    """None when exactly one of `face` / `on` is given (an extrude_profile_boss may give neither: it is then the base)."""
+    if face is not None and on is not None:
+        return "give `face` OR `on`, not both"
+    if face is None and on is None and not base_without_face:
+        return "give `face` (a face of the base) or `on` (a face an earlier item made)"
+    return None
+
+
+PATTERN_DOC = ("optional pattern (front / back faces, or a face placed with `on`; on the other faces of the base list every position). linear / grid / mirror repeat the seed position(s); circular needs NO seed position: it gives every "
+               "position from `centre`, `pitch_diameter` (the printed bolt circle), `count` and `start_angle_deg`. Use it whenever the drawing says 4X, "
+               "'equally spaced' or gives a bolt circle; write explicit positions only for irregular layouts")
+
+
+# ------------------------------------------------------------------ outlines
+class LineSeg(Strict):
+    kind: Literal["line"]
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
+class ArcSeg(Strict):
+    kind: Literal["arc"]
+    cx: float
+    cy: float
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    dir: Literal[1, -1] = Field(description="1 = counter-clockwise from (x1, y1) to (x2, y2), -1 = clockwise")
+
+
+Segment = Annotated[Union[LineSeg, ArcSeg], Field(discriminator="kind")]
+
+
+class Rectangle(Strict):
+    shape: Literal["rectangle"]
+    width: float = Field(gt=0, description="along x")
+    height: float = Field(gt=0, description="along y")
+    corner_radius: float = Field(0, ge=0, description="all four corners; 0 = sharp")
+    position: Pos | None = Field(None, description="the rectangle's centre; omit for the base outline itself (centred)")
+
+
+class Polygon(Strict):
+    shape: Literal["polygon"]
+    points: list[Annotated[list[float], Field(min_length=2, max_length=2)]] = Field(min_length=3, description="corner points in order, [x, y]")
+    corner_radius: Union[float, list[float | None]] = Field(0, description="one radius for every corner, or one entry per point (null/0 = sharp)")
+    frame: Literal["base_lower_left", "centre"] = Field("base_lower_left", description="the origin of the points")
+
+
+class Segments(Strict):
+    shape: Literal["segments"]
+    segments: list[Segment] = Field(min_length=3, description="a closed outline, in order, sharing end points exactly")
+    frame: Literal["base_lower_left", "centre"] = "base_lower_left"
+
+
+class Ring(Strict):
+    shape: Literal["ring"]
+    outer_diameter: float = Field(gt=0, description="outer diameter, as printed")
+    inner_diameter: float = Field(gt=0, description="inner diameter (the bore of a tube, the inside of a groove): must be SMALLER than the outer diameter")
+    position: Pos | None = Field(None, description="the centre of the ring, placed like any position; omit for the centre of the base outline / of the face it is placed on")
+
+    @model_validator(mode="after")
+    def _smaller(self):
+        if self.inner_diameter >= self.outer_diameter:
+            raise ValueError(f"the inner diameter of a ring ({self.inner_diameter:g}) must be smaller than its outer diameter ({self.outer_diameter:g})")
+        return self
+
+
+Profile = Annotated[Union[Rectangle, Polygon, Segments, TangentChain, Ring], Field(discriminator="shape")]
+
+
+# ------------------------------------------------------------------ features
+class ExtrudeProfileBossParams(Strict):
+    profile: Profile
+    depth: float = Field(gt=0, description="thickness (the base) or height of the boss")
+    face: Face | None = Field(None, description="omit (and omit `on`) for the BASE (sketched on the back face, grows toward the viewer); a face name = a boss that grows outward "
+                                                "from that face of the base")
+    on: str | None = Field(None, description=ON_DOC)
+    offset: float = Field(0, ge=0, description="start the feature on a plane this far BEYOND the base face, outward (e.g. the flat top of a boss standing 35 high: face front, "
+                                              "offset 35). 0 = the base face itself. There must be a flat face at that height. Positions are still measured from the BASE outline")
+
+    @model_validator(mode="after")
+    def _where(self):
+        problem = face_or_on_problem(self.face, self.on, base_without_face=True)
+        if problem:
+            raise ValueError(problem)
+        return self
+
+
+class CutShapeParams(Strict):
+    kind: Literal["circle", "slot", "rectangle"]
+    position: Pos | None = Field(None, description="the shape's centre (the seed when a pattern repeats it); omit only with a circular pattern")
+    diameter: float | None = Field(None, gt=0, description="circle")
+    centre_distance: float | None = Field(None, gt=0, description="slot: distance between the two end-arc centres")
+    width: float | None = Field(None, gt=0, description="slot: width; rectangle: along x")
+    height: float | None = Field(None, gt=0, description="rectangle: along y")
+    angle_deg: float = Field(0, description="slot only")
+    pattern: Pattern | None = Field(None, description=PATTERN_DOC)
+
+    @model_validator(mode="after")
+    def _seed(self):
+        problem = seeds_problem(self.pattern, 0 if self.position is None else 1)
+        if problem:
+            raise ValueError(problem)
+        return self
+
+
+class CutParams(Strict):
+    shapes: list[CutShapeParams] = Field(min_length=1)
+    face: Face | None = Field(None, description="a face of the base; or give `on` instead")
+    on: str | None = Field(None, description=ON_DOC)
+    offset: float = Field(0, ge=0, description="start the feature on a plane this far BEYOND the base face, outward (e.g. the flat top of a boss standing 35 high: face front, "
+                                              "offset 35). 0 = the base face itself. There must be a flat face at that height. Positions are still measured from the BASE outline")
+    depth: Union[float, Literal["through"]] = Field(description="a number (blind) or 'through'")
+    material_length: float | None = Field(None, gt=0, description="the thickness the cut crosses. REQUIRED for 'through'; a blind cut defaults to its depth")
+    edge_zone_ok: bool = Field(False, description=EDGE_ZONE_DOC)
+
+    @model_validator(mode="after")
+    def _where(self):
+        problem = face_or_on_problem(self.face, self.on)
+        if problem:
+            raise ValueError(problem)
+        return self
+
+
+class HoleParams(Strict):
+    positions: list[Pos] = Field([], description="every hole of this spec; with a pattern: the seed position(s); with a circular pattern: leave empty")
+    pattern: Pattern | None = Field(None, description=PATTERN_DOC)
+    diameter: float = Field(gt=0, description="nominal diameter (a threaded hole: the nominal size, e.g. 6 for M6)")
+    face: Face | None = Field(None, description="a face of the base; or give `on` instead")
+    on: str | None = Field(None, description=ON_DOC)
+    offset: float = Field(0, ge=0, description="start the feature on a plane this far BEYOND the base face, outward (e.g. the flat top of a boss standing 35 high: face front, "
+                                              "offset 35). 0 = the base face itself. There must be a flat face at that height. Positions are still measured from the BASE outline")
+    depth: Union[float, Literal["through"]] = Field(description="a number (blind, flat bottom) or 'through'")
+    material_length: float | None = Field(None, gt=0, description="the thickness the hole crosses. REQUIRED for 'through'")
+    style: Literal["plain", "counterbore", "countersink"] = "plain"
+    counterbore_diameter: float | None = Field(None, gt=0)
+    counterbore_depth: float | None = Field(None, gt=0)
+    countersink_diameter: float | None = Field(None, gt=0, description="diameter at the surface")
+    countersink_angle_deg: float = Field(90, description="included angle: only 90 is built")
+    thread_note: str | None = Field(None, description="e.g. 'M6'. Informational: no thread is modelled")
+    floor_open: bool = Field(False, description="written by a HUMAN at approval, never by a model: a BLIND hole whose bottom is expected to open into empty space or an existing "
+                                                "hollow (no solid floor). The check then asserts there is no floor face. A counterbore step is not affected")
+    edge_zone_ok: bool = Field(False, description=EDGE_ZONE_DOC)
+
+    @model_validator(mode="after")
+    def _seeds(self):
+        problem = seeds_problem(self.pattern, len(self.positions)) or face_or_on_problem(self.face, self.on)
+        if problem:
+            raise ValueError(problem)
+        if self.floor_open and self.depth == "through":
+            raise ValueError("floor_open applies to a blind hole (a number depth) only")
+        return self
+
+
+class CircleParams(Strict):
+    diameter: float = Field(gt=0)
+    position: Pos | None = Field(None, description="the circle's centre (the seed when a pattern repeats it); omit only with a circular pattern")
+    pattern: Pattern | None = Field(None, description=PATTERN_DOC)
+
+    @model_validator(mode="after")
+    def _seed(self):
+        problem = seeds_problem(self.pattern, 0 if self.position is None else 1)
+        if problem:
+            raise ValueError(problem)
+        return self
+
+
+class CircleBossParams(Strict):
+    circles: list[CircleParams] = Field(min_length=1)
+    height: float = Field(gt=0, description="how far the bosses stick out")
+    face: Face | None = Field(None, description="a face of the base; or give `on` instead")
+    on: str | None = Field(None, description=ON_DOC)
+    offset: float = Field(0, ge=0, description="start the feature on a plane this far BEYOND the base face, outward (e.g. the flat top of a boss standing 35 high: face front, "
+                                              "offset 35). 0 = the base face itself. There must be a flat face at that height. Positions are still measured from the BASE outline")
+
+    @model_validator(mode="after")
+    def _where(self):
+        problem = face_or_on_problem(self.face, self.on)
+        if problem:
+            raise ValueError(problem)
+        return self
+
+
+class ProfileCutParams(Strict):
+    profile: Profile
+    face: Face | None = Field(None, description="a face of the base; or give `on` instead")
+    on: str | None = Field(None, description=ON_DOC)
+    offset: float = Field(0, ge=0, description="start the feature on a plane this far BEYOND the base face, outward (e.g. the flat top of a boss standing 35 high: face front, "
+                                              "offset 35). 0 = the base face itself. There must be a flat face at that height. Positions are still measured from the BASE outline")
+    depth: Union[float, Literal["through"]]
+    material_length: float | None = Field(None, gt=0, description="REQUIRED for 'through'; a blind cut defaults to its depth. A RING outline is always cut blind: give its depth as a number")
+    edge_zone_ok: bool = Field(False, description=EDGE_ZONE_DOC)
+
+    @model_validator(mode="after")
+    def _where(self):
+        problem = face_or_on_problem(self.face, self.on)
+        if problem:
+            raise ValueError(problem)
+        if isinstance(self.profile, Ring) and self.depth == "through":
+            raise ValueError("a ring cut needs an explicit blind depth (a number), not 'through'")
+        return self
+
+
+class CircleSection(Strict):
+    shape: Literal["circle"]
+    diameter: float = Field(gt=0, description="outer diameter of the round section")
+    bore_diameter: float | None = Field(None, gt=0, description="diameter of the bore of a hollow section (a pipe wall); omit for a solid round section")
+    position: Pos = Field(description="the centre of the circle, placed like any position")
+
+
+Section = Annotated[Union[CircleSection, Rectangle, Polygon, Segments, TangentChain], Field(discriminator="shape")]
+
+
+class AxisX(Strict):
+    x: float
+    x_from: Literal["centre", "left_edge", "right_edge"] = Field("centre", description="what x is measured from (centre = centre of the base outline)")
+
+
+class RevolveOnFaceParams(Strict):
+    section: Section = Field(description="the section drawn ON the face: a circle (with an optional bore) or any closed outline, placed like other outlines")
+    axis: AxisX = Field(description="the VERTICAL axis the section is revolved about, in the plane of the face, seen in the plate view. The section must lie clear of it, on one side")
+    face: Literal["front", "back"] = Field(description="the face of the base the section is drawn on; the revolved solid grows away from the plate")
+    offset: float = Field(0, ge=0, description="start on a plane this far BEYOND the base face, outward (e.g. the flat top of a boss). 0 = the base face itself")
+    angle_deg: float = Field(description="the sweep in degrees: 45, 90, 135 or 180 only")
+
+
+class RevolveBaseParams(Strict):
+    profile: Profile = Field(description="the HALF-SECTION of the turned part as in a lathe drawing: x = u along the axis, y = r the radius (>= 0) measured from the axis, "
+                                         "frame base_lower_left, a closed outline. Steps, cones, grooves, fillets and a bore are all part of this outline")
+    axis: Literal["horizontal", "vertical"] = Field(description="the axis of the part as drawn in the plate view (u runs along it)")
+
+
+class RibParams(Strict):
+    axis: Pos = Field(description="the axis of the round boss the rib leans on, as a position on the plate")
+    boss_diameter: float = Field(gt=0, description="outer diameter of that boss")
+    boss_height: float = Field(gt=0, description="height of that boss above the front face")
+    thickness: float = Field(gt=0, description="rib thickness (measured along y, across the rib)")
+    foot_distance: float = Field(gt=0, description="distance from the boss axis (along x) to the foot of the rib on the plate face")
+    height_at_boss: float = Field(gt=0, description="height above the plate face where the sloped edge meets the boss wall")
+    sides: Literal["left", "right", "both"] = Field("both", description="which side(s) of the boss along x")
+    foot_fillet: float | None = Field(None, gt=0, description="fillet radius at the foot of the rib where it meets the plate (e.g. a printed 'R5 (TYP)' at the rib feet); omit if sharp")
+
+
+class EdgeParams(Strict):
+    kind: Literal["fillet", "chamfer"]
+    size: float = Field(gt=0, description="fillet radius, or the chamfer setback (45 degrees, equal on both faces)")
+    face: Face = Field(description="the edges that lie in the plane of this face of the base")
+    offset: float = Field(0, ge=0, description="select the edges of the flat face on a plane this far BEYOND the base face, outward (e.g. the flat top of a boss standing 35 high: face front, "
+                                              "offset 35). 0 = the base face itself. There must be a flat face at that height. Positions are still measured from the BASE outline")
+    region: list[float] | None = Field(None, min_length=4, max_length=4, description="[x_min, x_max, y_min, y_max] in the base frame; only edges inside it")
+    kinds: list[Literal["line", "arc", "circle"]] = Field(["line", "arc", "circle"], min_length=1)
+    radius: float | None = Field(None, gt=0, description="only arcs / circles of this radius")
+    length: float | None = Field(None, gt=0, description="only lines of this length")
+    tol: float = Field(0.01, gt=0, description="tolerance of radius / length / region")
+    expect_count: int | None = Field(None, ge=1, description="the number of edges this must select; a different count stops the build")
