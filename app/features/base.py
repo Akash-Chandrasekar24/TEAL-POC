@@ -92,6 +92,11 @@ class PlaneFrame:
         a, b = self.in_plane_axes
         return w[a], w[b]
 
+    def sketch_frame(self, height: float = 0.0):
+        """The measured datum basis as a general rigid frame, in the caller's unit."""
+        from .frames import SketchFrame
+        return SketchFrame(self.to_world(0, 0, height), self.to_world(1, 0, 0), self.to_world(0, 1, 0))
+
 
 # ------------------------------------------------------------------ profiles (drawing unit -> graph metres)
 def profile_to_graph(profile: list[dict], unit: str, origin: str = "centre",

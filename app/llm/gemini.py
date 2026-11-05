@@ -1,17 +1,15 @@
 """Gemini implementation of LLMClient (google-genai SDK). Model and key come from .env."""
 from __future__ import annotations
 
-import json
 import os
 import time
-from datetime import datetime
 from typing import Sequence
 
 from google import genai
 from google.genai import types
 
 from app import config
-from .base import FilePart, LLMError, LLMResponse, Part, parse_json_text
+from .base import LLMError, LLMResponse, Part, log_call, parse_json_text
 
 _LEVELS = {"low": "LOW", "medium": "MEDIUM", "high": "HIGH"}  # "minimal" is rejected by gemini-3.8-flash
 
@@ -27,13 +25,13 @@ class GeminiClient:
         if level not in _LEVELS:
             raise LLMError(f"GEMINI_THINKING_LEVEL must be low, medium or high (got {level!r})")
         self._level = _LEVELS[level]
+        self.provider = "gemini"
+        self.cache_settings = {"thinking": self._level}          # part of the cache key: a different thinking level is a different answer
         timeout_ms = int((timeout_seconds or config.LLM_TIMEOUT_SECONDS) * 1000)
         self._client = genai.Client(
             api_key=key,
             http_options=types.HttpOptions(timeout=timeout_ms),
         )
-        self._log_path = config.LOG_DIR / "llm_calls.jsonl"
-        self._log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def generate_json(self, system: str, parts: Sequence[Part]) -> LLMResponse:
         contents = [
@@ -66,10 +64,4 @@ class GeminiClient:
         return LLMResponse(text=text, data=parse_json_text(text), model=self.model, seconds=seconds, usage=usage)
 
     def _log(self, entry: dict) -> None:
-        entry = {"ts": datetime.now().isoformat(timespec="milliseconds"), "model": self.model,
-                 "thinking": self._level, **entry}
-        try:
-            with open(self._log_path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry) + "\n")
-        except OSError:
-            pass
+        log_call({"provider": "gemini", "model": self.model, "thinking": self._level, **entry})

@@ -47,4 +47,7 @@ async def _build(approved: dict, job_dir: Path) -> dict:
 
 def solidworks_build(approved: dict, job_dir: Path) -> dict:
     """(approved list, job dir) -> {"report", "finish"} as plain dicts (what the orchestrator stores)."""
-    return asyncio.run(_build(approved, Path(job_dir)))
+    from .execution import cad_execution
+    from .guards import list_hash
+    with cad_execution(Path(job_dir), "part", list_hash(approved)):
+        return asyncio.run(_build(approved, Path(job_dir)))

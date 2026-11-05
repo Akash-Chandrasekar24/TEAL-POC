@@ -230,10 +230,26 @@ def base_info(params: Any, unit: str) -> tuple[tuple[float, float], tuple[float,
     return (x1 - x0, y1 - y0), shift, params.depth
 
 
+def _all_inside(pts: list[tuple[float, float]], size: tuple[float, float], what: str, where: str, unit: str) -> None:
+    """Every position (centred frame, drawing unit) must lie on the face it is printed on: a centre outside it builds nothing (found offline,
+    before SolidWorks is touched). Side faces are checked by their own corner-zone guard."""
+    half_w, half_h = size[0] / 2 + 1e-6, size[1] / 2 + 1e-6
+    outside = [(round(x, 3), round(y, 3)) for x, y in pts if abs(x) > half_w or abs(y) > half_h]
+    if outside:
+        raise FeatureRequestError(f"{what}: {len(outside)} position(s) lie outside {where}, e.g. {outside[0]} (from its centre, {unit}): "
+                                  f"check the numbers and which edge they are measured from")
+
+
 def _positions(seeds: list[P.Pos], pattern: Any, ctx: BuildContext, w: Where, what: str) -> list[Position]:
     """The feature positions for explicit seed positions plus an optional pattern. No pattern: the proven path (`w.pos`). With a pattern (front / back faces
     only): the pattern is expanded in the datum's centred frame and the feature gets plain centre-based positions; each must lie inside the base's bounding box."""
-    if pattern is None:
+    if pattern is None:                                     # the proven path, with the same "inside the face" check a pattern gets
+        if isinstance(w.view, AnchorView) and w.view.anchor.extent is not None:
+            _all_inside([w.view.to_local(_position(q)) for q in seeds], w.view.anchor.extent, what, f"the face {w.view.anchor.name}", ctx.unit)
+        elif w.view is None and ctx.outline_wh is not None:
+            f = factor(ctx.unit)
+            _all_inside([tuple(v / f for v in _position(q).to_sketch_m(ctx.unit, ctx.outline_wh)) for q in seeds], ctx.outline_wh, what,
+                        "the base outline", ctx.unit)
         return [w.pos(q) for q in seeds]
     if isinstance(w.view, AnchorView):                      # a pattern on an anchor face: expanded in the face's own (u, v), as seen from outside
         view = w.view

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "url": "https://github.com/eyfel/mcp-server-solidworks.git",
+  "revision": "506ef87a5c3b772e177b412367e7361a3937e79a",
+  "directory": "mcp-server-solidworks-main",
+  "license": "AGPL-3.0-only",
+  "files": {
+    "LICENSE": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
+    "adapters/claude/server.py": "4dfe23f29a5913cd2f368ee2b9115b1e63c33f2b793a7e0115a1bca8a0baba64",
+    "adapters/claude/config.py": "1a9b0aec7abac3f0ac39a4a385c88a06b9d9438acb29f62190581fb9b1c07f74",
+    "adapters/claude/execution_client.py": "c76117f5a28aea4b5f7114b884a790a5d2fa2c722c35ca8a7921248881096151",
+    "cad-planner/contracts/feature-graph.schema.json": "4a8bbad77ba3eb90ced433988d51fc18fd59b8ac7f0a4d7d1699120691f65284",
+    "compiler/solidworks/pycompiler/ir_schema.py": "bb37c4e1276256b201325d882ef21ae52e87ada04d5f10f36f0b29e8dd91fcd5",
+    "execution/solidworks/SolidworksExecution/SolidworksExecution.csproj": "5148d1c23477d7b7e61d4091ecbb59c59c44ebc39da6dbda787b051f281c9e72"
+  }
+}

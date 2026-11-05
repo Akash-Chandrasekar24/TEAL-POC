@@ -53,7 +53,7 @@ _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.S)
 
 
 def parse_json_text(text: str) -> Any:
-    """json.loads that also tolerates a ```json fence around the reply."""
+    """json.loads that also tolerates a ```json fence or a sentence around the reply (models without a JSON mode, e.g. Domo, add them)."""
     body = text.strip()
     m = _FENCE.match(body)
     if m:
@@ -61,4 +61,22 @@ def parse_json_text(text: str) -> Any:
     try:
         return json.loads(body)
     except json.JSONDecodeError as ex:
+        for start in (i for i, c in enumerate(body) if c in "{["):       # the first JSON object / array that parses
+            try:
+                return json.JSONDecoder().raw_decode(body, start)[0]
+            except json.JSONDecodeError:
+                continue
         raise LLMJsonError(f"reply is not valid JSON: {ex}", text) from ex
+
+
+def log_call(entry: dict) -> None:
+    """One line per model call in build/logs/llm_calls.jsonl (never the key or token)."""
+    from datetime import datetime
+    from app import config
+    path = config.LOG_DIR / "llm_calls.jsonl"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": datetime.now().isoformat(timespec="milliseconds"), **entry}) + "\n")
+    except OSError:
+        pass

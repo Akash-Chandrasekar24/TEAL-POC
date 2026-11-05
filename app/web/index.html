@@ -1,0 +1,1060 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drawing Studio · SolidWorks</title>
+<link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+<div id="studio-root"></div>
+<div id="legacy-workspace">
+<header>
+  <h1>Drawing Studio</h1>
+  <span class="sub">Drawing to SolidWorks&nbsp; · &nbsp;Extract&nbsp; · &nbsp;Review&nbsp; · &nbsp;Build&nbsp; · &nbsp;Verify</span>
+</header>
+
+<div class="layout">
+  <aside class="side" aria-label="Upload and model selection">
+    <section class="card pad" id="upload-panel">
+      <h2>Upload drawing</h2>
+      <div id="drop" class="drop" tabindex="0" role="button" aria-label="Add drawing files">
+        <strong>Add your drawing</strong><br>Drop files here or click to browse<br><span class="hint">PDF, PNG, JPG, WebP &middot; Up to 6 files</span>
+      </div>
+      <input id="pick" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.avif,image/*,application/pdf" hidden>
+      <ul id="files" class="files"></ul>
+      <input id="doRead" type="checkbox" checked hidden>
+      <label class="row" for="llm"><span style="min-width:48px">Model</span> <select id="llm"></select></label>
+      <label class="row" for="extraction-strategy"><span>Extraction</span> <select id="extraction-strategy"><option value="legacy">Existing reviewed workflow</option><option value="r1">R1 · OCR + joint visual assessment (evaluation)</option><option value="r2">R2 · OCR + separate visual verification (evaluation)</option></select></label>
+      <button id="run" class="btn" disabled>Extract features and measurements</button>
+      <p class="hint">Upload views of one design together. Review its readings before SolidWorks starts.</p>
+      <div id="status" class="hint" aria-live="polite"></div>
+    </section>
+    <section id="summary" class="card pad" hidden>
+      <h2>Result</h2>
+      <div class="stats" id="stats"></div>
+      <p class="hint" id="link"></p>
+    </section>
+  </aside>
+
+  <main id="main">
+    <div class="card empty" id="placeholder">Upload your drawing and select a model to begin.<br>
+      <span class="hint">You’ll review the extracted features and measurements, answer any questions, and compare the finished 3D model with your drawing before exporting.</span></div>
+  </main>
+  <aside class="card agent-chat" id="agent-chat" aria-label="Agent chat">
+    <div class="chat-heading"><span class="chat-agent-dot" aria-hidden="true"></span><div><h2>Your drawing assistant</h2><p class="hint">Measurements, sections and clarity.</p></div><span class="chat-scope-badge">Drawing only</span></div>
+    <div id="chat-body"></div>
+  </aside>
+</div>
+</div>
+
+<script src="/viewer.js"></script>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const state = { files: [], result: null, filter: "all", maxFiles: 6 };
+const KIND = (t) => ["plan", "front", "side"].includes(t) ? "ortho" : t;
+
+function el(tag, attrs = {}, ...kids) {
+  const e = tag === "svg" || attrs.svg ? document.createElementNS("http://www.w3.org/2000/svg", tag) : document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "svg" || v === undefined || v === null || v === false) continue;
+    if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid !== null && kid !== undefined) e.append(kid);
+  return e;
+}
+const svgEl = (tag, attrs) => el(tag, { ...attrs, svg: true });
+
+async function loadConfig() {
+  const cfg = await (await fetch("/api/config")).json();
+  state.maxFiles = cfg.max_files;
+  const sel = $("#llm");
+  for (const name of ["domo", "gemini"]) {
+    const ok = cfg.providers[name];
+    sel.append(el("option", { value: name, disabled: !ok, text: `${name[0].toUpperCase() + name.slice(1)} · ${cfg.models?.[name] || name}${ok ? "" : " (unavailable)"}` }));
+  }
+  const first = cfg.providers[cfg.default] ? cfg.default : ["domo", "gemini"].find((n) => cfg.providers[n]);
+  if (first) sel.value = first; else { $("#doRead").checked = false; $("#status").textContent = "No model key in .env: only the view boxes can be shown."; }
+}
+
+function renderFiles() {
+  const ul = $("#files");
+  ul.replaceChildren(...state.files.map((f, i) => el("li", {}, el("span", { text: `${f.name} · ${(f.size / 1024).toFixed(0)} KB`, title: f.name }),
+    el("button", { class: "x", "aria-label": `Remove ${f.name}`, text: "×", onclick: () => { state.files.splice(i, 1); renderFiles(); } }))));
+  $("#run").disabled = !state.files.length;
+}
+
+function addFiles(list) {
+  for (const f of list) if (state.files.length < state.maxFiles) state.files.push(f);
+  if (list.length + state.files.length > state.maxFiles) $("#status").textContent = `At most ${state.maxFiles} files per set.`;
+  renderFiles();
+}
+
+const toBase64 = (file) => new Promise((ok, fail) => {
+  const r = new FileReader();
+  r.onload = () => ok(String(r.result).split(",", 2)[1]);
+  r.onerror = () => fail(r.error);
+  r.readAsDataURL(file);
+});
+
+async function readExtractionResponse(response) {
+  if (!response.headers?.get("Content-Type")?.includes("application/x-ndjson")) return response.json();
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let buffer = "", result = null;
+  const pages = new Map();
+  const consume = (line) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.event === "error") { const error = new Error(event.error); error.runId = event.id; throw error; }
+    if (event.event === "result") { result = event.result; return; }
+    if (event.event === "page") pages.set(event.page.no, event.page);
+    if (event.event === "page" || event.event === "started") {
+      window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:true,title:"Reading your drawing set",
+        message:`${pages.size} of ${event.total} pages ready. Independent pages are processed concurrently.`,
+        pages:[...pages.values()].sort((a,b) => a.no-b.no)}}));
+    }
+  };
+  try {
+    for (;;) {
+      const {done,value} = await reader.read();
+      buffer += decoder.decode(value, {stream:!done});
+      let split;
+      while ((split = buffer.indexOf("\n")) >= 0) { consume(buffer.slice(0,split)); buffer = buffer.slice(split+1); }
+      if (done) break;
+    }
+    consume(buffer);
+    if (!result) throw new Error("The connection ended before extraction finished. Reopen the run or retry the upload.");
+    return result;
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+
+async function run() {
+  const btn = $("#run");
+  btn.disabled = true;
+  window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:true,title:"Reading your drawing",message:"Locating views and extracting measurements…"}}));
+  const t0 = Date.now();
+  const tick = setInterval(() => { $("#status").replaceChildren(el("span", { class: "spinner" }), ` Working… ${Math.round((Date.now() - t0) / 1000)} s`); }, 500);
+  try {
+    const files = await Promise.all(state.files.map(async (f) => ({ name: f.name, data: await toBase64(f) })));
+    const res = await fetch("/api/read", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files, read: true, workflow: true, progressive:true, stream:true, strategy:$("#extraction-strategy")?.value || "legacy", llm: $("#llm").value || null }) });
+    const data = await readExtractionResponse(res);
+    if (!res.ok) {
+      const err = new Error(data.error || res.statusText);
+      err.runId = data.id;
+      throw err;
+    }
+    location.hash = data.id;
+    show(data);
+    $("#status").textContent = "";
+  } catch (e) {
+    $("#status").replaceChildren(el("div", { class: "msg err" }, `Failed: ${e.message}`,
+      e.runId ? el("div", {}, el("a", { href: `#${e.runId}`, text: "Open the process log of this run" })) : null));
+  } finally {
+    clearInterval(tick);
+    btn.disabled = !state.files.length;
+    window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:false}}));
+  }
+}
+
+function statusOf(d) { return !d.views.length ? "unplaced" : d.single_source ? "check" : "ok"; }
+
+function show(r) {
+  state.result = r;
+  // React moves this host between pages; remove it before creating its successor.
+  const previousJob = $("#workflow-job");
+  if (previousJob) { disposeViewers(previousJob); previousJob.remove(); }
+  $("#build-plan")?.remove();
+  const reads = r.pages.map((p) => p.read).filter(Boolean);
+  const dims = reads.flatMap((x) => x.dims);
+  const boxes = r.pages.reduce((n, p) => n + p.boxes.length, 0);
+  const stat = (v, k) => el("div", { class: "stat" }, el("div", { class: "v", text: v }), el("div", { class: "k", text: k }));
+  $("#stats").replaceChildren(
+    stat(r.pages.length, "pages"), stat(boxes, "view boxes"),
+    stat(reads.length ? dims.length : "–", "dimensions"), stat(reads.length ? dims.filter((d) => statusOf(d) !== "ok").length : "–", "to check"),
+    stat(r.calls, "model calls"), stat(r.tokens ? `${((r.tokens.prompt + r.tokens.output) / 1000).toFixed(1)}k` : "–", "tokens"),
+    stat(`${r.seconds} s`, "time"), stat(r.llm || "none", "model"));
+  $("#link").replaceChildren("Reopen: ", el("a", { href: `#${r.id}`, text: `#${r.id}` }),
+    r.tokens && r.tokens.cached_calls ? ` · ${r.tokens.cached_calls} call(s) answered from the cache` : "");
+  $("#summary").hidden = false;
+  const main = $("#main");
+  main.dataset.resultId = r.id;
+  const conversation = el("div", {id:"review-conversation-slot"}, $("#agent-chat"));
+  const side = el("div", {class:"review-side"}, reads.length && r.drawing_model ? designCard(r) : dimsCard(r), conversation);
+  const comparison = el("div", {class:"extraction-comparison"}, drawingReviewCard(r), side);
+  main.replaceChildren(comparison, el("div", {id:"extraction-progress", class:"hint", "aria-live":"polite"}), el("div", {id:"workflow-job"}, workflowCard(r)));
+  renderAgentChat(r);
+  updateExtractionProgress(r);
+  pollExtraction(r);
+  window.dispatchEvent(new CustomEvent("studio:result", {detail:{result_id:r.id, phase:r.workflowJob?.phase, job:r.workflowJob}}));
+  if (!r.workflowLoaded) {
+    r.workflowLoaded = true;
+    fetch(`/api/workflow/result/${r.id}`).then((res) => res.ok ? res.json() : null).then((job) => {
+      if (job && state.result === r && !r.workflowJob) {
+        r.workflowJob = job;
+        replaceWorkflow(r);
+        renderAgentChat(r);
+        window.dispatchEvent(new CustomEvent("studio:result", {detail:{result_id:r.id,job}}));
+        pollJob(r);
+      }
+    }).catch(() => {});
+  }
+}
+
+function updateExtractionProgress(r) {
+  const host = $("#extraction-progress");
+  if (!host) return;
+  host.replaceChildren();
+  if (r.extraction_status === "processing") host.append(el("span", {class:"spinner"}), " Measurements are ready to review. Feature and component identification is continuing in the background.");
+  else if (r.extraction_status === "needs_attention") host.textContent = r.feature_extraction_error || "The extraction agent needs clarification. Review its questions in the conversation.";
+  else if (r.extraction_status === "complete") host.textContent = r.reviewDirty ? "Feature results are ready. Save your current measurement edits to refresh the remaining review sections." : "Feature and component extraction complete.";
+}
+
+function pollExtraction(r) {
+  if (r.extractionTimer || r.extraction_status !== "processing") return;
+  r.extractionTimer = setTimeout(async () => {
+    r.extractionTimer = null;
+    if (state.result !== r) return;
+    try {
+      const response = await fetch(`/api/result/${r.id}`);
+      if (!response.ok) throw new Error("Extraction status unavailable");
+      const latest = await response.json();
+      for (const key of ["extraction_status", "extracted_features", "feature_extraction_error", "extraction_seconds"]) if (key in latest) r[key] = latest[key];
+      if (!r.assembly && latest.assembly) r.assembly = latest.assembly;
+      if (r.extraction_status !== "processing" && !r.reviewDirty) { show(r); return; }
+      if (r.extraction_status !== "processing") r.extractionRefreshPending = true;
+      updateExtractionProgress(r);
+    } catch (_) { /* Keep the review usable and retry status without replaying extraction. */ }
+    pollExtraction(r);
+  }, 2500);
+}
+
+function workflowSteps(r) {
+  const phase = r.workflowJob?.phase;
+  const current = phase === "exported" || phase === "accepted" ? 4 : r.workflowJob?.preview ? 3 : ["building","repairing","awaiting_fix_approval","resuming"].includes(phase) ? 2 : 1;
+  return el("nav", {class:"card pad", "aria-label":"Drawing workflow"}, el("ol", {class:"steps"},
+    ["1 Upload", "2 Review extraction", "3 SolidWorks", "4 Verify 2D / 3D", "5 Export"].map((text,i) => el("li", {text, "aria-current":i === current ? "step" : null}))));
+}
+
+function agentQuestions(r) {
+  if (!r) return [];
+  const questions = [], seen = new Set();
+  const add = (worker, target, text) => {
+    if (!text || seen.has(text)) return;
+    seen.add(text); questions.push({worker,target,text});
+  };
+  const resolved = new Set((r.drawing_model?.resolutions.clarifications || []).map((c) => c.id));
+  for (const page of r.pages) (page.read?.issues || []).forEach((text,i) => {
+    const target=`P${page.no}.u${i+1}`;
+    if (!resolved.has(target)) add("Extraction agent",target,text);
+  });
+  for (const text of r.drawing_model?.issues || []) {
+    const id=(text.match(/^P\d+\.[dh]\d+/) || [])[0];
+    if (!text.includes("human review required.") && !text.includes("single-source or ambiguous")) add("Extraction review",id || "note",text);
+  }
+  for (const page of r.design?.plan?.interpretations || r.extracted_features || []) for (const text of page.questions || []) add("Extraction agent","note",text);
+  for (const text of r.design?.plan?.questions || []) add("SolidWorks agent","note",text);
+  for (const text of r.workflowJob?.questions || []) add("SolidWorks agent","note",text);
+  for (const text of r.assembly?.blockers || []) add("Assembly review","note",text);
+  return questions;
+}
+
+function agentChatBody(r) {
+  const blank=() => ({mode:"ask",target:"note",text:"",context:"",measurement:"",view:""});
+  const draft=r ? (r.chatDraft ||= blank()) : blank();
+  draft.mode ||= "ask";
+  const messages=el("div",{class:"chat-messages",id:"chat-messages",role:"log","aria-label":"Agent conversation"});
+  const message=(speaker,text,user=false) => el("div",{class:`chat-message${user ? " user" : ""}`},el("b",{text:speaker}),el("p",{text}));
+  if(!r) messages.append(message("Drawing assistant","Upload a drawing to ask about measurements, sections, symbols and confidence."));
+  else {
+    const questions=agentQuestions(r);
+    messages.append(message("Extraction agent",questions.length ? "I have questions about this drawing. Ask me about a reading, or use Correct a reading to resolve one." : "Ask me about any extracted reading, its confidence, a section or a feature in this drawing."));
+    const questionBubble=(question) => {
+      const bubble=message(question.worker,question.text);
+      const reply=el("button",{type:"button",text:"Answer question"});
+      reply.addEventListener("click",() => {draft.mode="correct";draft.target=question.target;draft.context=question.target==="note" ? question.text : "";renderAgentChat(r);$("#chat-reply")?.focus();});
+      bubble.append(reply);return bubble;
+    };
+    messages.append(...questions.slice(0,2).map(questionBubble));
+    if(questions.length>2) messages.append(el("details",{class:"chat-open-questions"},el("summary",{text:`${questions.length-2} more open questions`}),questions.slice(2).map(questionBubble)));
+    for(const entry of r.chatHistory || []) {
+      messages.append(message("You",entry.reply,true));
+      const bubble=message(entry.kind==="question" ? "Drawing assistant" : "Review saved",entry.acknowledgement);
+      if(entry.kind==="question" && entry.model_hash && entry.model_hash!==r.review_hash) bubble.append(el("small",{class:"chat-stale",text:"Answer refers to an earlier saved review."}));
+      if(entry.citations?.length) bubble.append(el("div",{class:"chat-citations"},entry.citations.map(id=>el("span",{text:id}))));
+      messages.append(bubble);
+    }
+  }
+  const modes=el("div",{class:"chat-modes",role:"group","aria-label":"Conversation mode"});
+  for(const [key,label] of [["ask","Ask assistant"],["correct","Correct a reading"]]) {
+    const tab=el("button",{type:"button","aria-pressed":String(draft.mode===key),text:label});
+    tab.addEventListener("click",() => {draft.mode=key;draft.text="";draft.context="";renderAgentChat(r);});
+    modes.append(tab);
+  }
+  const target=el("select",{id:"chat-target","aria-label":"Reply to"},el("option",{value:"note",text:draft.mode==="ask" ? "Entire drawing" : "Drawing clarification"}));
+  if(r) {
+    for(const d of r.drawing_model?.dimensions || []) target.append(el("option",{value:d.id,text:`${d.id} · ${d.corrected_text || d.text}`}));
+    for(const page of r.pages) (page.read?.issues || []).forEach((_,i)=>target.append(el("option",{value:`P${page.no}.u${i+1}`,text:`P${page.no}.u${i+1} · Agent question`})));
+  }
+  target.value=draft.target;
+  const input=el("textarea",{id:"chat-reply","aria-label":"Your reply",placeholder:draft.mode==="ask" ? "Ask about a measurement, section or symbol..." : "Enter the source correction or answer...",maxlength:4000});
+  input.value=draft.text;
+  const extra=el("details",{},el("summary",{text:"Add a measurement to this answer"}));
+  const measurement=el("input",{type:"text","aria-label":"Chat corrected measurement",placeholder:"Complete printed value",value:draft.measurement,maxlength:200});
+  const view=el("select",{"aria-label":"Chat source view"},el("option",{value:"",text:"Choose the source view"}));
+  if(r) for(const p of r.drawing_model?.pages || []) for(const v of p.views) view.append(el("option",{value:v.id,text:`${v.id} · ${v.label || v.type}`}));
+  view.value=draft.view;extra.append(measurement,view);
+  const status=el("p",{class:"hint","aria-live":"polite"});
+  const button=el("button",{class:"btn chat-send",type:"button",text:draft.mode==="ask" ? "Ask drawing assistant" : "Apply reply to review"});
+  const update=() => {
+    draft.target=target.value;draft.text=input.value;draft.measurement=measurement.value;draft.view=view.value;
+    extra.hidden=draft.mode!=="correct" || !/^P\d+\.u\d+$/.test(target.value);
+    const locked=draft.mode==="correct" && (r?.reviewDirty || r?.workflowBusy || ["building","resuming","exporting"].includes(r?.workflowJob?.phase));
+    button.disabled=Boolean(!r || r.chatBusy || locked || !r.review_hash || !input.value.trim());
+    if(locked) status.textContent="Save your measurement edits before applying a correction.";
+    else if(r?.reviewDirty) status.textContent="Answers use saved readings. Save edits to ask about changed values.";
+  };
+  input.disabled=!r || Boolean(r.chatBusy);target.disabled=!r || Boolean(r.chatBusy);
+  input.addEventListener("input",update);target.addEventListener("change",()=>{draft.context="";update();});
+  measurement.addEventListener("input",update);view.addEventListener("change",update);
+  button.addEventListener("click",async() => {
+    if(button.disabled)return;
+    const mode=draft.mode;r.chatBusy=true;button.disabled=true;status.textContent=mode==="ask" ? "Checking the drawing evidence..." : "Saving your correction...";
+    const text=draft.context && mode==="correct" ? `Question: ${draft.context}\nHuman reply: ${input.value.trim()}` : input.value.trim();
+    try {
+      const body={mode,result_id:r.id,source_hash:r.drawing_model.source_hash,model_hash:r.review_hash,target:target.value,text};
+      if(mode==="correct" && !extra.hidden && measurement.value.trim()) {body.measurement=measurement.value.trim();body.view=view.value;}
+      const saved=await workflowRequest("/api/chat",body);
+      r.chatHistory=saved.history;r.chatLoaded=true;r.chatDraft=blank();r.chatBusy=false;
+      if(mode==="ask") r.chatDraft.target=(saved.entry.citations || []).find(id=>/^P\d+\.[dh]\d+$/.test(id)) || body.target;
+      if(saved.review) {
+        r.design=saved.review;r.drawing_model=saved.review.model;r.review_hash=saved.review_hash;
+        r.measurement_review=saved.review.measurement_review || r.measurement_review;r.reviewDirty=false;
+        if(r.workflowJob)r.workflowJob.stale=true;
+        if(state.result===r)show(r);
+      } else if(state.result===r)renderAgentChat(r);
+    } catch(error) {status.textContent=error.message;r.chatBusy=false;update();}
+  });
+  update();
+  return el("div",{},messages,el("div",{class:"chat-composer"},modes,
+    el("div",{class:"chat-focus"},el("label",{for:"chat-target",text:"Focus"}),target),input,extra,button,status,
+    el("p",{class:"chat-scope",text:"Grounded in this drawing only. Questions never change measurements."})));
+}
+
+function renderAgentChat(r) {
+  const host=$("#chat-body");
+  if(!host)return;
+  const previous=$("#chat-messages");
+  const scroll=previous?.scrollTop;
+  host.replaceChildren(agentChatBody(r));
+  const count=r?.chatHistory?.length || 0;
+  if(r && count > 0 && r.chatRenderedCount !== count) $("#chat-messages").scrollTop=$("#chat-messages").scrollHeight;
+  else if(scroll !== undefined) $("#chat-messages").scrollTop=scroll;
+  if(r)r.chatRenderedCount=count;
+  if(r && !r.chatLoaded && !r.chatLoading) {
+    r.chatLoading=true;
+    fetch(`/api/chat/${r.id}`).then((response) => response.ok ? response.json() : []).then((history) => {
+      if(!r.chatLoaded)r.chatHistory=history;
+      r.chatLoaded=true;r.chatLoading=false;
+      if(state.result===r)renderAgentChat(r);
+    }).catch(() => {r.chatLoading=false;});
+  }
+}
+
+function featureCard(r) {
+  const features = (r.design?.plan?.interpretations || r.extracted_features || []).flatMap((p) => p.features);
+  const questions = (r.extracted_features || []).flatMap((p) => p.questions || []);
+  return el("section", {class:"card pad"}, el("h2", {text:"Extracted features"}),
+    features.length ? el("div", {class:"table-wrap"}, el("table", {}, el("thead", {}, el("tr", {}, ["Feature", "Description", "Drawing views", "Measurements"].map((text) => el("th", {text})))),
+      el("tbody", {}, features.map((f) => el("tr", {}, el("td", {text:f.id}), el("td", {text:f.description}), el("td", {text:f.views.join(", ")}), el("td", {text:Object.entries(f.dimensions).map(([role,ids]) => `${role}: ${ids.join(", ")}`).join("; ")})))))) :
+      el("p", {text:r.feature_extraction_error ? `Feature extraction needs attention: ${r.feature_extraction_error}` : r.extraction_status === "processing" ? "Feature identification is running. You can review the drawing and measurements now; additional results appear automatically." : "This saved reading has measurements only. Feature identification will run when you continue after reviewing them."}),
+    questions.length ? el("details", {}, el("summary", {text:"Feature questions to review"}), el("ul", {}, questions.map((q) => el("li", {text:q})))) : null,
+    r.extraction_strategy ? el("details",{},el("summary",{text:"OCR and visual cross-check"}),...r.pages.map(p=>el("div",{},el("h3",{text:`Page ${p.no}`}),el("div",{class:"table-wrap"},el("table",{},el("thead",{},el("tr",{},["Reading","Meaning","Tolerance","Quantity","Cross-check"].map(text=>el("th",{text})))),el("tbody",{},(p.read?.evidence?.extraction?.callouts || []).map(c=>el("tr",{},...[c.text,c.meaning,c.tolerance,c.quantity ?? "—",c.status.replaceAll("_"," ")].map(text=>el("td",{text})))))))))) : null);
+}
+
+function assessmentCard(r) {
+  const output = el("div", {});
+  const button = el("button", {class: "btn", type: "button", text: "Check reconstruction readiness"});
+  const reread = el("button", {class:"btn secondary", type:"button", text:"Re-extract with agent view detection"});
+  reread.addEventListener("click", async () => {
+    reread.disabled=true;
+    output.replaceChildren(el("p", {text:"Re-detecting views and reading the original source. Previous results and reviews will be retained separately…"}));
+    window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:true,title:"Re-reading the original drawing",message:"Updating view detection and extracting the source measurements again…"}}));
+    try {
+      const result=await workflowRequest("/api/reread", {result_id:r.id,llm:r.llm || $("#llm").value});
+      location.hash=result.id; show(result);
+    } catch(error) {output.textContent=error.message;reread.disabled=false;}
+    finally { window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:false}})); }
+  });
+  const warnings = (r.source_quality || []).flatMap((p) => p.warnings.map((w) => `Page ${p.page}: ${w}`));
+  for (const duplicate of r.duplicate_pages || []) warnings.push(`Page ${duplicate.page} duplicates page ${duplicate.same_as}. It is not another independent component.`);
+  if (r.readiness) {
+    output.append(el("p", {text: "High accuracy has not been verified."}),
+      el("ul", {}, r.readiness.report.blockers.map((q) => el("li", {text: q}))),
+      inlineArtifact("Assessment process log", `/api/run/${r.readiness.id}/log`));
+  }
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    output.replaceChildren(el("p", {text: "Checking document scope, missing information and supported geometry…"}));
+    try {
+      const response = await fetch("/api/assess", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({result_id: r.id, llm: $("#llm").value || r.llm})});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || response.statusText);
+      r.readiness = data;
+      show(r);
+    } catch (error) {
+      output.replaceChildren(el("p", {class: "msg err", text: error.message}));
+      button.disabled = false;
+    }
+  });
+  return el("section", {class: "card pad"}, el("h2", {text: "Reconstruction readiness"}),
+    el("p", {text: "Use separate runs for unrelated designs. This check identifies assemblies, missing source details and unsupported features for both 3D models and native 2D sheets."}),
+    warnings.length ? el("ul", {}, warnings.map((w) => el("li", {text: w}))) : null,
+    button, reread, output);
+}
+
+// ---------------------------------------------------------------- evidence review and build-list draft (never starts SolidWorks)
+function isAssembly(r) {
+  return Boolean(r.assembly) || r.pages.some((p) => ["assembly","detail_sheet","mixed"].includes(p.read?.title_block?.document_kind)) ||
+    (r.readiness?.assessments || []).some((a) => ["assembly","detail_sheet","mixed"].includes(a.document_kind));
+}
+
+function designCard(r) {
+  const model = r.drawing_model;
+  const controls = el("fieldset", { class: "design-controls" });
+  const status = el("p", { class: "hint", "aria-live": "polite" });
+  const output = el("div", { class: "design-output", id:"build-plan" });
+  const metaSelect = (label, options, value) => {
+    const select = el("select", { "aria-label": label }, options.map(([key, text]) => el("option", { value: key, text })));
+    select.value = value;
+    return select;
+  };
+  const unit = metaSelect("Drawing unit", [["unknown", "Confirm unit"], ["mm", "Millimetres"], ["inch", "Inches"]], model.unit);
+  const projection = metaSelect("Drawing projection", [["unknown", "Confirm projection"], ["first", "First angle"], ["third", "Third angle"]], model.projection);
+  controls.append(el("div", { class: "meta" }, el("label", {}, "Unit ", unit), el("label", {}, "Projection ", projection)));
+  const inputs = model.dimensions.map((d) => {
+    const assessment = r.measurement_review?.[d.id] || r.design?.measurement_review?.[d.id] || {};
+    const score = typeof assessment.confidence === "number" ? assessment.confidence : null;
+    const approved = assessment.ai_approved === true && !d.confirmed;
+    const checked = el("input", {type:"checkbox",checked:d.confirmed,"aria-label":`Confirm ${d.id}`});
+    const correction = el("input", {type:"text",value:d.corrected_text || "",placeholder:"Enter corrected value",maxlength:200,"aria-label":`Correct ${d.id}`});
+    const item = {d,checked,correction,approved,forced:false};
+    const ask = el("button", {class:"reading-ask",type:"button",text:"Ask agent", "aria-label":`Ask about ${d.id}`});
+    ask.addEventListener("click",() => {
+      r.chatDraft={mode:"ask",target:d.id,text:`Explain ${d.id} and its confidence.`,context:"",measurement:"",view:""};
+      renderAgentChat(r);$("#chat-reply")?.focus();
+    });
+    const flag=el("button",{class:"reading-ask",type:"button",text:"Flag for review"});
+    flag.addEventListener("click",() => {item.forced=true;checked.checked=false;item.approved=false;item.row.className="measurement-card needs-review";flag.disabled=true;item.row.append(el("p",{class:"reading-reason",text:"Flagged by you. Save to request a new review."}));redrawLanes();controls.dispatchEvent(new Event("change",{bubbles:true}));});
+    correction.addEventListener("input",() => {checked.checked=true;item.approved=false;});
+    checked.addEventListener("change",() => {item.forced=!checked.checked;});
+    const confidence=el("span",{class:`confidence-pill ${score === null ? "unscored" : approved ? "high" : "review"}`,
+      title:assessment.confidence_reason || "Extraction-agent estimate, not a calibrated accuracy probability.","aria-label":`Extraction agent confidence for ${d.id}: ${score === null ? "not scored" : score + " percent"}`,text:score===null ? "Not scored" : `${score}%`});
+    const edit=el("details",{class:"reading-edit"},el("summary",{text:approved ? "Correct reading" : "Verify or correct"}),
+      correction,el("label",{class:"reading-confirm"},checked,"Verified against the drawing"));
+    const breakdown=el("details",{class:"confidence-breakdown"},el("summary",{text:"Why this score?"}),
+      assessment.confidence_metrics?.length ? assessment.confidence_metrics.map(c=>el("div",{class:"criterion-row"},el("span",{text:c.label}),el("b",{text:`${c.rating}/5`}),el("small",{text:`${c.weight}% weight`}))) : el("p",{text:"The agent has not rated the five confidence criteria. This reading needs human review."}),
+      assessment.confidence_reason ? el("p",{text:assessment.confidence_reason}) : null);
+    item.row=el("article",{class:`measurement-card ${approved ? "ai-approved" : d.confirmed ? "human-reviewed" : "needs-review"}`,"data-reading-id":d.id},
+      el("div",{class:"reading-top"},el("strong",{class:"reading-value",text:d.corrected_text || d.text}),confidence),
+      el("div",{class:"reading-source",text:`${d.id} · Page ${d.page} · ${d.views.join(", ") || "View not located"}`}),
+      d.confirmed ? el("span",{class:"human-verified",text:"Verified by you"}) : !approved ? el("p",{class:"reading-reason",text:assessment.review_reason || "Confirm this reading against the source."}) : null,
+      el("div",{class:"reading-actions"},ask,approved ? flag : null),breakdown,edit);
+    return item;
+  });
+  const lane=(approved,title,subtitle) => {
+    const items=inputs.filter(item=>item.approved===approved);
+    const pending=items.filter(item=>!item.checked.checked).length;
+    return el("section",{class:`review-lane ${approved ? "approved-lane" : "attention-lane"}`,"aria-label":title},
+      el("div",{class:"lane-heading"},el("span",{class:"lane-dot"}),el("h3",{text:title}),el("span",{class:"lane-count",text:approved ? items.length : pending})),
+      el("p",{class:"lane-description",text:subtitle}),
+      el("div",{class:"reading-list"},items.length ? items.map(i=>i.row) : el("p",{class:"lane-empty",text:approved ? "Clear readings above 80% will appear here." : "All readings have been reviewed."})));
+  };
+  const review=el("div",{class:"review-lanes"},
+    lane(true,"AI approved","Agent confidence above 80%"),lane(false,"Needs review","Your input where it matters"));
+  const redrawLanes=()=>review.replaceChildren(lane(true,"AI approved","Agent confidence above 80%"),lane(false,"Needs review","Your input where it matters"));
+  const clarifications = [];
+  const note = {value:model.resolutions.note || ""};
+  const btn = el("button", { class: "btn", type: "button", text: "Review measurements and continue" });
+  if (isAssembly(r)) {
+    btn.textContent = "Save reviewed measurements";
+    status.textContent = "Review measurements here. Component or geometry questions appear in agent chat.";
+  }
+  controls.append(review, el("p", {class:"confidence-note",text:"Score = five agent ratings, weighted 30 / 25 / 20 / 15 / 10. Above 80% can be AI approved; conflicts and weak evidence require review. These scores are not calibrated accuracy."}), btn);
+  const issues = (questions) => el("ul", {}, questions.map((q) => el("li", { text: q })));
+  const renderPlan = (artifact) => {
+    const p = artifact.plan;
+    output.replaceChildren(el("h3", { text: p.status === "ready_for_approval" ? "Draft ready for your approval" : "More information needed" }));
+    if (p.questions.length) output.append(issues(p.questions));
+    if (p.draft) {
+      output.append(el("p", { class: "hint", text: "This is a proposal. Review the geometry, feature order, derived calculations and omitted details against the drawing." }),
+        el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, ["Item", "Feature", "Printed sources", "Parameters"].map((text) => el("th", { text })))),
+          el("tbody", {}, p.draft.items.map((item) => el("tr", {}, el("td", { text: item.id }), el("td", { text: item.feature }),
+            el("td", { text: item.printed }), el("td", {}, el("pre", { text: JSON.stringify(item.params, null, 2) }))))))));
+      if (p.draft.unsupported.length) output.append(el("h4", { text: "Unsupported geometry" }), issues(p.draft.unsupported.map((u) => u.text)));
+    }
+    output.append(el("details", {}, el("summary", { text: "Dimension provenance and proposed relationships" }),
+      el("pre", { text: JSON.stringify({ parameters: p.provenance, relationships: p.proposal?.relationships || [] }, null, 2) })));
+    if (p.status === "ready_for_approval") {
+      const build = el("button", {class:"btn", type:"button", text:"Approve features and build in SolidWorks"});
+      build.disabled = Boolean(r.workflowBusy) || (r.workflowJob && ["building","resuming","exporting"].includes(r.workflowJob.phase));
+      build.addEventListener("click", async () => {
+        build.disabled = true;
+        try { await startBuild(r, artifact.id); }
+        catch (error) { status.textContent = error.message; build.disabled = false; }
+      });
+      output.append(el("p", {text:"Confirm these features, dimensions and derived values against your drawing before starting SolidWorks."}), build);
+    }
+    output.append(el("p", { class: "hint" }, `${p.calls} planning call(s) · ${artifact.seconds} s · `,
+      inlineArtifact("Planning process log", `/api/run/${artifact.id}/log`)));
+  };
+  if (r.design) renderPlan(r.design);
+  else if (r.extraction_strategy) output.append(el("p",{class:"hint",text:"Extraction review preview. Native building remains paused until engineering acceptance."}));
+  const edited = () => {
+    r.reviewDirty = true;
+    output.replaceChildren(el("p", {class:"hint", text:"Measurements changed. Continue to update the plan before building or exporting."}));
+    if ($("#workflow-job")) replaceWorkflow(r);
+    renderAgentChat(r);
+  };
+  controls.addEventListener("input", edited);
+  controls.addEventListener("change", edited);
+  btn.addEventListener("click", async () => {
+    if (clarifications.some((q) => q.text.value.trim() && !q.answer.value.trim())) {
+      status.textContent = "Explain the corrected source callout before applying its measurement.";
+      return;
+    }
+    controls.disabled = true;
+    output.replaceChildren();
+    status.textContent = "Interpreting geometry and planning… One visual call per page, then one reconciliation call; cached repeats reuse replies.";
+    const resolutions = { dimensions: inputs.filter((i) => i.checked.checked || i.forced).map(({ d, correction, checked }) => ({
+      id: d.id, confirmed: checked.checked, text: checked.checked ? correction.value.trim() || null : null })), note: note.value,
+      clarifications: model.resolutions.clarifications || [] };
+    if (unit.value !== "unknown") resolutions.unit = unit.value;
+    if (projection.value !== "unknown") resolutions.projection = projection.value;
+    try {
+      const response = await fetch(isAssembly(r) || r.extraction_strategy ? "/api/review" : "/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        result_id: r.id, source_hash: model.source_hash, resolutions, llm: $("#llm").value || r.llm }) });
+      const artifact = await response.json();
+      if (!response.ok) {
+        const error = new Error(artifact.error || response.statusText);
+        error.runId = artifact.id;
+        throw error;
+      }
+      r.design = artifact;
+      r.measurement_review = artifact.measurement_review || r.measurement_review;
+      r.drawing_model = artifact.model;
+      r.review_hash = artifact.review_hash;
+      r.reviewDirty = false;
+      if (r.workflowJob) { r.workflowJob.stale = true; if ($("#workflow-job")) replaceWorkflow(r); }
+      status.textContent = "Review and planning attempt saved. Reopening this result restores it.";
+      renderPlan(artifact);
+      renderAgentChat(r);
+      if (r.extractionRefreshPending) { r.extractionRefreshPending = false; show(r); }
+      if (state.result === r) show(r);
+      if (!isAssembly(r) && !r.extraction_strategy && typeof window !== "undefined") window.studioNavigate?.(3);
+    } catch (error) {
+      status.textContent = `Planning failed: ${error.message}`;
+      if (error.runId) status.append(inlineArtifact("Planning process log", `/api/run/${error.runId}/log`));
+    } finally {
+      controls.disabled = false;
+    }
+  });
+  return el("section", { class: "card pad", id: "design" }, el("div",{class:"review-title"},el("span",{class:"eyebrow",text:"EXTRACTION REVIEW"}),el("h2", { text: "Measurements, made clear." })),
+    el("p", { class: "hint", text: "The agent handles confident readings. You resolve the rest." }), controls, status, output);
+}
+
+async function workflowRequest(path, body) {
+  const response = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || response.statusText);
+  return result;
+}
+
+function disposeViewers(host) {
+  host.querySelectorAll("canvas").forEach((canvas) => {
+    canvas.reviewObserver?.disconnect();
+    canvas.reviewViewer?.dispose?.();
+  });
+}
+
+function replaceWorkflow(r) {
+  const host = $("#workflow-job");
+  if (!host) return;
+  disposeViewers(host);
+  host.replaceChildren(workflowCard(r));
+}
+
+async function startBuild(r, attempt) {
+  r.workflowJob = await workflowRequest("/api/workflow/start", {result_id:r.id, attempt});
+  await jobDecision(r, "build");
+}
+
+async function jobDecision(r, action, decision = {}) {
+  const job = r.workflowJob;
+  r.workflowBusy = true;
+  if (["build","approve_fix","edit_fix","retry_llm"].includes(action)) job.phase = "building";
+  if (action === "export") job.phase = "exporting";
+  window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:true,title:action === "export" ? "Preparing your exports" : "SolidWorks is building your model",message:action === "export" ? "Checking the confirmed model and preparing files…" : "The CAD agent is executing the approved plan in SolidWorks…"}}));
+  const body = {job_id:job.id, revision:job.revision, action, review_hash:job.review_hash, ...decision};
+  show(r); pollJob(r);
+  try {
+    r.workflowJob = await workflowRequest("/api/workflow/decision", body);
+    window.dispatchEvent(new CustomEvent("studio:job", {detail:{job:r.workflowJob}}));
+  } catch (error) {
+    const response = await fetch(`/api/workflow/${job.id}`);
+    if (response.ok) r.workflowJob = await response.json();
+    r.workflowError = error.message;
+    window.dispatchEvent(new CustomEvent("studio:error", {detail:{message:error.message}}));
+  } finally {
+    r.workflowBusy = false;
+    window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:false}}));
+    if (state.result === r) show(r);
+  }
+}
+
+function pollJob(r) {
+  if (r.pollTimer) return;
+  const tick = async () => {
+    r.pollTimer = null;
+    if (state.result !== r || !r.workflowJob) return;
+    try {
+      const response = await fetch(`/api/workflow/${r.workflowJob.id}`);
+      if (response.ok) {
+        const job = await response.json();
+        // A request may be waiting for its first durable write. Don't replace
+        // its visible progress with the previous approval state.
+        if (!r.workflowBusy || ["building","resuming","exporting"].includes(job.phase)) {
+          const changed = JSON.stringify(r.workflowJob) !== JSON.stringify(job);
+          r.workflowJob = job;
+          window.dispatchEvent(new CustomEvent("studio:job", {detail:{job}}));
+          const panel = $("#workflow-job");
+          if (panel && changed) replaceWorkflow(r);
+          if (changed) renderAgentChat(r);
+        }
+      }
+    } catch (_) { /* keep the pending operation visible; the next poll retries */ }
+    if (r.workflowBusy || ["building","resuming","exporting"].includes(r.workflowJob.phase)) r.pollTimer = setTimeout(tick, 2000);
+  };
+  if (r.workflowBusy || ["building","resuming","exporting"].includes(r.workflowJob.phase)) r.pollTimer = setTimeout(tick, 1500);
+}
+
+function workflowCard(r) {
+  const job = r.workflowJob;
+  const card = el("section", {class:"card pad", "aria-live":"polite"}, el("h2", {text:"SolidWorks and final review"}));
+  if (!job) { card.append(el("p", {text:"Review the extraction and approve the feature plan to start SolidWorks."})); return card; }
+  const labels = {awaiting_approval:"Ready for your approval", building:"Building in SolidWorks…", resuming:"Continuing…", exporting:"Preparing confirmed exports…",
+    awaiting_fix_approval:"SolidWorks needs your confirmation", awaiting_review:"Compare your drawing with the 3D model", accepted:"Model confirmed — ready to export", exported:"Exports ready", needs_human:"Paused for your input", changes_requested:"Corrections requested", llm_failed:"Model call paused", aborted:"Job stopped"};
+  card.append(el("p", {class:"workflow-status", text:labels[job.phase] || job.phase}));
+  if (r.workflowError) card.append(el("p", {class:"msg err", text:r.workflowError}));
+  if (job.stale || r.reviewDirty) {
+    card.append(el("p", {class:"msg info", text:"The measurements or plan changed. Continue from the extraction review and build a new preview before confirming or exporting."}));
+    return card;
+  }
+  if (["building","resuming","exporting"].includes(job.phase)) card.append(el("span", {class:"spinner"}), " The job is saved. You can reopen this result to see its status.");
+  for (const question of job.questions || []) if (question) card.append(el("p", {class:"question", text:question}));
+  const action = (text, name, extra = () => ({}), secondary = false) => {
+    const button = el("button", {class:`btn${secondary ? " secondary" : ""}`, type:"button", text});
+    button.disabled = Boolean(r.workflowBusy);
+    button.addEventListener("click", () => { r.workflowError = ""; return jobDecision(r, name, extra()); });
+    return button;
+  };
+  if (job.phase === "awaiting_approval") card.append(action("Approve features and build", "build"));
+  if (job.phase === "awaiting_fix_approval" && job.proposal) {
+    card.append(el("p", {text:job.proposal.reason}), el("pre", {text:JSON.stringify(job.proposal.diff, null, 2)}));
+    const corrected = JSON.parse(JSON.stringify(job.proposal.params));
+    const fields = el("fieldset", {class:"design-controls"});
+    const inputs = [];
+    const parameterFields = (value, path = []) => {
+      for (const [key, item] of Object.entries(value)) {
+        const keys = [...path, key];
+        if (item && typeof item === "object") { parameterFields(item, keys); continue; }
+        const input = el("input", {type:typeof item === "boolean" ? "checkbox" : "text", value:typeof item === "boolean" ? null : String(item), checked:item === true,
+          "aria-label":`Correct ${keys.join(" ")}`});
+        fields.append(el("label", {class:"row"}, keys.join(" · ").replaceAll("_", " ") + " ", input));
+        inputs.push({keys, input, type:typeof item});
+      }
+    };
+    parameterFields(corrected);
+    const apply = el("button", {class:"btn", type:"button", text:"Apply my correction and continue"});
+    const error = el("p", {class:"msg err"});
+    apply.addEventListener("click", () => {
+      try {
+        for (const {keys,input,type} of inputs) {
+          let parent = corrected;
+          for (const key of keys.slice(0,-1)) parent = parent[key];
+          const value = type === "number" ? Number(input.value) : type === "boolean" ? input.checked : input.value;
+          if (type === "number" && (!input.value.trim() || !Number.isFinite(value))) throw new Error("Each measurement must be a finite number");
+          parent[keys[keys.length-1]] = value;
+        }
+        return jobDecision(r, "edit_fix", {params:corrected});
+      }
+      catch (ex) { error.textContent = `Check the corrected values: ${ex.message}`; }
+    });
+    card.append(el("details", {}, el("summary", {text:"Correct the proposed feature values"}), fields, apply, error),
+      el("div", {class:"actions"}, action("Confirm proposed correction and continue", "approve_fix"), action("Ask for a different correction", "reject_fix", () => ({message:"The proposed correction does not match the source drawing"}), true)));
+  }
+  if (job.preview) {
+    const source = el("img", {src:`/api/page/${r.pages[0].sha}`, loading:"lazy", decoding:"async", alt:"Original 2D source drawing"});
+    const pages = el("select", {"aria-label":"Compare drawing page"}, r.pages.map((p) => el("option", {value:p.sha, text:`Page ${p.no} · ${p.source}`})));
+    pages.addEventListener("change", () => source.setAttribute("src", `/api/page/${pages.value}`));
+    const canvas = el("canvas", {"aria-label":"Interactive 3D model. Drag to rotate and scroll to zoom.", tabindex:0});
+    const preview = el("img", {src:job.preview.image, loading:"lazy", decoding:"async", alt:"SolidWorks model preview"});
+    const viewerStatus = el("p", {class:"hint", text:"Drag to rotate · scroll to zoom. Inspect detailed dimensions in SolidWorks as well."});
+    const views = el("div", {class:"actions"});
+    card.append(el("div", {class:"compare"}, el("div", {}, el("h3", {text:"Your 2D drawing"}), pages, source),
+      el("div", {}, el("h3", {text:"Created 3D model"}), canvas, views, viewerStatus, el("details", {}, el("summary", {text:"Saved preview image"}), preview))));
+    if (typeof globalThis.renderReviewMesh === "function") {
+      const startViewer = () => globalThis.renderReviewMesh(canvas, job.preview.mesh).then((viewer) => {
+        if (!canvas.isConnected) { viewer.dispose?.(); return; }
+        canvas.reviewViewer = viewer;
+        for (const name of ["Isometric","Front","Top","Right"]) {
+          const button = el("button", {class:"btn secondary", text:name});
+          button.addEventListener("click", () => viewer.view(name)); views.append(button);
+        }
+      }).catch((error) => { canvas.hidden = true; viewerStatus.textContent = error.message; preview.parentNode.open = true; });
+      if (typeof IntersectionObserver === "function") {
+        canvas.reviewObserver = new IntersectionObserver((entries, observer) => {
+          if (entries.some((entry) => entry.isIntersecting)) { observer.disconnect(); startViewer(); }
+        });
+        canvas.reviewObserver.observe(canvas);
+      } else setTimeout(startViewer, 0);
+    }
+  }
+  if (job.phase === "awaiting_review") {
+    const compared = el("input", {type:"checkbox", "aria-label":"I compared the 3D model with the 2D drawing"});
+    const measured = el("input", {type:"checkbox", "aria-label":"I verified the measurements and features"});
+    const accept = action("Confirm model", "accept", () => ({compared_drawing:compared.checked, checked_measurements:measured.checked}));
+    accept.disabled = true;
+    const ready = () => { accept.disabled = !compared.checked || !measured.checked || Boolean(r.workflowBusy); };
+    compared.addEventListener("change", ready); measured.addEventListener("change", ready);
+    const correction = el("textarea", {"aria-label":"Correction after model review", placeholder:"Describe any measurement or feature that differs from the drawing", style:"width:100%"});
+    card.append(el("label", {class:"row"}, compared, " I compared the 3D model with the 2D drawing"),
+      el("label", {class:"row"}, measured, " I verified the measurements and features"),
+      el("div", {class:"actions"}, accept), correction,
+      action("Request correction", "correct", () => ({message:correction.value}), true));
+  }
+  if (["needs_human","changes_requested"].includes(job.phase)) {
+    const back = el("button", {class:"btn secondary", type:"button", text:"Return to measurement review"});
+    back.addEventListener("click", () => $("#design")?.scrollIntoView({behavior:"smooth"}));
+    card.append(el("p", {text:"Correct the source measurements or add the requested clarification above, then continue to generate a revised plan. Any revised model needs another final review."}),
+      back);
+  }
+  if (job.phase === "llm_failed") card.append(action("Retry model call", "retry_llm"));
+  if (job.phase === "accepted") card.append(action("Export confirmed model", "export"));
+  if (job.phase === "exported") card.append(el("div", {class:"actions"}, (job.exports || []).map((f) => el("a", {class:"btn", href:f.url, download:`model.${f.format === "BUNDLE" ? "zip" : f.format.toLowerCase()}`, text:f.format === "BUNDLE" ? "Download assembly with components" : `Download ${f.format}`}))));
+  return card;
+}
+
+function assemblyCard(r) {
+  const card = el("section", {class:"card pad", id:"assembly-review"}, el("h2", {text:"Assembly components and questions"}));
+  const status = el("p", {class:"hint", "aria-live":"polite"});
+  if (!r.assembly) {
+    card.append(el("p", {text:r.assembly_extraction_error || "This drawing contains multiple components. Extract the component list and BOM in this workflow."}));
+    const read = el("button", {class:"btn", text:"Continue assembly extraction"});
+    read.addEventListener("click", async () => {
+      read.disabled = true; status.textContent = "The extraction agent is reading the component list across the uploaded sheets…";
+      window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:true,title:"Extracting assembly components",message:"Reading component labels, quantities and assembly evidence…"}}));
+      try { r.assembly = await workflowRequest("/api/assembly/read", {result_id:r.id, llm:r.llm}); show(r); }
+      catch (error) { status.textContent = error.message; read.disabled = false; }
+      finally { window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:false}})); }
+    });
+    card.append(read, status); return card;
+  }
+  const artifact = r.assembly, plan = JSON.parse(JSON.stringify(artifact.plan));
+  const controls = el("fieldset", {class:"design-controls"});
+  const fields = [];
+  let dirty = false;
+  const edited = () => { dirty = true; r.reviewDirty = true; build.disabled = true; if ($("#workflow-job")) replaceWorkflow(r); renderAgentChat(r); };
+  const input = (label, value, set, type = "text") => {
+    const field = el("input", {type, value:type === "checkbox" ? null : value ?? "", checked:type === "checkbox" && value === true, "aria-label":label});
+    fields.push(() => set(type === "checkbox" ? field.checked : field.value));
+    return el("label", {class:"row"}, label + " ", field);
+  };
+  const select = (label, value, options, set) => {
+    const field = el("select", {"aria-label":label}, options.map(([key,text]) => el("option", {value:key,text})));
+    field.value = value ?? ""; fields.push(() => set(field.value)); return el("label", {class:"row"}, label + " ", field);
+  };
+  const unit = select("Assembly unit", plan.unit, [["","Confirm unit"],["mm","Millimetres"],["inch","Inches"]], (v) => {plan.unit=v || null;});
+  controls.append(unit, input("I verified the units", plan.unit_confirmed, (v) => {plan.unit_confirmed=v;}, "checkbox"),
+    input("The component list is complete", plan.bom_complete, (v) => {plan.bom_complete=v;}, "checkbox"));
+  const notes = [];
+  for (const [index, question] of (plan.issues || []).entries()) {
+    const answer = el("input", {type:"text", "aria-label":`Assembly answer ${index+1}`, placeholder:"Source correction / evidence resolving this question"});
+    const resolved = el("input", {type:"checkbox", "aria-label":`Resolve assembly question ${index+1}`});
+    notes.push({question, answer, resolved});
+    controls.append(el("div", {class:"question"}, el("p", {text:question}), answer, el("label", {class:"row"}, resolved, " I resolved this against the source")));
+  }
+  for (const row of plan.bom) {
+    const section = el("details", {open:true}, el("summary", {text:`${row.id} · ${row.part_number || row.description || "Component needs identification"}`}));
+    section.append(input(`${row.id} Part number`, row.part_number, (v) => {row.part_number=v.trim();}),
+      input(`${row.id} Description`, row.description, (v) => {row.description=v.trim();}),
+      input(`${row.id} Quantity`, row.quantity, (v) => {row.quantity=v.trim() ? Number(v) : null;}),
+      select(`${row.id} Component type`, row.kind, [["unknown","Needs identification"],["part","Leaf part"],["assembly","Subassembly (needs leaf parts)"]], (v) => {row.kind=v;}),
+      input(`${row.id} Source scope`, row.scope, (v) => {row.scope=v;}),
+      input(`${row.id} I verified identity and quantity`, row.confirmed, (v) => {row.confirmed=v;}, "checkbox"),
+      el("p", {class:"hint", text:row.evidence.map((e) => `Page ${e.page}: ${e.text}`).join("; ")}));
+    if (row.issues.length) {
+      const answer = el("input", {type:"text", "aria-label":`Resolve ${row.id} conflicts`, placeholder:"Explain the correct identity/quantity from the source"});
+      section.append(el("p", {class:"question", text:row.issues.join("; ")}), answer);
+      fields.push(() => {if (row.confirmed && answer.value.trim()) {row.evidence.push({page:row.evidence[0]?.page || 1,text:`Human correction: ${answer.value.trim()}`}); row.issues=[];}});
+    }
+    const model = plan.models.find((m) => m.bom_id === row.id);
+    if (model) section.append(el("p", {text:`Model: ${model.source_name} · ${model.configuration}`}),
+      input(`${row.id} I verified this component model`, model.confirmed, (v) => {model.confirmed=v;}, "checkbox"));
+    const file = el("input", {type:"file", accept:".sldprt", "aria-label":`${row.id} Component model`});
+    const config = el("input", {type:"text", "aria-label":`${row.id} Model configuration`, placeholder:"Exact configuration name"});
+    const evidence = el("input", {type:"text", "aria-label":`${row.id} Model evidence`, placeholder:"Reviewed component drawing / revision"});
+    const attach = el("button", {class:"btn secondary", type:"button", text:`Attach model for ${row.id}`});
+    attach.addEventListener("click", async () => {
+      try {
+        if (!file.files[0] || !config.value.trim() || !evidence.value.trim()) throw new Error("Choose the component file, configuration and source evidence");
+        if (file.files[0].size > 40*1024*1024) throw new Error("Component file must be under 40 MB");
+        attach.disabled = true;
+        const uploaded = await workflowRequest("/api/assembly/model", {name:file.files[0].name, data:await toBase64(file.files[0])});
+        plan.models=plan.models.filter((m) => m.bom_id !== row.id);
+        plan.models.push({bom_id:row.id, sha256:uploaded.sha256, source_name:uploaded.source_name, configuration:config.value.trim(), origin:"supplied", provenance:evidence.value.trim(), confirmed:false});
+        fields.forEach((save) => save());
+        r.assembly=await workflowRequest("/api/assembly/review", {result_id:r.id, attempt:artifact.id, plan});
+        r.reviewDirty=false; if(r.workflowJob)r.workflowJob.stale=true; show(r);
+      } catch (error) {status.textContent=error.message; attach.disabled=false;}
+    });
+    section.append(el("p", {class:"hint", text:"If the drawing does not fully define this component, attach its reviewed native model here."}), file, config, evidence, attach);
+    controls.append(section);
+  }
+  controls.append(el("h3", {text:"Component placements"}), el("p", {class:"hint", text:"Enter drawing-backed positions and orientation. Missing placements remain questions; the agent does not guess them."}));
+  // New occurrences are placeholders until the user supplies and confirms data.
+  for (const row of plan.bom) {
+    if (!Number.isInteger(row.quantity) || row.quantity < 1 || row.quantity > 1000) continue;
+    const count = plan.occurrences.filter((o) => o.bom_id === row.id).length;
+    for (let i=count;i<row.quantity;i++) {
+      let id=`${row.id}-${i+1}`; while(plan.occurrences.some((o) => o.id===id))id+="x";
+      plan.occurrences.push({id,bom_id:row.id,placement:null,fixed:false});
+    }
+  }
+  for (const occurrence of plan.occurrences) {
+    const placement = occurrence.placement;
+    const coordinates = [0,1,2].map((i) => el("input", {type:"text",value:placement?.translation[i] ?? "", "aria-label":`${occurrence.id} ${["X","Y","Z"][i]}`}));
+    const rotation = el("input", {type:"text",value:placement?.rotation.join(", ") || "", "aria-label":`${occurrence.id} Rotation`,placeholder:"9 rotation matrix values"});
+    const evidence = el("input", {type:"text",value:placement?.evidence || "", "aria-label":`${occurrence.id} Placement evidence`,placeholder:"Dimensions / datums defining this placement"});
+    const confirmed = el("input", {type:"checkbox",checked:placement?.confirmed, "aria-label":`${occurrence.id} Confirm placement`});
+    const aligned = el("button", {type:"button", class:"btn secondary", text:"Use aligned axes"});
+    aligned.addEventListener("click", () => {rotation.value="1,0,0,0,1,0,0,0,1";edited();});
+    fields.push(() => {
+      if (coordinates.every((c) => c.value.trim()) && rotation.value.trim() && evidence.value.trim()) occurrence.placement={translation:coordinates.map((c) => Number(c.value)),rotation:rotation.value.split(",").map(Number),evidence:evidence.value.trim(),confirmed:confirmed.checked};
+      else occurrence.placement=null;
+    });
+    controls.append(el("details", {}, el("summary", {text:`${occurrence.id} · ${occurrence.bom_id}`}),
+      el("div", {class:"actions"}, ...coordinates), rotation, aligned, evidence,
+      el("label", {class:"row"}, confirmed," I verified this placement"), input(`${occurrence.id} Fixed reference`, occurrence.fixed, (v) => {occurrence.fixed=v;}, "checkbox")));
+  }
+  controls.append(el("h3", {text:"Final dimensional checks"}));
+  const size = [0,1,2].map((i) => el("input", {type:"text",value:plan.expected.size?.[i] ?? "", "aria-label":`Assembly overall ${["X","Y","Z"][i]}`,placeholder:`Overall ${["X","Y","Z"][i]}`}));
+  fields.push(() => {plan.expected.size=size.every((s) => s.value.trim()) ? size.map((s) => Number(s.value)) : null;});
+  controls.append(el("div", {class:"actions"}, ...size), input("Overall dimensions evidence",plan.expected.size_evidence,(v) => {plan.expected.size_evidence=v;}));
+  const mates = el("textarea", {"aria-label":"Assembly connections",style:"min-height:180px"}); mates.value=JSON.stringify(plan.mates,null,2);
+  fields.push(() => {plan.mates=JSON.parse(mates.value);});
+  controls.append(el("details", {}, el("summary", {text:"Assembly connections and mate references"}), el("p", {class:"hint",text:"Specify reviewed mate surfaces and constraints here. Unresolved connections stay paused for clarification."}), mates));
+  const blockers = el("ul", {}, artifact.blockers.map((q) => el("li", {text:q})));
+  const save = el("button", {class:"btn",type:"button",text:"Save assembly review and check questions"});
+  const build = el("button", {class:"btn",type:"button",text:"Approve assembly and build in SolidWorks"});
+  build.disabled=artifact.status !== "ready_for_approval" || Boolean(r.drawing_model?.issues.length) || Boolean(r.workflowBusy);
+  save.addEventListener("click", async () => {
+    try {
+      fields.forEach((commit) => commit());
+      if(notes.some((q) => q.resolved.checked && !q.answer.value.trim()))throw new Error("Give the source correction for each question you mark resolved");
+      plan.issues=notes.filter((q) => !q.resolved.checked).map((q) => q.question);
+      const review_notes=notes.filter((q) => q.resolved.checked).map((q) => `${q.question}: ${q.answer.value.trim()}`);
+      controls.disabled=true; status.textContent="Saving your corrections and checking remaining questions…";
+      r.assembly=await workflowRequest("/api/assembly/review", {result_id:r.id,attempt:artifact.id,plan,review_notes});
+      r.reviewDirty=false;if(r.workflowJob)r.workflowJob.stale=true;show(r);
+    } catch(error){status.textContent=error.message;controls.disabled=false;}
+  });
+  build.addEventListener("click", async () => {if(!dirty){build.disabled=true;try{await startBuild(r,artifact.id);}catch(error){status.textContent=error.message;build.disabled=false;}}});
+  controls.addEventListener("input",edited);controls.addEventListener("change",edited);
+  controls.append(el("div", {class:"actions"},save,build));
+  card.append(el("p", {text:"The extraction agent identified this as a component or assembly sheet. Resolve the readings, quantities, component geometry and assembly questions here; the final model uses the same verification and export steps."}),controls,blockers,status);
+  return card;
+}
+
+// ---------------------------------------------------------------- process log (storage/runs/<id>/trace.jsonl)
+function inlineArtifact(label, url) {
+  const output = el("div", {});
+  const detail = el("details", {}, el("summary", {text:label}), output);
+  let loaded = false;
+  detail.addEventListener("toggle", async () => {
+    if (!detail.open || loaded) return;
+    loaded = true;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("The saved detail is unavailable");
+      if (response.headers.get("Content-Type")?.startsWith("image/")) output.append(el("img", {src:url, alt:label, style:"max-width:100%"}));
+      else output.append(el("pre", {text:await response.text(), style:"white-space:pre-wrap;overflow-wrap:anywhere;max-height:480px;overflow:auto"}));
+    } catch (error) {output.textContent=error.message; loaded=false;}
+  });
+  return detail;
+}
+const fileLink = (id, name) => inlineArtifact(name, `/api/run/${id}/file/${name}`);
+
+function details(id, ev) {
+  const skip = new Set(["t", "ts", "stage", "event", "level", "traceback"]);
+  const out = [];
+  for (const [k, v] of Object.entries(ev)) {
+    if (skip.has(k) || v === null || v === undefined || (Array.isArray(v) && !v.length)) continue;
+    if (k === "parts") {                                     // what the model was shown: pictures link to the saved file
+      out.push(el("span", {}, el("b", { text: "shown: " }), ...v.map((p, i) => p.file
+        ? el("span", {}, i ? " · " : "", fileLink(id, p.file), ` (${p.size ? p.size.join("×") + "px, " : ""}${(p.bytes / 1024).toFixed(0)} KB)`)
+        : el("span", { text: `${i ? " · " : ""}text ${p.text_chars} chars` }))), " ");
+      continue;
+    }
+    if ((k === "file" || k === "reply_file") && typeof v === "string") { out.push(el("span", {}, el("b", { text: `${k}: ` }), fileLink(id, v), " ")); continue; }
+    let s = typeof v === "string" ? v : JSON.stringify(v);
+    if (s.length > 220) s = s.slice(0, 220) + "…";
+    out.push(el("span", {}, el("b", { text: `${k}=` }), s, "  "));
+  }
+  if (ev.traceback) out.push(el("details", { class: "tb-open" }, el("summary", { text: "traceback" }), el("pre", { class: "tb", text: ev.traceback })));
+  return out;
+}
+
+function logCard(id) {
+  const body = el("tbody");
+  const filters = el("div", { class: "filters", role: "group", "aria-label": "Filter log" });
+  const card = el("section", { class: "card", id: "log" },
+    el("div", { class: "page-head" }, el("b", { text: "Process log" }),
+      el("span", {}, "every step of this run · ", inlineArtifact("run.log", `/api/run/${id}/log`),
+        " · files in storage/runs/", id)),
+    el("div", { class: "pad" }, filters),
+    el("div", { class: "table-wrap" }, el("table", { class: "log" },
+      el("thead", {}, el("tr", {}, ["Time", "Level", "Stage", "Step", "Details"].map((h) => el("th", { text: h })))), body)));
+  fetch(`/api/trace/${id}`).then((r) => r.ok ? r.json() : []).then((events) => {
+    let only = "all";
+    const fill = () => body.replaceChildren(...events.filter((e) => only === "all" || e.level !== "info").map((e) =>
+      el("tr", { class: e.level }, el("td", { class: "t", text: `${e.t.toFixed(2)}s` }), el("td", {}, el("span", { class: `lvl ${e.level}`, text: e.level })),
+        el("td", { text: e.stage }), el("td", { text: e.event }), el("td", { class: "d" }, ...details(id, e)))));
+    const problems = events.filter((e) => e.level !== "info").length;
+    for (const [key, label] of [["all", `All (${events.length})`], ["problems", `Warnings & errors (${problems})`]]) {
+      filters.append(el("button", { "aria-pressed": String(key === only), text: label, onclick: (ev) => {
+        only = key; filters.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === ev.currentTarget))); fill(); } }));
+    }
+    fill();
+  });
+  return card;
+}
+
+function highlight(pageNo, nums, on) {
+  for (const n of nums) {
+    document.querySelectorAll(`[data-box="${pageNo}-${n}"]`).forEach((e) => e.classList.toggle("hi", on));
+  }
+}
+
+function drawingReviewCard(r) {
+  const savedPage = r.reviewPage || r.pages[0]?.no;
+  const active = r.pages.find((p) => p.no === savedPage) || r.pages[0];
+  const content = el("div", {});
+  if (!active) return content;
+  const select = el("select", {"aria-label":"Drawing page to review"}, r.pages.map((p) => el("option", {value:p.no,text:`Page ${p.no} · ${p.source}`})));
+  select.value = String(active.no);
+  content.append(pageCard(active, true));
+  select.addEventListener("change", () => {
+    r.reviewPage = Number(select.value);
+    content.replaceChildren(pageCard(r.pages.find((p) => p.no === r.reviewPage), true));
+  });
+  return el("section", {class:"source-review", "aria-label":"Original drawing"},
+    el("label", {class:"source-selector"}, "Source drawing", select), content);
+}
+
+function pageCard(p, focus = false) {
+  const read = p.read;
+  const svg = svgEl("svg", { viewBox: `0 0 ${p.width} ${p.height}`, preserveAspectRatio: "none", role: "img", "aria-label": `View boxes on page ${p.no}` });
+  const fs = Math.max(14, Math.round(p.width / 70));
+  p.boxes.forEach((b, i) => {
+    const n = i + 1;
+    const rect = svgEl("rect", { x: b[0], y: b[1], width: b[2] - b[0], height: b[3] - b[1], "data-box": `${p.no}-${n}` });
+    rect.addEventListener("mouseenter", () => highlight(p.no, [n], true));
+    rect.addEventListener("mouseleave", () => highlight(p.no, [n], false));
+    rect.addEventListener("click", () => document.getElementById(`crop-${p.no}-${n}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+    svg.append(rect, svgEl("text", { x: b[0] + 4, y: b[1] + fs, "font-size": fs, "data-box": `${p.no}-${n}` }));
+    svg.lastChild.textContent = n;
+  });
+  const figure = el("div", { class: "figure" }, el("div", { class: "stage" },
+    el("img", { src: `/api/page/${p.sha}`, loading:"lazy", decoding:"async", alt: `Page ${p.no} of the drawing`, width: p.width, height: p.height }), svg));
+  const crops = el("div", { class: "crops" });
+  if (!read) crops.append(el("p", { class: "hint", text: `${p.boxes.length} view boxes found by code. Not read (no model chosen).` }));
+  else for (const v of read.views) {
+    const card = el("div", { class: "crop", id: `crop-${p.no}-${v.no}`, "data-box": `${p.no}-${v.no}`,
+      onmouseenter: () => highlight(p.no, [v.no], true), onmouseleave: () => highlight(p.no, [v.no], false) },
+      el("div", { class: "top" }, el("span", { class: "num", text: v.no }), el("span", { class: `badge ${KIND(v.type)}`, text: v.type }),
+        v.label ? el("b", { text: v.label }) : null, v.scale ? el("span", { class: "cap", text: `scale ${v.scale}` }) : null,
+        v.same_as ? el("span", { class: "cap", text: `same view as ${v.same_as}` }) : null),
+      v.section?.evidence || v.section?.cutting_plane ? el("p", {class:"cap", text:`Section ${v.section.cutting_plane || v.label || ""}: ${v.section.evidence || "Confirm internal geometry."}`}) : null,
+      v.dims.length ? el("div", { class: "chips" }, v.dims.map((d) => el("span", { class: "chip", text: d }))) : el("div", { class: "cap", text: "no dimensions" }));
+    crops.append(card);
+  }
+  const viewContent = focus ? el("details", {class:"source-views"}, el("summary", {text:"Detected views and source readings"}), crops) : crops;
+  const card = el("section", { class: "card" },
+    el("div", { class: "page-head" }, el("b", { text: `Page ${p.no}` }), el("span", { text: `${p.source} · page ${p.source_page} · ${p.width}×${p.height}px` }),
+      el("span", { text: `${p.boxes.length} ${p.region_source === "agent" ? "agent-detected views" : "view boxes"}` }), read ? el("span", { text: `${read.calls} model calls` }) : null),
+    el("div", { class: "page-body" }, figure, viewContent));
+  if (read) {
+    const tb = read.title_block || {};
+    const fields = [["Part", tb.name], ["Material", tb.material], ["Unit", tb.unit], ["Projection", tb.projection], ["Scale", tb.scale]].filter(([, v]) => v);
+    if (fields.length || read.notes.length) card.append(el("div", { class: "tb" }, fields.map(([k, v]) => el("span", {}, `${k}: `, el("b", { text: v }))),
+      read.notes.length ? el("span", {}, "Notes: ", el("b", { text: read.notes.join(" · ") })) : null));
+  }
+  return card;
+}
+
+function dimsCard(r) {
+  const rows = r.pages.filter((p) => p.read).flatMap((p) => p.read.dims.map((d) => ({ ...d, page: p.no, crops: p.read.views })));
+  const counts = { all: rows.length, check: rows.filter((d) => statusOf(d) === "check").length, unplaced: rows.filter((d) => statusOf(d) === "unplaced").length };
+  const tbody = el("tbody");
+  const fill = () => {
+    tbody.replaceChildren(...rows.filter((d) => state.filter === "all" || statusOf(d) === state.filter).map((d) => {
+      const s = statusOf(d);
+      const views = d.views.map((n) => { const v = d.crops[n - 1]; return `${n} ${v ? v.type : ""}${v && v.label ? " " + v.label : ""}`; }).join(", ");
+      return el("tr", { onmouseenter: () => highlight(d.page, d.views, true), onmouseleave: () => highlight(d.page, d.views, false) },
+        el("td", { class: "mono", text: d.id }), el("td", { class: "mono", text: d.text }), el("td", { text: views || "—" }),
+        el("td", {}, el("span", { class: `st ${s}`, text: s === "ok" ? "both reads agree" : s === "check" ? "check: one read only" : "no view: page read only" })));
+    }));
+  };
+  const filters = el("div", { class: "filters", role: "group", "aria-label": "Filter dimensions" });
+  for (const [key, label] of [["all", "All"], ["check", "Check"], ["unplaced", "No view"]]) {
+    filters.append(el("button", { "aria-pressed": String(state.filter === key), text: `${label} (${counts[key]})`, onclick: (e) => {
+      state.filter = key; filters.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget))); fill(); } }));
+  }
+  fill();
+  return el("section", { class: "card" },
+    el("div", { class: "page-head" }, el("b", { text: "Dimensions" }),
+      el("span", { text: "“Both reads agree” means matching readings. Verify critical dimensions against the source; no accuracy score is established." })),
+    el("div", { class: "pad" }, filters),
+    el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, ["ID", "As printed", "Read in view", "Status"].map((h) => el("th", { text: h })))), tbody)));
+}
+
+async function openFromHash() {
+  const id = location.hash.slice(1);
+  if (!/^[0-9a-f]{12}$/.test(id) || (state.result && state.result.id === id)) return;
+  const res = await fetch(`/api/result/${id}`);
+  if (res.ok) return show(await res.json());
+  const t = await fetch(`/api/trace/${id}`);                 // a run that failed has no result, but it has a log
+  if (t.ok) $("#main").replaceChildren(el("div", { class: "msg err", text: `Run ${id} did not finish: its process log shows where and why.` }), logCard(id));
+}
+
+const drop = $("#drop"), pick = $("#pick");
+drop.addEventListener("click", () => pick.click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick.click(); } });
+pick.addEventListener("change", () => { addFiles([...pick.files]); pick.value = ""; });
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); addFiles([...e.dataTransfer.files]); });
+$("#run").addEventListener("click", run);
+window.addEventListener("hashchange", openFromHash);
+renderAgentChat(null);
+loadConfig().catch((error) => { $("#status").textContent = error.message; });
+openFromHash().catch((error) => { $("#main").textContent = `Could not load drawing: ${error.message}`; });
+</script>
+<script src="/ui.js?v=1"></script>
+</body>
+</html>

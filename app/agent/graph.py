@@ -21,7 +21,6 @@ human approves the exact diff; an environment or internal failure never goes to 
 from __future__ import annotations
 
 import json
-import mimetypes
 import re
 import time
 from dataclasses import dataclass
@@ -39,8 +38,10 @@ from app.runner import validate_list
 
 from .guards import HUMAN_ONLY_FLAGS, apply_repair, check_repair, diff_params, find_item, list_hash
 from .prompts import reader_system, repair_system
+from .orchestrator import Orchestrator
+from .workers import ExtractionAgent, SolidWorksAgent
+from .harness import HarnessStopped
 
-STATUSES = ("reading", "awaiting_approval", "building", "repairing", "awaiting_fix_approval", "awaiting_review", "llm_failed", "done", "needs_human", "aborted", "stopped")
 _TRANSIENT = re.compile(r"\b(503|429|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|timed out|timeout|temporarily)\b", re.I)
 
 
@@ -68,6 +69,8 @@ class JobState(TypedDict, total=False):
     detail: str
     events: list[str]
     tokens: dict
+    worker_status: dict               # last task/outcome per worker; additive for old checkpoints
+    harness: dict                     # persistent action/model budgets and bounded ReAct observations
 
 
 @dataclass
@@ -78,6 +81,7 @@ class Deps:
     max_repairs: int = 2                         # repair calls per failed item
     max_format_retries: int = 1                  # automatic re-asks when the reader's reply does not fit the list format
     llm_retry_delay: float = 3.0                 # seconds before the ONE automatic retry of a temporary provider error (503, quota, timeout)
+    workers: Orchestrator | None = None         # legacy callers may still inject a single LLM and build callable
 
 
 def new_job_state(job_id: str, job_dir: str, image: str, draft: dict | None = None) -> JobState:
@@ -96,6 +100,9 @@ def _events(state: JobState, *lines: str) -> list[str]:
 
 def _add_tokens(state: JobState, usage: dict) -> dict:
     t = dict(state.get("tokens") or {"calls": 0, "prompt": 0, "output": 0, "thought": 0})
+    if usage.get("cached"):                                   # answered from the cache: no model call, no tokens
+        t["cached"] = t.get("cached", 0) + 1
+        return t
     t["calls"] += 1
     t["prompt"] += usage.get("prompt_tokens", 0)
     t["output"] += usage.get("output_tokens", 0)
@@ -117,8 +124,9 @@ def _save(job_dir: str, name: str, data: Any) -> None:
 
 
 def _image_part(path: str) -> FilePart:
-    mime = mimetypes.guess_type(path)[0] or "image/png"
-    return FilePart(Path(path).read_bytes(), mime)
+    """The drawing as a model input; its media type comes from the bytes (a .jpg can be a WebP), see app.ingest.file_part."""
+    from app.ingest import file_part
+    return file_part(path)
 
 
 def _reasons_for(draft: dict) -> list[str]:
@@ -152,22 +160,35 @@ def repair_package(state: JobState) -> dict:
                             "failed_probes": [p for p in probes if not p["ok"]], "passed_probes": sum(1 for p in probes if p["ok"]),
                             "notes": rep.get("notes", [])[:6]},
             "built_before": [{"id": i["id"], "feature": i["feature"], "status": i["status"]} for i in report["items"] if ids.index(i["id"]) < ids.index(failure["item_id"])],
-            "human_feedback_on_the_last_suggestion": state.get("fix_feedback")}
+            "human_feedback_on_the_last_suggestion": state.get("fix_feedback"),
+            "recent_observations": [h for h in state.get("harness", {}).get("history", [])
+                                    if h.get("phase") in ("observation", "evaluation")][-6:]}
 
 
 # ------------------------------------------------------------------ the graph
 def build_graph(deps: Deps, checkpointer=None):
+    supervisor = deps.workers or Orchestrator(ExtractionAgent(deps.llm), SolidWorksAgent(deps.llm, build=deps.build))
+    supervisor.solidworks.build = deps.build  # retain the graph's existing build dependency, including injected/offline builders
+
+    def forget(system: str, parts: list) -> None:
+        """Remove a reply the job found invalid from the cache (a client without a cache has no `discard`)."""
+        worker = supervisor.extraction if system == reader_system() else supervisor.solidworks
+        worker.discard(system, parts)
+
     def generate(system: str, parts: list):
         """One model call; a TEMPORARY provider error (503, quota, timeout) is retried once after a short pause. Anything else, or a second failure, is raised."""
+        call = supervisor.read_list if system == reader_system() else supervisor.repair
         try:
-            return deps.llm.generate_json(system, parts)
+            return call(parts)
         except LLMError as ex:
+            if isinstance(ex, HarnessStopped):
+                raise
             if isinstance(ex, LLMJsonError) or not _TRANSIENT.search(str(ex)):
                 ex.retried = False                                              # no automatic retry ran: this kind of error is not retried
                 raise
             time.sleep(deps.llm_retry_delay)
             try:
-                return deps.llm.generate_json(system, parts)
+                return call(parts)
             except LLMError as second:
                 second.retried = True                                           # the one automatic retry ran and failed too
                 raise
@@ -179,7 +200,10 @@ def build_graph(deps: Deps, checkpointer=None):
         if not state.get("image"):
             return {"status": "needs_human", "detail": "this job started from a saved list, so there is no drawing to read again: edit the list or start a new job with the drawing",
                     "events": _events(state, "no drawing to read (job started from a saved list)")}
-        parts: list[Any] = [_image_part(state["image"])]
+        try:
+            parts: list[Any] = [_image_part(state["image"])]
+        except (OSError, LLMError) as ex:                                       # missing or unreadable file: not a model problem
+            return {"status": "needs_human", "detail": f"the drawing cannot be read: {ex}", "events": _events(state, f"drawing unreadable: {ex}")}
         if state.get("note"):
             parts.append(f"The human corrected your previous list. Correction: {state['note']}\nYour previous list:\n{json.dumps(state.get('draft', {}), ensure_ascii=False)}\n"
                          "Write the corrected list.")
@@ -188,6 +212,8 @@ def build_graph(deps: Deps, checkpointer=None):
         for attempt in range(1 + deps.max_format_retries):
             try:
                 resp = generate(reader_system(), parts)
+            except HarnessStopped:
+                raise
             except LLMError as ex:
                 return {"status": "llm_failed", "retry_node": "read", "retried": getattr(ex, "retried", False), "detail": f"the reader call failed: {ex}", "tokens": tokens,
                         "events": _events(state, f"reader call failed: {ex}" + (" (after one automatic retry)" if getattr(ex, "retried", False) else " (no automatic retry for this error)"))}
@@ -198,6 +224,7 @@ def build_graph(deps: Deps, checkpointer=None):
                 error = ""
                 break
             except ValidationError as ex:
+                forget(reader_system(), parts)                                     # an invalid reply is never kept in the cache
                 first = ex.errors()[0]
                 error = f"{'.'.join(str(p) for p in first['loc'])}: {first['msg']}"
                 parts = parts + [f"Your reply does not fit the list format ({error}). Reply again with the corrected JSON only."]
@@ -262,7 +289,7 @@ def build_graph(deps: Deps, checkpointer=None):
         approved = state["approved"]
         if list_hash(approved) != state["approved_hash"]:
             return {"status": "needs_human", "detail": "the approved list changed after approval: refusing to build", "events": _events(state, "hash mismatch: build refused")}
-        out = deps.build(approved, Path(state["job_dir"]))
+        out = supervisor.build_part(approved, Path(state["job_dir"]))
         report, finish = out["report"], out.get("finish")
         _save(state["job_dir"], f"report_{state.get('versions', 1)}_{len(state.get('events', []))}.json", {"report": report, "finish": finish})
         base = {"report": report, "finish": finish, "failure": report.get("failure"), "proposal": None}
@@ -285,8 +312,11 @@ def build_graph(deps: Deps, checkpointer=None):
         repairs = dict(state.get("repairs", {}))
         if repairs.get(item_id, 0) >= deps.max_repairs:
             return {"status": "needs_human", "detail": f"{item_id}: no repair attempts left", "events": _events(state, f"{item_id}: repair attempts used up")}
+        repair_parts = [json.dumps(repair_package(state), ensure_ascii=False)]
         try:
-            resp = generate(repair_system(), [json.dumps(repair_package(state), ensure_ascii=False)])
+            resp = generate(repair_system(), repair_parts)
+        except HarnessStopped:
+            raise
         except LLMError as ex:                                                    # a provider failure is not a repair attempt: it is not counted
             return {"status": "llm_failed", "retry_node": "repair", "retried": getattr(ex, "retried", False), "detail": f"the repair call failed: {ex}",
                     "events": _events(state, f"repair call failed: {ex}" + (" (after one automatic retry)" if getattr(ex, "retried", False) else " (no automatic retry for this error)"))}
@@ -296,8 +326,13 @@ def build_graph(deps: Deps, checkpointer=None):
         if not ok:
             if isinstance(resp.data, dict) and resp.data.get("status") == "needs_human":
                 return {"status": "needs_human", "detail": reason, "repairs": repairs, "tokens": tokens, "events": _events(state, f"repair: {reason}")}
+            forget(repair_system(), repair_parts)                                  # a suggestion the guard rejects is never kept in the cache
             return {"status": "repairing", "repairs": repairs, "tokens": tokens, "fix_feedback": f"your last suggestion was rejected: {reason}",
                     "events": _events(state, f"repair suggestion rejected by the guard: {reason}")}
+        if supervisor.harness.repair_seen(state["approved_hash"], item_id, params):
+            forget(repair_system(), repair_parts)
+            return {"status": "needs_human", "detail": "The same repair keeps returning; review the failed feature",
+                    "repairs": repairs, "tokens": tokens, "events": _events(state, "harness stopped a repeated repair")}
         old = find_item(state["approved"], item_id)["params"]
         proposal = {"item_id": item_id, "params": params, "reason": reason, "diff": diff_params(old, params)}
         _save(state["job_dir"], f"proposal_{item_id}_{repairs[item_id]}.json", proposal)
@@ -351,6 +386,8 @@ def build_graph(deps: Deps, checkpointer=None):
 
     g = StateGraph(JobState)
     for name, fn in (("read", read), ("llm_pause", llm_pause), ("validate", validate), ("approve", approve), ("build", build), ("repair", repair), ("approve_fix", approve_fix), ("review", review)):
+        if name in ("read", "build", "repair"):
+            fn = supervisor.watch_node("extraction" if name == "read" else "solidworks", name, fn)
         g.add_node(name, fn)
     g.add_conditional_edges(START, lambda s: "validate" if s.get("draft") else "read", {"validate": "validate", "read": "read"})   # a saved list skips the model
     g.add_conditional_edges("read", lambda s: "llm_pause" if s["status"] == "llm_failed" else END if s["status"] in ("stopped", "needs_human") else "validate",

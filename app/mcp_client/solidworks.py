@@ -28,6 +28,7 @@ from mcp.client.stdio import stdio_client
 
 from app import config
 from .generated_tools import TOOL_KIND, ToolsMixin
+from .backend import require_source, check_tools, validate_graph, build_check
 
 # Seconds. Anything not listed gets DEFAULT_TIMEOUT.
 DEFAULT_TIMEOUT = 60.0
@@ -39,6 +40,8 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "export_document": 180.0,
     "save_document": 120.0,
     "get_recipe": 30.0,
+    "inspect_assembly": 200.0,
+    "inspect_drawing": 150.0,
 }
 _LOG_ARG_CHARS = 1500
 _LOG_RESULT_CHARS = 600
@@ -171,6 +174,10 @@ class SolidWorksClient(ToolsMixin):
     def __init__(self, exe_path: Path | str | None = None, log_path: Path | None = None):
         # Validate NOW so a bad path fails before anything is launched.
         self.exe_path = check_executable_path(exe_path if exe_path is not None else config.EXECUTION_EXE_PATH)
+        require_source()
+        build = build_check(self.exe_path)
+        if not build["ok"]:
+            raise UnsafePathError("; ".join(build["reasons"]))
         self.server_path = config.MCP_SERVER_PATH.resolve()
         if not self.server_path.is_file():
             raise UnsafePathError(f"MCP adapter not found: {self.server_path}")
@@ -184,10 +191,14 @@ class SolidWorksClient(ToolsMixin):
     async def __aenter__(self) -> "SolidWorksClient":
         params = StdioServerParameters(
             command=str(config.PYTHON_EXE),
-            args=["-B", str(self.server_path)],
+            args=["-B", str(config.MCP_HOST_PATH)],
             env=_clean_env({
                 "EXECUTION_EXE_PATH": str(self.exe_path),   # ALWAYS set (see module docstring)
                 "PYTHONDONTWRITEBYTECODE": "1",
+                "SOLIDWORKS_MCP_REPO": str(config.SOLIDWORKS_REPO_DIR.resolve()),
+                "SOLIDWORKS_ADAPTER_LOG": str(self.log_path.with_name("adapter.log").resolve()),
+                "HTTP_TIMEOUT": str(config.SW_HTTP_TIMEOUT),
+                "ENSURE_TIMEOUT": str(config.SW_ENSURE_TIMEOUT),
             }),
             cwd=str(config.BUILD_DIR),  # not the repo folder
         )
@@ -199,7 +210,11 @@ class SolidWorksClient(ToolsMixin):
             read, write = await stack.enter_async_context(stdio_client(params, errlog=errlog))
             session = await stack.enter_async_context(ClientSession(read, write))
             await asyncio.wait_for(session.initialize(), timeout=60)
-            self.tool_names = [t.name for t in (await asyncio.wait_for(session.list_tools(), timeout=60)).tools]
+            listed = (await asyncio.wait_for(session.list_tools(), timeout=60)).tools
+            compatibility = check_tools(listed)
+            if not compatibility["ok"]:
+                raise RuntimeError(f"SolidWorks MCP tool contract mismatch: {compatibility}")
+            self.tool_names = [t.name for t in listed]
         except BaseException:
             await stack.aclose()
             raise
@@ -248,6 +263,11 @@ class SolidWorksClient(ToolsMixin):
     async def ensure_ready(self) -> ToolResult:
         return await self.call("ensure_ready")
 
+    async def inspect_assembly(self, inspection_type: str = "verification") -> ToolResult:
+        if inspection_type not in ("workspace", "verification"):
+            raise ValueError("unknown assembly inspection type")
+        return await self.call("inspect_assembly", {"inspection_type": inspection_type})
+
     async def open_new_part(self) -> ToolResult:
         return await self.call("open_new_part")
 
@@ -261,6 +281,10 @@ class SolidWorksClient(ToolsMixin):
         return await self.call("get_recipe", {"section": section, "profile": profile})
 
     async def submit_feature_graph(self, graph: dict | str, fresh_document: bool = True) -> ToolResult:
+        parsed = json.loads(graph) if isinstance(graph, str) else graph
+        errors = validate_graph(parsed)
+        if errors:
+            raise ValueError("SolidWorks feature graph is invalid: " + "; ".join(errors))
         text = graph if isinstance(graph, str) else json.dumps(graph)
         return await self.call("submit_feature_graph", {"graph": text, "fresh_document": fresh_document})
 
@@ -279,6 +303,9 @@ class SolidWorksClient(ToolsMixin):
 
     async def save_document(self, file_path: Path | str) -> ToolResult:
         return await self.call("save_document", {"file_path": str(check_output_path(file_path))})
+
+    async def inspect_drawing(self) -> ToolResult:
+        return await self.call("inspect_drawing")
 
     async def export_document(self, fmt: str, file_path: Path | str) -> ToolResult:
         if fmt not in ("STEP", "IGES", "STL", "PDF", "DWG", "DXF"):

@@ -217,43 +217,10 @@ class CutFeature:
         return tuple([float(v) for v in g.split(",")] for g in m.groups())  # type: ignore[return-value]
 
     def entities_in_face_frame(self, origin: list[float], xdir: list[float], ydir: list[float], frame: PlaneFrame) -> list[dict]:
-        """add_sketch_entities records. Shapes are built in the datum frame (metres), mapped to world at the face height,
-        then projected into the face's own sketch frame (u, v) with dot products."""
-        h = self.offset * factor(self.unit)
-
-        def uv(x: float, y: float) -> tuple[float, float]:
-            p = frame.to_world(x, y, h)
-            d = [p[i] - origin[i] for i in range(3)]
-            return sum(d[i] * xdir[i] for i in range(3)), sum(d[i] * ydir[i] for i in range(3))
-
-        recs: list[dict] = []
-        for shape in self.shape_segments_m():
-            for s in shape:
-                if s["kind"] == "circle":
-                    u, v = uv(s["cx"], s["cy"])
-                    recs.append({"entity_type": "circle", "cx": u, "cy": v, "radius": s["diameter"] / 2})
-                elif s["kind"] == "line":
-                    (u1, v1), (u2, v2) = uv(s["x1"], s["y1"]), uv(s["x2"], s["y2"])
-                    recs.append({"entity_type": "line", "x1": u1, "y1": v1, "x2": u2, "y2": v2})
-                else:
-                    (cu, cv), (u1, v1), (u2, v2) = uv(s["cx"], s["cy"]), uv(s["x1"], s["y1"]), uv(s["x2"], s["y2"])
-                    # a slot end is exactly a half circle, so the sweep sense must be explicit; the mapping to (u, v) may mirror it
-                    recs.append({"entity_type": "arc_center", "cx": cu, "cy": cv, "x1": u1, "y1": v1, "x2": u2, "y2": v2,
-                                 "direction": self._arc_direction(s, uv)})
-        return recs
-
-    @staticmethod
-    def _arc_direction(seg: dict, uv) -> int:
-        """+1 / -1 sweep sense of the arc AFTER mapping to (u, v): the sign of the cross product of start and mid radii."""
-        cx, cy = seg["cx"], seg["cy"]
-        ang1 = math.atan2(seg["y1"] - cy, seg["x1"] - cx)
-        sweep = math.pi * seg["dir"]                    # a slot end is exactly a half circle in the datum frame
-        mid = ang1 + sweep / 2
-        r = math.hypot(seg["x1"] - cx, seg["y1"] - cy)
-        pm = (cx + r * math.cos(mid), cy + r * math.sin(mid))
-        (cu, cv), (u1, v1), (um, vm) = uv(cx, cy), uv(seg["x1"], seg["y1"]), uv(*pm)
-        cross = (u1 - cu) * (vm - cv) - (v1 - cv) * (um - cu)
-        return 1 if cross > 0 else -1
+        """Use the same validated frame mapping as profile cuts and face bosses."""
+        from .face_sketch import FaceFrame
+        mapping = FaceFrame(origin, xdir, ydir, frame, self.offset * factor(self.unit))
+        return mapping.records([segment for shape in self.shape_segments_m() for segment in shape])
 
     async def _pick_face(self, ctx: FeatureContext, frame: PlaneFrame) -> dict:
         """The create_sketch arguments that select the face to sketch on: its index.

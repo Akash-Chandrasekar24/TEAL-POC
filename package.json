@@ -1,0 +1,10 @@
+{
+  "scripts": {"build:ui": "esbuild app/web/ui.jsx --bundle --minify --outfile=app/web/ui.js --loader:.jsx=jsx"},
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

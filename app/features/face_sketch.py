@@ -11,11 +11,11 @@ Face choice: any planar face at the height whose outward normal faces the way th
 from __future__ import annotations
 
 import json
-import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .base import POS_TOL_M, FeatureContext, FeatureRequestError, PlaneFrame, read_geometry
 from .cut_feature import CutFeature
+from .frames import SketchFrame
 
 
 def pick_face_index(faces: list[dict], frame: PlaneFrame, at_m: float, outward: int) -> int:
@@ -36,12 +36,19 @@ class FaceFrame:
     ydir: list[float]
     datum: PlaneFrame
     height_m: float
+    _frame: SketchFrame = field(init=False, repr=False)
+    _orientation: int = field(init=False, repr=False)
+
+    def __post_init__(self):
+        target = SketchFrame(self.origin, self.xdir, self.ydir)
+        source = self.datum.sketch_frame(self.height_m)
+        object.__setattr__(self, "_frame", target)
+        object.__setattr__(self, "_orientation", source.orientation_to(target, POS_TOL_M))
 
     def uv(self, x: float, y: float) -> tuple[float, float]:
         """Datum sketch point (m) lying on the face plane -> the face sketch's own (u, v)."""
         p = self.datum.to_world(x, y, self.height_m)
-        d = [p[i] - self.origin[i] for i in range(3)]
-        return sum(d[i] * self.xdir[i] for i in range(3)), sum(d[i] * self.ydir[i] for i in range(3))
+        return self._frame.project(p, POS_TOL_M)
 
     def records(self, segments: list[dict]) -> list[dict]:
         """add_sketch_entities records for graph-style segments (metres, datum frame): circle, line, arc (centre + ends + sense)."""
@@ -61,17 +68,10 @@ class FaceFrame:
         return out
 
     def _sense(self, s: dict) -> int:
-        """+1 / -1 sweep sense of an arc AFTER mapping into the face frame (a mirrored frame flips it): the sign of the cross product of the
-        start radius and the mid-arc radius."""
-        cx, cy = s["cx"], s["cy"]
-        a1, a2 = math.atan2(s["y1"] - cy, s["x1"] - cx), math.atan2(s["y2"] - cy, s["x2"] - cx)
-        sweep = (a2 - a1) % (2 * math.pi) if s["dir"] == 1 else -((a1 - a2) % (2 * math.pi))
-        if abs(sweep) < 1e-12:
-            sweep = 2 * math.pi * s["dir"]
-        r = math.hypot(s["x1"] - cx, s["y1"] - cy)
-        mid = (cx + r * math.cos(a1 + sweep / 2), cy + r * math.sin(a1 + sweep / 2))
-        (cu, cv), (u1, v1), (um, vm) = self.uv(cx, cy), self.uv(s["x1"], s["y1"]), self.uv(*mid)
-        return 1 if (u1 - cu) * (vm - cv) - (v1 - cv) * (um - cu) > 0 else -1
+        """Rigid planar maps preserve arc sweep except when the frame is mirrored."""
+        if s["dir"] not in (-1, 1):
+            raise FeatureRequestError("arc direction must be +1 or -1")
+        return s["dir"] * self._orientation
 
 
 async def sketch_profile_on_face(ctx: FeatureContext, frame: PlaneFrame, at_m: float, outward: int, segments: list[dict]):

@@ -6,6 +6,7 @@
 # Python
 .venv/
 venv/
+node_modules/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -21,4 +22,12 @@ build/
 # Other people's code (AGPL): fetch it yourself, see third_party/README.md
 third_party/*
 !third_party/README.md
+!third_party/solidworks.lock.json
 solidpilot/
+
+# Benchmark runs (scores + overlay pictures)
+eval/runs/
+
+# Stray screenshots (put pictures under inputs/ or docs/)
+/image*.png
+/scripts/image.png

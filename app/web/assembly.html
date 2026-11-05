@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Assembly planner</title>
+<style>
+:root{color-scheme:light dark;font:15px/1.5 system-ui,sans-serif;--line:#8793a866;--muted:#788392}
+body{max-width:1200px;margin:24px auto;padding:0 20px}h1{margin-bottom:4px}h2{font-size:19px}
+section{border:1px solid var(--line);border-radius:10px;padding:18px;margin:20px 0}
+label{display:inline-flex;flex-direction:column;gap:5px;margin:0 12px 10px 0}
+input,select,button,textarea{font:inherit;padding:7px;border:1px solid var(--line);border-radius:5px}
+button,a{cursor:pointer}button:disabled{opacity:.5;cursor:wait}a{color:#5389ee}
+textarea{box-sizing:border-box;width:100%;height:480px;font:13px/1.5 ui-monospace,monospace;tab-size:2}
+table{border-collapse:collapse;width:100%;font-size:14px}td,th{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:8px}
+.scroll{overflow-x:auto}.muted{color:var(--muted)}#message{white-space:pre-wrap}#blockers{color:#d77d30}
+.actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center}code{overflow-wrap:anywhere}#download[hidden]{display:none}
+</style>
+<h1>Assembly planner</h1>
+<p class="muted">Drawing evidence → reviewed components → placements and mates → checked assembly</p>
+<p><a href="/">Drawing reader</a> · <a id="drawing" href="/">View source sheets</a></p>
+<section>
+ <h2>1. Read the BOM across all sheets</h2>
+ <label>Saved drawing ID<input id="result" maxlength="12" pattern="[0-9a-f]{12}" placeholder="From the drawing reader"></label>
+ <label>Model provider<select id="provider"></select></label>
+ <button id="read">Read assembly BOM</button>
+ <p class="muted">Repeated table rows are merged by scope and item number. Review unreadable quantities and conflicting identifiers against the original sheets.</p>
+ <div id="bom" class="scroll"></div>
+</section>
+<section>
+ <h2>2. Supply the component geometry</h2>
+ <label>BOM row<select id="bom-id"></select></label>
+ <label>SLDPRT file<input type="file" id="model" accept=".sldprt"></label>
+ <label>Configuration<input id="configuration" placeholder="Exact configuration name"></label>
+ <label>Source<select id="origin"><option value="supplied">Supplied component</option><option value="custom_features">Built with custom features</option></select></label>
+ <label>Model evidence<input id="provenance" placeholder="Drawing/revision or reviewed part job"></label>
+ <button id="attach" disabled>Attach model</button>
+ <p class="muted">Use exact supplier models for purchased parts. Build fabricated parts using the existing custom feature workflow, review their dimensions, and attach the resulting SLDPRT. Nested assemblies and STEP conversion need a separate import step.</p>
+ <div id="models"></div>
+</section>
+<section>
+ <h2>3. Review the assembly plan</h2>
+ <p>Confirm each BOM row and model after comparison with the drawing, then set <code>bom_complete</code> and <code>unit_confirmed</code>. Enter each occurrence's placement and dimensional evidence, analytic face selectors for mates, and expected overall size with its evidence. All lengths use the plan's unit; mate angles use degrees.</p>
+ <p class="muted">Clear an issue only after resolving it against source evidence. Missing geometry and unknown dimensions block approval. File uploads screen the container format; geometry and configurations are checked in SolidWorks during execution.</p>
+ <div class="actions"><button id="placeholders" disabled>Add missing occurrence placeholders</button><button id="validate" disabled>Save review and check blockers</button></div>
+ <p><label for="plan">Assembly JSON (advanced editor)</label><textarea id="plan" spellcheck="false" aria-label="Assembly plan JSON"></textarea></p>
+ <div id="blockers" aria-live="polite"></div>
+ <p id="download" hidden><a id="download-link" download="assembly-plan.json">Download saved assembly plan</a></p>
+ <p class="muted">The downloaded plan can be incomplete while you gather details. Approval and execution are separate CLI steps. This page never starts SolidWorks.</p>
+ <pre id="commands"></pre>
+ <details><summary>Placement and mate example</summary><pre>{"id":"pump-1", "bom_id":"B2", "fixed":false,
+ "placement":{"translation":[325,200,500],
+ "rotation":[1,0,0,0,1,0,0,0,1],
+ "evidence":"Reviewed mounting drawing: dimensions D12/D14/D17", "confirmed":true}}
+
+{"id":"M1", "type":"concentric", "alignment":"closest", "flip":false,
+ "a":{"occurrence":"pump-1", "kind":"cylinder", "point":[0,0,0], "direction":[0,0,1], "radius":10},
+ "b":{"occurrence":"pipe-1", "kind":"cylinder", "point":[0,0,0], "direction":[0,0,1], "radius":10},
+ "evidence":"Reviewed flange connection", "confirmed":true}</pre>
+ <p>These numbers illustrate the schema. Surface points are in each part's local coordinates. Plane selectors need point and direction; cylinders also need radius. Multiple matching faces stop execution. Assembly rotations use SolidWorks MathTransform row-major values.</p></details>
+</section>
+<p id="message" role="status" aria-live="polite"></p>
+<script>
+const $ = id => document.getElementById(id);
+let artifact = null, busy = false;
+function edited(){ $('download').hidden = true; $('commands').textContent = ''; }
+function text(tag, value){ const e=document.createElement(tag); e.textContent=value; return e; }
+async function api(path, body){
+ const response=await fetch(path, body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ const data=await response.json(); if(!response.ok) throw Error(data.error||`HTTP ${response.status}`); return data;
+}
+function editor(){ if(!artifact) throw Error('Read or reopen a BOM first'); return JSON.parse($('plan').value); }
+function setPlan(plan){ $('plan').value=JSON.stringify(plan,null,2); edited(); showTables(plan); }
+function showTables(plan){
+ const table=document.createElement('table'), header=document.createElement('tr');
+ for(const label of ['Row','Part number','Description','Quantity','Kind','Evidence']) header.append(text('th',label)); table.append(header);
+ for(const row of plan.bom){ const tr=document.createElement('tr');
+  for(const value of [row.id,row.part_number,row.description,row.quantity??'Unknown',row.kind,row.evidence.map(e=>`Page ${e.page}: ${e.text}`).join('\n')]) tr.append(text('td',value)); table.append(tr); }
+ $('bom').replaceChildren(table);
+ const prior=$('bom-id').value; $('bom-id').replaceChildren();
+ for(const row of plan.bom){const option=text('option',`${row.id}: ${row.part_number||row.description}`);option.value=row.id;$('bom-id').append(option);} if(plan.bom.some(r=>r.id===prior)) $('bom-id').value=prior;
+ $('models').replaceChildren(...plan.models.map(m=>text('p',`${m.bom_id}: ${m.source_name} / ${m.configuration} — ${m.confirmed?'review confirmed':'review needed'}`)));
+}
+function show(loaded){
+ artifact=loaded; setPlan(loaded.plan);
+ $('blockers').replaceChildren(text('p',loaded.status==='ready_for_approval'?'Checks passed. Review and approve the saved plan in the CLI.':`${loaded.blockers.length} item(s) need information:`));
+ if(loaded.blockers.length){const list=document.createElement('ul');for(const b of loaded.blockers)list.append(text('li',b));$('blockers').append(list);}
+ $('download-link').href=`/api/assembly/${loaded.result_id}/${loaded.id}/plan`;$('download').hidden=false;
+ $('commands').textContent='python scripts/run_assembly.py check assembly-plan.json\npython scripts/run_assembly.py start assembly-plan.json\npython scripts/run_assembly.py approve JOB_ID\n\nWhen licensed SolidWorks is available:\npython scripts/run_assembly.py execute JOB_ID --solidworks\npython scripts/run_assembly.py accept JOB_ID  # after visual/drawing review';
+ history.replaceState(null,'',`#${loaded.result_id}/${loaded.id}`);
+ $('result').value=loaded.result_id; $('drawing').href=`/#${loaded.result_id}`;
+}
+function buttons(){for(const id of ['read','attach','validate','placeholders'])$(id).disabled=busy||(id!=='read'&&!artifact);}
+async function action(fn){if(busy)return;busy=true;buttons();$('message').textContent='Working…';try{await fn();if($('message').textContent==='Working…')$('message').textContent='Saved. Review the evidence and remaining blockers.';}catch(e){$('message').textContent=e.message;}finally{busy=false;buttons();}}
+$('plan').addEventListener('input',edited);
+$('result').addEventListener('input',()=>{artifact=null;edited();$('plan').value='';for(const id of ['bom','models','blockers'])$(id).replaceChildren();buttons();});
+$('read').onclick=()=>action(async()=>{const rid=$('result').value.trim();if(!/^[0-9a-f]{12}$/.test(rid))throw Error('Enter a saved drawing ID');show(await api('/api/assembly/read',{result_id:rid,llm:$('provider').value}));});
+$('validate').onclick=()=>action(async()=>{edited();show(await api('/api/assembly/review',{result_id:artifact.result_id,attempt:artifact.id,plan:editor()}));});
+$('attach').onclick=()=>action(async()=>{
+ const plan=editor(), file=$('model').files[0], configuration=$('configuration').value.trim(), provenance=$('provenance').value.trim(), bom_id=$('bom-id').value;
+ if(!file||!configuration||!provenance||!plan.bom.some(r=>r.id===bom_id))throw Error('Choose a BOM row, model, exact configuration and model evidence');
+ if(file.size>40*1024*1024)throw Error('Model must be under 40 MB');
+ const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(Error('Cannot read the component file'));reader.readAsDataURL(file);});
+ const uploaded=await api('/api/assembly/model',{name:file.name,data});
+ const model={bom_id,sha256:uploaded.sha256,source_name:uploaded.source_name,configuration,origin:$('origin').value,provenance,confirmed:false};
+ plan.models=plan.models.filter(m=>m.bom_id!==bom_id);plan.models.push(model);setPlan(plan);
+ $('message').textContent='Model attached to the draft. Confirm its identity after review, then save the plan.';
+});
+$('placeholders').onclick=()=>action(async()=>{
+ const plan=editor();let added=0;
+ for(const row of plan.bom){if(!Number.isInteger(row.quantity)||row.quantity<1||row.quantity>1000)continue;
+  const existing=plan.occurrences.filter(o=>o.bom_id===row.id).length;
+  for(let i=existing;i<row.quantity;i++){let id=`${row.id}-${i+1}`;while(plan.occurrences.some(o=>o.id===id))id+='x';plan.occurrences.push({id,bom_id:row.id,placement:null,fixed:false});added++;}}
+ setPlan(plan);$('message').textContent=`Added ${added} placeholders. Enter reviewed placements; none were inferred.`;
+});
+(async()=>{try{
+ const cfg=await api('/api/config');for(const [name,ok]of Object.entries(cfg.providers)){const option=text('option',name+(ok?'':' (unavailable)'));option.value=name;option.disabled=!ok;$('provider').append(option);} $('provider').value=cfg.default;
+ const parts=location.hash.slice(1).split('/');if(/^[0-9a-f]{12}$/.test(parts[0])){$('result').value=parts[0];$('drawing').href=`/#${parts[0]}`;if(/^[0-9a-f]{12}$/.test(parts[1]||''))show(await api(`/api/assembly/${parts[0]}/${parts[1]}`));}
+}catch(e){$('message').textContent=e.message;}finally{buttons();}})();
+</script>
+</html>

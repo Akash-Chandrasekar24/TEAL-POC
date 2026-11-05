@@ -49,14 +49,16 @@ def step_unit(path: Path) -> str:
 
 
 async def finish_part(sw: SolidWorksClient, out_dir: Path, name: str, unit: str, *, expected_bbox_mm: list[list[float]] | None = None,
-                      bbox_tol_mm: float = 0.5) -> FinishReport:
+                      bbox_tol_mm: float = 0.5, review_only: bool = False) -> FinishReport:
     """Save + export the ACTIVE part into out_dir (created if needed; files of the same name are replaced)."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = safe_name(name)
     paths = {"SLDPRT": out_dir / f"{stem}.SLDPRT", "STEP": out_dir / f"{stem}.step", "STL": out_dir / f"{stem}.stl", "PREVIEW": out_dir / f"{stem}_preview.png"}
+    if review_only:
+        paths.pop("STEP")
     report = FinishReport(files={k: str(v) for k, v in paths.items()})
-    for key in ("SLDPRT", "STEP", "STL", "PREVIEW"):
+    for key in paths:
         paths[key].unlink(missing_ok=True)
 
     def check(label: str, ok: bool, detail: str) -> bool:
@@ -65,15 +67,16 @@ async def finish_part(sw: SolidWorksClient, out_dir: Path, name: str, unit: str,
 
     saved = await sw.save_document(paths["SLDPRT"])
     check("save SLDPRT", saved.ok and paths["SLDPRT"].is_file(), saved.text[:120])
-    step = await sw.export_document("STEP", paths["STEP"])
-    check("export STEP", step.ok and paths["STEP"].is_file(), step.text[:120])
+    if not review_only:
+        step = await sw.export_document("STEP", paths["STEP"])
+        check("export STEP", step.ok and paths["STEP"].is_file(), step.text[:120])
     stl = await sw.export_document("STL", paths["STL"])
     check("export STL", stl.ok and paths["STL"].is_file(), stl.text[:120])
-    for key in ("SLDPRT", "STEP", "STL"):
+    for key in (key for key in paths if key != "PREVIEW"):
         if paths[key].is_file():
             check(f"{key} not empty", paths[key].stat().st_size > 0, f"{paths[key].stat().st_size:,} bytes")
 
-    if paths["STEP"].is_file() and paths["STEP"].stat().st_size > 0:
+    if "STEP" in paths and paths["STEP"].is_file() and paths["STEP"].stat().st_size > 0:
         got = step_unit(paths["STEP"])
         check("STEP length unit", got == unit, f"STEP is {got}, the list's unit is {unit}")
     if paths["STL"].is_file() and paths["STL"].stat().st_size > 0:
