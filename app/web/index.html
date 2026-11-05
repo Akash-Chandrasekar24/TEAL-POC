@@ -455,7 +455,7 @@ function designCard(r) {
     const note = el("p", { class: "meta-warn", role: "alert" });
     const field = el("label", { class: "meta-field" }, label + " ", select);
     notes.append(note);
-    const sync = () => { const unclear = select.value === "unknown"; field.classList.toggle("needs-input", unclear); note.textContent = unclear ? why : ""; };
+    const sync = () => { const unclear = select.value === "unknown"; field.className = unclear ? "meta-field needs-input" : "meta-field"; note.textContent = unclear ? why : ""; };
     select.addEventListener("change", sync); sync();
     return field;
   };
@@ -477,7 +477,7 @@ function designCard(r) {
     const flag=el("button",{class:"reading-ask",type:"button",text:"Flag for review"});
     flag.addEventListener("click",() => {item.forced=true;checked.checked=false;item.approved=false;item.row.className="measurement-card needs-review";flag.disabled=true;item.row.append(el("p",{class:"reading-reason",text:"Flagged by you. Save to request a new review."}));redrawLanes();controls.dispatchEvent(new Event("change",{bubbles:true}));});
     correction.addEventListener("input",() => {checked.checked=true;item.approved=false;});
-    checked.addEventListener("change",() => {item.forced=!checked.checked;});
+    checked.addEventListener("change",() => {item.forced=!checked.checked;if(item.redraw)item.redraw();});
     const confidence=el("span",{class:`confidence-pill ${score === null ? "unscored" : approved ? "high" : "review"}`,
       title:assessment.confidence_reason || "Extraction-agent estimate, not a calibrated accuracy probability.","aria-label":`Extraction agent confidence for ${d.id}: ${score === null ? "not scored" : score + " percent"}`,text:score===null ? "Not scored" : `${score}%`});
     const edit=el("details",{class:"reading-edit"},el("summary",{text:approved ? "Correct reading" : "Verify or correct"}),
@@ -494,15 +494,19 @@ function designCard(r) {
   });
   const lane=(approved,title,subtitle) => {
     const items=inputs.filter(item=>item.approved===approved);
-    const pending=items.filter(item=>!item.checked.checked).length;
+    const open=approved ? items : items.filter(item=>!item.checked.checked);          // still needs the reviewer
+    const done=approved ? [] : items.filter(item=>item.checked.checked);              // verified by the reviewer: kept, but out of the way
     return el("section",{class:`review-lane ${approved ? "approved-lane" : "attention-lane"}`,"aria-label":title},
-      el("div",{class:"lane-heading"},el("span",{class:"lane-dot"}),el("h3",{text:title}),el("span",{class:"lane-count",text:approved ? items.length : pending})),
+      el("div",{class:"lane-heading"},el("span",{class:"lane-dot"}),el("h3",{text:title}),el("span",{class:"lane-count",text:open.length})),
       el("p",{class:"lane-description",text:subtitle}),
-      el("div",{class:"reading-list"},items.length ? items.map(i=>i.row) : el("p",{class:"lane-empty",text:approved ? "Clear readings above 80% will appear here." : "All readings have been reviewed."})));
+      el("div",{class:"reading-list"},
+        open.length ? open.map(i=>i.row) : el("p",{class:"lane-empty",text:approved ? "Clear readings above 80% will appear here." : "All readings have been reviewed."}),
+        done.length ? el("details",{class:"verified-group"},el("summary",{text:`Verified by you (${done.length})`}),done.map(i=>i.row)) : null));
   };
   const review=el("div",{class:"review-lanes"},
     lane(true,"AI approved","Agent confidence above 80%"),lane(false,"Needs review","Your input where it matters"));
   const redrawLanes=()=>review.replaceChildren(lane(true,"AI approved","Agent confidence above 80%"),lane(false,"Needs review","Your input where it matters"));
+  inputs.forEach(item=>{item.redraw=redrawLanes;});
   const clarifications = [];
   const note = {value:model.resolutions.note || ""};
   const btn = el("button", { class: "btn", type: "button", text: "Review measurements and continue" });

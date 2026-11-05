@@ -82,3 +82,15 @@ def test_unread_pages_and_fractional_callouts_do_not_become_silent_lengths():
 def test_negative_correction_retains_its_sign():
     m = reconcile(drawing_result(), Resolutions.model_validate({"dimensions": [{"id": "P1.d5", "text": "-5"}]}))
     assert not m.issues and m.dimensions[4].nominal() == -5
+
+
+def test_angle_readings_do_not_raise_a_length_blocker_but_unreadable_ones_still_do():
+    result = drawing_result()
+    dims = result["pages"][0]["read"]["dims"]
+    dims[0].update(text="6°", token="")          # the engine sheet's angle callouts have no length token
+    dims[1].update(text="33°", token="")
+    dims[2].update(text="2X45°", token="")
+    angle_issues = [q for q in reconcile(result).issues if "usable length" in q]
+    assert angle_issues == []
+    dims[3].update(text="smudge", token="")      # a genuinely unreadable reading must still block
+    assert any("P1.d4" in q and "usable length" in q for q in reconcile(result).issues)

@@ -238,7 +238,8 @@ def reconcile(result: dict, resolutions: Resolutions | None = None) -> DrawingMo
         elif (d.single_source or not d.views or not d.token) and not d.confirmed and not ai_approved:
             issues.append(f"{d.id} ({d.text}): confirm this {'unplaced' if not d.views else 'single-source or ambiguous'} dimension against page {d.page}")
         # An invalid/ambiguous legacy row cannot be made usable just by ticking a box.
-        if d.corrected_text is not None or not d.token or "/" in d.text:
+        # An angle (6°, 33°, 2X45°) is not a length and needs no nominal here; it can only block if a feature tries to use it as one.
+        if (d.corrected_text is not None or not d.token or "/" in d.text) and "°" not in d.effective_text:
             try:
                 d.nominal()
             except ValueError as ex:
