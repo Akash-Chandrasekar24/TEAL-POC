@@ -59,8 +59,14 @@ class ExtractionAgent(_ModelWorker):
         return read_page(self.model_client, page_no, png, boxes)
 
     def read_hybrid(self, page_no, png, ocr, strategy, transport="verbose"):
-        from app.perception.hybrid import extract
-        return extract(self.model_client, page_no, png, ocr, strategy, transport=transport)
+        from app.llm.domo import effort_override
+        from app.perception.hybrid import extract, page_effort
+        effort = page_effort(ocr)                       # None = keep the configured effort; only Domo calls read the override
+        if effort:
+            from app import trace
+            trace.current().event("read", "simple page: reduced reasoning effort", page=page_no, effort=effort, ocr_lines=len(ocr.get("lines") or []))
+        with effort_override(effort):
+            return extract(self.model_client, page_no, png, ocr, strategy, transport=transport)
 
     def interpret(self, model, pictures):
         from app.drawing.planner import interpret

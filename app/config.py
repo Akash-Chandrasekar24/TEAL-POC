@@ -48,6 +48,12 @@ DOMO_MODEL = os.getenv("DOMO_MODEL", "").strip() or "domo.openai.gpt-5.6-sol"
 DOMO_REASONING_EFFORT = os.getenv("DOMO_REASONING_EFFORT", "high").strip().lower() or "high"
 EXTRACTION_REASONING_EFFORT = os.getenv("EXTRACTION_REASONING_EFFORT", "medium").strip().lower() or "medium"
 CAD_REASONING_EFFORT = os.getenv("CAD_REASONING_EFFORT", "high").strip().lower() or "high"
+# R1/R2 only, Domo only: pages whose local OCR finds MIN..MAX text lines are "simple" and are read at SIMPLE_EFFORT instead of
+# EXTRACTION_REASONING_EFFORT. Measured on 2 sheets (plate 10 lines, support block 17): same exact-text recall, 18-29 s vs 39-62 s.
+# The dense clamp (25 lines) and pages with little or no OCR text keep the normal effort. MAX=0 switches this off.
+EXTRACTION_SIMPLE_EFFORT = os.getenv("EXTRACTION_SIMPLE_EFFORT", "none").strip().lower() or "none"
+EXTRACTION_SIMPLE_MIN_OCR_LINES = int(os.getenv("EXTRACTION_SIMPLE_MIN_OCR_LINES", "8"))
+EXTRACTION_SIMPLE_MAX_OCR_LINES = int(os.getenv("EXTRACTION_SIMPLE_MAX_OCR_LINES", "20"))
 DOMO_MAX_IN_FLIGHT = max(1, int(os.getenv("DOMO_MAX_IN_FLIGHT", "2")))  # Domo calls at once per process: ~6 stalled for 10 min (measured 2026-11-03)
 
 

@@ -15,6 +15,8 @@ import hashlib
 import io
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Sequence
 
 import httpx
@@ -29,6 +31,20 @@ MAX_IMAGE_SIDE = 2048
 _DOMO_MIMES = ("image/png", "image/jpeg", "image/webp")
 JSON_ONLY = "\n\nReply with only one JSON value: no prose, no code fence."
 _EFFORTS = {"none", "low", "medium", "high", "xhigh", "max"}
+_EFFORT = ContextVar("domo_effort_override", default=None)
+
+
+@contextmanager
+def effort_override(effort: str | None):
+    """Request this reasoning effort for Domo calls made inside the block (this thread/context only); None = each client's own.
+    Works through the counting / tracing / caching wrappers, and the cache key follows it."""
+    if effort is not None and effort not in _EFFORTS:
+        raise LLMError("reasoning effort must be none, low, medium, high, xhigh or max")
+    token = _EFFORT.set(effort)
+    try:
+        yield
+    finally:
+        _EFFORT.reset(token)
 # ponytail: one limit per process; jobs in several processes each get their own, so a shared queue is needed once the system runs on several workers
 _IN_FLIGHT = threading.BoundedSemaphore(config.DOMO_MAX_IN_FLIGHT)
 _HTTP_LOCK = threading.Lock()
@@ -67,11 +83,18 @@ class DomoClient:
         self.reasoning_effort = (reasoning_effort if reasoning_effort is not None else config.DOMO_REASONING_EFFORT).strip().lower()
         if self.reasoning_effort not in _EFFORTS:
             raise LLMError("DOMO_REASONING_EFFORT must be none, low, medium, high, xhigh or max")
-        self.cache_settings = {"reasoning_effort": self.reasoning_effort}
         self._base = f"https://{host if '.' in host else host + '.domo.com'}"
         timeout=timeout_seconds or config.LLM_TIMEOUT_SECONDS
         self._http = (httpx.Client(headers={"X-DOMO-Developer-Token":token},timeout=timeout,transport=transport)
                       if transport is not None else _http_client(self._base,token,timeout))
+
+    @property
+    def effective_effort(self) -> str:
+        return _EFFORT.get() or self.reasoning_effort
+
+    @property
+    def cache_settings(self) -> dict:
+        return {"reasoning_effort": self.effective_effort}
 
     def generate_json(self, system: str, parts: Sequence[Part]) -> LLMResponse:
         files = [p for p in parts if isinstance(p, FilePart)]
@@ -79,7 +102,7 @@ class DomoClient:
             raise LLMError("Domo takes one picture per call")
         body: dict = {"model": self.model, "input": "\n\n".join(p for p in parts if isinstance(p, str)) or "Read the attached drawing.",
                       "system": system + JSON_ONLY,
-                      "reasoningConfig": {"reasoningEffort": self.reasoning_effort.upper()}}
+                      "reasoningConfig": {"reasoningEffort": self.effective_effort.upper()}}
         path = TEXT_PATH
         if files:
             data, mime = _prepare_image(files[0])

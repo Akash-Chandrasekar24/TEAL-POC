@@ -205,6 +205,16 @@ class HybridPageRead(PageRead):
     evidence: dict = field(default_factory=dict)
 
 
+def page_effort(ocr: dict) -> str | None:
+    """Reasoning effort for a SIMPLE page (by local OCR line count, no extra model call), else None = keep the configured effort.
+    ponytail: line count is a crude complexity proxy validated on two sheets; replace with an engineer-checked benchmark."""
+    from app import config
+    lines = len(ocr.get("lines") or [])
+    if config.EXTRACTION_SIMPLE_MAX_OCR_LINES > 0 and config.EXTRACTION_SIMPLE_MIN_OCR_LINES <= lines <= config.EXTRACTION_SIMPLE_MAX_OCR_LINES:
+        return config.EXTRACTION_SIMPLE_EFFORT
+    return None
+
+
 def extract(llm, page_no: int, png: bytes, ocr: dict, strategy: str = "r1", *, transport="verbose") -> HybridPageRead:
     if strategy not in {"r1", "r2"}:
         raise ValueError("Hybrid strategy must be r1 or r2")
