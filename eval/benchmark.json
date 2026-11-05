@@ -1,0 +1,1850 @@
+{
+ "about": "The benchmark (docs/System_Architecture.docx, phase P0). One entry per drawing set. pages: repo-relative files (a PDF counts as one file with many pages). views: one point INSIDE each view's geometry, in that page's pixels (the page as stored; a PDF page rendered at 150 DPI) - extent: points near the ends of the view's geometry. A view is FOUND when one box holds its point and all its extent points, and no other view's point. dimensions: the dimension texts as printed. dimensions_complete=false: the list may miss some (low resolution), so precision is not scored. verified=false: DRAFTED from the pictures, a human engineer must check every entry before the scores are trusted. build_list: the correct build list, when one exists (null = not written yet). also: other view types that are equally right for that view (a hatched front view is also a section).",
+ "sets": [
+  {
+   "id": "s01_sheet_metal_bracket",
+   "pages": [
+    "inputs/image_1.jpg"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      70,
+      150
+     ],
+     "type": "side",
+     "label": "SIDE VIEW",
+     "extent": [
+      [
+       30,
+       50
+      ],
+      [
+       105,
+       205
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      200,
+      140
+     ],
+     "type": "plan",
+     "label": "TOP VIEW",
+     "extent": [
+      [
+       125,
+       40
+      ],
+      [
+       275,
+       215
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      440,
+      170
+     ],
+     "type": "other",
+     "label": "FLAT PATTERN",
+     "extent": [
+      [
+       300,
+       95
+      ],
+      [
+       525,
+       95
+      ],
+      [
+       440,
+       220
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      330,
+      255
+     ],
+     "type": "detail",
+     "label": "DETAIL G",
+     "extent": [
+      [
+       285,
+       265
+      ],
+      [
+       410,
+       265
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      190,
+      300
+     ],
+     "type": "front",
+     "label": "FRONT VIEW",
+     "extent": [
+      [
+       120,
+       300
+      ],
+      [
+       255,
+       330
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      600,
+      200
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       515,
+       240
+      ],
+      [
+       690,
+       220
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "25mm",
+    "100mm",
+    "70mm",
+    "20",
+    "20",
+    "50mm",
+    "30mm",
+    "2 holes Ø4",
+    "2 holes Ø5",
+    "R5",
+    "3x45°",
+    "3x45°",
+    "35",
+    "70mm",
+    "7.5",
+    "12",
+    "17.50",
+    "22",
+    "22",
+    "2",
+    "R1.5",
+    "R0.5 All",
+    "60°",
+    "Ø4",
+    "Ø14",
+    "Ø22",
+    "Ø30"
+   ],
+   "dimensions_complete": false,
+   "build_list": null,
+   "notes": "sheet metal: the menu cannot build it (sheet_metal_feature not used)"
+  },
+  {
+   "id": "s02_pipe_fitting",
+   "pages": [
+    "inputs/image_2.png"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      450,
+      235
+     ],
+     "type": "plan",
+     "label": "TOP view",
+     "extent": [
+      [
+       150,
+       230
+      ],
+      [
+       825,
+       230
+      ],
+      [
+       450,
+       90
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      1060,
+      330
+     ],
+     "type": "side",
+     "label": "RIGHT view",
+     "extent": [
+      [
+       875,
+       300
+      ],
+      [
+       1210,
+       300
+      ],
+      [
+       1020,
+       120
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      380,
+      640
+     ],
+     "type": "section",
+     "label": "SECTION View",
+     "extent": [
+      [
+       145,
+       640
+      ],
+      [
+       720,
+       520
+      ],
+      [
+       200,
+       775
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      1040,
+      600
+     ],
+     "type": "iso",
+     "label": "ISOMETRIC view",
+     "extent": [
+      [
+       935,
+       620
+      ],
+      [
+       1140,
+       575
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "50.00",
+    "Ø5.00",
+    "Ø5.00",
+    "R5.00",
+    "R12.50",
+    "Ø20.00",
+    "Ø57.50",
+    "Ø20.00",
+    "23.75",
+    "51.25",
+    "Ø57.50",
+    "Ø5.00",
+    "47.50",
+    "Ø15.00",
+    "Ø20.00",
+    "5.00",
+    "3.75",
+    "28.75",
+    "Ø15.00",
+    "Ø20.00",
+    "Ø20.00",
+    "R18.75"
+   ],
+   "dimensions_complete": true,
+   "build_list": null,
+   "notes": "section scale 1:20 printed, numbers are true size"
+  },
+  {
+   "id": "s03_flange_hub",
+   "pages": [
+    "inputs/image_3.jpg"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      133,
+      110
+     ],
+     "type": "plan",
+     "label": "",
+     "extent": [
+      [
+       25,
+       110
+      ],
+      [
+       230,
+       110
+      ],
+      [
+       130,
+       15
+      ],
+      [
+       130,
+       195
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      277,
+      37
+     ],
+     "type": "detail",
+     "label": "DETAIL a",
+     "extent": [
+      [
+       215,
+       30
+      ],
+      [
+       365,
+       30
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      407,
+      83
+     ],
+     "type": "front",
+     "label": "",
+     "extent": [
+      [
+       310,
+       125
+      ],
+      [
+       495,
+       125
+      ],
+      [
+       400,
+       20
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      140,
+      283
+     ],
+     "type": "section",
+     "label": "SECTION S-S",
+     "extent": [
+      [
+       25,
+       300
+      ],
+      [
+       275,
+       250
+      ],
+      [
+       150,
+       320
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      400,
+      217
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       305,
+       240
+      ],
+      [
+       495,
+       250
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "6xØ24",
+    "6xØ40",
+    "30°",
+    "8",
+    "4",
+    "Ø80",
+    "Ø196",
+    "Ø185",
+    "85",
+    "50",
+    "R50",
+    "R58",
+    "5",
+    "2.5",
+    "70",
+    "Ø45",
+    "26",
+    "12",
+    "22",
+    "2 X 45° TYP",
+    "Ø36",
+    "R3 TYP",
+    "Ø30",
+    "Ø18",
+    "43",
+    "Ø32",
+    "Ø15",
+    "Ø30",
+    "45°",
+    "50°",
+    "55°",
+    "45",
+    "Ø8",
+    "70",
+    "55"
+   ],
+   "dimensions_complete": false,
+   "build_list": null,
+   "notes": "design variables A=87, B=120, C=A+3, D=(B/2)-5 replace letters on the drawing"
+  },
+  {
+   "id": "s04_gearbox_housing",
+   "pages": [
+    "inputs/image_4.jpg"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      140,
+      153
+     ],
+     "type": "plan",
+     "label": "TOP VIEW",
+     "extent": [
+      [
+       25,
+       155
+      ],
+      [
+       245,
+       155
+      ],
+      [
+       135,
+       70
+      ],
+      [
+       135,
+       220
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      343,
+      157
+     ],
+     "type": "section",
+     "label": "SECTION B-B",
+     "extent": [
+      [
+       275,
+       180
+      ],
+      [
+       410,
+       180
+      ],
+      [
+       340,
+       70
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      140,
+      320
+     ],
+     "type": "section",
+     "label": "SECTION A-A",
+     "extent": [
+      [
+       50,
+       370
+      ],
+      [
+       230,
+       370
+      ],
+      [
+       90,
+       245
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      330,
+      317
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       255,
+       340
+      ],
+      [
+       405,
+       330
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "120mm",
+    "100mm",
+    "80",
+    "4xR10",
+    "2xR50",
+    "Ø40",
+    "Ø20",
+    "Ø50",
+    "R40",
+    "4xØ10",
+    "4xØ10",
+    "4xR12.50",
+    "87",
+    "62",
+    "Ø22",
+    "R5",
+    "R5",
+    "R5",
+    "15",
+    "15",
+    "Ø20",
+    "Ø24",
+    "25",
+    "60",
+    "75",
+    "50",
+    "R2.50",
+    "5",
+    "10",
+    "45",
+    "R5",
+    "R5",
+    "10",
+    "20",
+    "40",
+    "Ø20",
+    "2xØ10",
+    "40",
+    "R5",
+    "10",
+    "40"
+   ],
+   "dimensions_complete": false,
+   "build_list": null,
+   "notes": "447 px picture: small text hard to read"
+  },
+  {
+   "id": "s05_pipe_elbow",
+   "pages": [
+    "inputs/image_5_no3d.png"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      104,
+      132
+     ],
+     "type": "section",
+     "label": "SECTION A-A",
+     "extent": [
+      [
+       40,
+       90
+      ],
+      [
+       165,
+       170
+      ],
+      [
+       100,
+       225
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      296,
+      164
+     ],
+     "type": "side",
+     "label": "",
+     "extent": [
+      [
+       250,
+       140
+      ],
+      [
+       345,
+       140
+      ],
+      [
+       255,
+       75
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      62,
+      252
+     ],
+     "type": "detail",
+     "label": "DETAIL B",
+     "extent": [
+      [
+       20,
+       250
+      ],
+      [
+       95,
+       265
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      76,
+      348
+     ],
+     "type": "front",
+     "label": "",
+     "extent": [
+      [
+       25,
+       350
+      ],
+      [
+       180,
+       350
+      ],
+      [
+       75,
+       415
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "(360)",
+    "Ø210",
+    "150",
+    "50",
+    "R200",
+    "Ø210",
+    "Ø290",
+    "(360)",
+    "150",
+    "260",
+    "360",
+    "260",
+    "360",
+    "4-R20",
+    "8-Ø60",
+    "10",
+    "Ø30",
+    "4-R20",
+    "260",
+    "360",
+    "360",
+    "260"
+   ],
+   "dimensions_complete": false,
+   "build_list": null,
+   "notes": "watermark over the drawing; scale 1:8"
+  },
+  {
+   "id": "s06_valve_body",
+   "pages": [
+    "inputs/image_6.jpg"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      170,
+      180
+     ],
+     "type": "front",
+     "label": "",
+     "extent": [
+      [
+       20,
+       180
+      ],
+      [
+       265,
+       130
+      ],
+      [
+       165,
+       270
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      420,
+      180
+     ],
+     "type": "section",
+     "label": "A-A",
+     "extent": [
+      [
+       320,
+       250
+      ],
+      [
+       540,
+       150
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      190,
+      460
+     ],
+     "type": "plan",
+     "label": "Б",
+     "extent": [
+      [
+       55,
+       460
+      ],
+      [
+       320,
+       470
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      460,
+      460
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       365,
+       465
+      ],
+      [
+       550,
+       400
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "180",
+    "100",
+    "R10",
+    "R10",
+    "R10",
+    "4x45°",
+    "Ø60",
+    "Ø50",
+    "Ø40",
+    "Ø10",
+    "Ø100",
+    "100",
+    "10",
+    "80",
+    "10",
+    "70",
+    "10",
+    "Ø80",
+    "Ø60",
+    "R10",
+    "Ø60",
+    "Ø30",
+    "Ø100",
+    "Ø10",
+    "Ø15",
+    "Ø60",
+    "100",
+    "Ø80",
+    "R15"
+   ],
+   "dimensions_complete": true,
+   "build_list": null,
+   "notes": "Russian notes: 3 отв. = 3 holes, 4 отв. = 4 holes, 4 фаски = 4 chamfers"
+  },
+  {
+   "id": "s07_bent_bracket",
+   "pages": [
+    "inputs/image_7.png"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      165,
+      95
+     ],
+     "type": "plan",
+     "label": "",
+     "extent": [
+      [
+       85,
+       100
+      ],
+      [
+       265,
+       100
+      ],
+      [
+       160,
+       30
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      420,
+      110
+     ],
+     "type": "iso",
+     "label": "Isometric View",
+     "extent": [
+      [
+       355,
+       70
+      ],
+      [
+       480,
+       120
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      150,
+      220
+     ],
+     "type": "front",
+     "label": "",
+     "extent": [
+      [
+       75,
+       190
+      ],
+      [
+       275,
+       220
+      ],
+      [
+       160,
+       280
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      305,
+      215
+     ],
+     "type": "side",
+     "label": "",
+     "extent": [
+      [
+       280,
+       200
+      ],
+      [
+       340,
+       240
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      455,
+      225
+     ],
+     "type": "section",
+     "label": "SECTION C-C",
+     "extent": [
+      [
+       360,
+       225
+      ],
+      [
+       500,
+       250
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      65,
+      300
+     ],
+     "type": "detail",
+     "label": "DETAIL D",
+     "extent": [
+      [
+       50,
+       300
+      ],
+      [
+       105,
+       300
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "58.00",
+    "25.00",
+    "44.00",
+    "12.00",
+    "R22.00",
+    "2 x Ø5.50 THRU",
+    "Ø12.24",
+    "3.58",
+    "12.00 x 37.00",
+    "150°",
+    "12.00",
+    "42.00",
+    "25.00",
+    "25.00",
+    "80.00 ±0.10",
+    "12.00",
+    "6.00"
+   ],
+   "dimensions_complete": false,
+   "build_list": null,
+   "notes": "tolerances +0.30/0.00 and +0.20/-0.10 present"
+  },
+  {
+   "id": "s08_curved_lever",
+   "pages": [
+    "inputs/image_8.jpg"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      190,
+      200
+     ],
+     "type": "front",
+     "label": "",
+     "extent": [
+      [
+       40,
+       200
+      ],
+      [
+       325,
+       250
+      ],
+      [
+       190,
+       45
+      ],
+      [
+       190,
+       325
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      385,
+      220
+     ],
+     "type": "section",
+     "label": "SECTION B-B",
+     "extent": [
+      [
+       375,
+       60
+      ],
+      [
+       410,
+       365
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      590,
+      170
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       480,
+       100
+      ],
+      [
+       660,
+       300
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "57°",
+    "R25",
+    "R150",
+    "R104",
+    "18°",
+    "4",
+    "45°",
+    "R10",
+    "R26",
+    "R26",
+    "R18",
+    "R34",
+    "R78",
+    "36",
+    "3",
+    "28",
+    "8",
+    "R8",
+    "R16",
+    "R8",
+    "97",
+    "11",
+    "4",
+    "25",
+    "1X45°",
+    "45",
+    "15",
+    "R2",
+    "45"
+   ],
+   "dimensions_complete": true,
+   "build_list": null,
+   "notes": ""
+  },
+  {
+   "id": "s09_support_block",
+   "pages": [
+    "inputs/image_9.png"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      300,
+      230
+     ],
+     "type": "front",
+     "label": "",
+     "extent": [
+      [
+       80,
+       350
+      ],
+      [
+       525,
+       350
+      ],
+      [
+       300,
+       70
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      920,
+      230
+     ],
+     "type": "side",
+     "label": "",
+     "extent": [
+      [
+       680,
+       350
+      ],
+      [
+       1165,
+       150
+      ],
+      [
+       915,
+       70
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      270,
+      690
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       50,
+       800
+      ],
+      [
+       515,
+       500
+      ],
+      [
+       180,
+       925
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      920,
+      700
+     ],
+     "type": "plan",
+     "label": "",
+     "extent": [
+      [
+       680,
+       700
+      ],
+      [
+       1160,
+       700
+      ],
+      [
+       1000,
+       480
+      ],
+      [
+       1000,
+       915
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "R24",
+    "R12.5",
+    "89",
+    "130",
+    "R14",
+    "Ø48",
+    "119",
+    "19",
+    "R24",
+    "R18",
+    "R9",
+    "R45",
+    "R35",
+    "R18",
+    "75",
+    "12",
+    "56",
+    "128",
+    "193"
+   ],
+   "dimensions_complete": true,
+   "build_list": null,
+   "notes": "no frame or title block"
+  },
+  {
+   "id": "s10_bracket_83",
+   "pages": [
+    "inputs/image_10.jpg"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      300,
+      120
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       230,
+       130
+      ],
+      [
+       355,
+       100
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      110,
+      230
+     ],
+     "type": "plan",
+     "label": "",
+     "extent": [
+      [
+       50,
+       210
+      ],
+      [
+       180,
+       210
+      ],
+      [
+       110,
+       280
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      110,
+      410
+     ],
+     "type": "front",
+     "label": "",
+     "extent": [
+      [
+       50,
+       360
+      ],
+      [
+       180,
+       360
+      ],
+      [
+       110,
+       450
+      ]
+     ],
+     "also": [
+      "section"
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      310,
+      400
+     ],
+     "type": "side",
+     "label": "",
+     "extent": [
+      [
+       255,
+       370
+      ],
+      [
+       350,
+       360
+      ],
+      [
+       300,
+       450
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "150",
+    "126",
+    "90",
+    "70",
+    "2-Ø10",
+    "10",
+    "25",
+    "10",
+    "60",
+    "R3",
+    "R12",
+    "R6",
+    "38",
+    "R3",
+    "R12",
+    "40",
+    "Ø50",
+    "90",
+    "138",
+    "Ø32",
+    "35",
+    "45",
+    "23",
+    "10",
+    "R6",
+    "64",
+    "96",
+    "2-Ø20",
+    "10",
+    "28",
+    "33",
+    "R25",
+    "56",
+    "Ø38",
+    "10"
+   ],
+   "dimensions_complete": false,
+   "build_list": null,
+   "notes": ""
+  },
+  {
+   "id": "s11_triple_clamp",
+   "pages": [
+    "inputs/image_11_triple_clamp.png"
+   ],
+   "verified": false,
+   "unit": "mm",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      170,
+      280
+     ],
+     "type": "detail",
+     "label": "C (1:1)",
+     "extent": [
+      [
+       110,
+       110
+      ],
+      [
+       240,
+       420
+      ]
+     ],
+     "also": [
+      "section"
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      830,
+      160
+     ],
+     "type": "side",
+     "label": "C",
+     "extent": [
+      [
+       445,
+       160
+      ],
+      [
+       1215,
+       160
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      1430,
+      160
+     ],
+     "type": "detail",
+     "label": "B (1:1)",
+     "extent": [
+      [
+       1340,
+       170
+      ],
+      [
+       1570,
+       120
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      830,
+      520
+     ],
+     "type": "plan",
+     "label": "",
+     "extent": [
+      [
+       450,
+       480
+      ],
+      [
+       1260,
+       480
+      ],
+      [
+       830,
+       690
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      1430,
+      540
+     ],
+     "type": "section",
+     "label": "A-A (1:2)",
+     "extent": [
+      [
+       1355,
+       450
+      ],
+      [
+       1525,
+       690
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      300,
+      700
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       50,
+       620
+      ],
+      [
+       600,
+       850
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      1170,
+      770
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       1050,
+       700
+      ],
+      [
+       1320,
+       800
+      ]
+     ]
+    }
+   ],
+   "dimensions": [
+    "R20",
+    "Ø10.5",
+    "Ø22",
+    "Prof. 28",
+    "R20",
+    "R20",
+    "32",
+    "60",
+    "32",
+    "17",
+    "16",
+    "R10",
+    "16°",
+    "R30",
+    "R2",
+    "R2",
+    "28",
+    "66",
+    "22°",
+    "15",
+    "4xR6",
+    "13",
+    "33",
+    "Ø8",
+    "32",
+    "Ø550",
+    "Ø350",
+    "Ø50",
+    "R35",
+    "22",
+    "R33",
+    "10",
+    "15",
+    "48",
+    "R1.5",
+    "22°",
+    "40",
+    "20",
+    "Ø14",
+    "R35",
+    "52",
+    "80",
+    "200",
+    "R2",
+    "Ø50",
+    "R2",
+    "24",
+    "43",
+    "11",
+    "5",
+    "2x45°",
+    "32",
+    "55"
+   ],
+   "dimensions_complete": false,
+   "build_list": null,
+   "notes": "French drawing; local section depth 55mm; the menu cannot build the side profile (P5 two_view_base)"
+  },
+  {
+   "id": "m01_triple_clamp_2pages",
+   "pages": [
+    "eval/files/m01_triple_clamp_2pages.pdf"
+   ],
+   "synthetic": true,
+   "verified": false,
+   "unit": "mm",
+   "made_by": "eval/make_synthetic.py: inputs/image_11_triple_clamp.png cut at x=1290 into 2 pages (150 DPI)",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      170,
+      280
+     ],
+     "type": "detail",
+     "label": "C (1:1)",
+     "extent": [
+      [
+       110,
+       110
+      ],
+      [
+       240,
+       420
+      ]
+     ],
+     "also": [
+      "section"
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      830,
+      160
+     ],
+     "type": "side",
+     "label": "C",
+     "extent": [
+      [
+       445,
+       160
+      ],
+      [
+       1215,
+       160
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      830,
+      520
+     ],
+     "type": "plan",
+     "label": "",
+     "extent": [
+      [
+       450,
+       480
+      ],
+      [
+       1260,
+       480
+      ],
+      [
+       830,
+       690
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      300,
+      700
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       50,
+       620
+      ],
+      [
+       600,
+       850
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      1170,
+      770
+     ],
+     "type": "iso",
+     "label": "",
+     "extent": [
+      [
+       1050,
+       700
+      ],
+      [
+       1285,
+       780
+      ]
+     ]
+    },
+    {
+     "page": 2,
+     "point": [
+      140,
+      160
+     ],
+     "type": "detail",
+     "label": "B (1:1)",
+     "extent": [
+      [
+       50,
+       170
+      ],
+      [
+       280,
+       120
+      ]
+     ]
+    },
+    {
+     "page": 2,
+     "point": [
+      140,
+      540
+     ],
+     "type": "section",
+     "label": "A-A (1:2)",
+     "extent": [
+      [
+       65,
+       450
+      ],
+      [
+       235,
+       690
+      ]
+     ]
+    }
+   ],
+   "dimensions": "same as s11_triple_clamp",
+   "dimensions_complete": false,
+   "build_list": null,
+   "notes": "a multi-page set made from s11"
+  },
+  {
+   "id": "m02_pipe_fitting_2pages",
+   "pages": [
+    "eval/files/m02_pipe_fitting_2pages.pdf"
+   ],
+   "synthetic": true,
+   "verified": false,
+   "unit": "mm",
+   "made_by": "eval/make_synthetic.py: inputs/image_2.png cut at x=840 into 2 pages (150 DPI)",
+   "views": [
+    {
+     "page": 1,
+     "point": [
+      450,
+      235
+     ],
+     "type": "plan",
+     "label": "TOP view",
+     "extent": [
+      [
+       150,
+       230
+      ],
+      [
+       825,
+       230
+      ],
+      [
+       450,
+       90
+      ]
+     ]
+    },
+    {
+     "page": 1,
+     "point": [
+      380,
+      640
+     ],
+     "type": "section",
+     "label": "SECTION View",
+     "extent": [
+      [
+       145,
+       640
+      ],
+      [
+       720,
+       520
+      ],
+      [
+       200,
+       775
+      ]
+     ]
+    },
+    {
+     "page": 2,
+     "point": [
+      220,
+      330
+     ],
+     "type": "side",
+     "label": "RIGHT view",
+     "extent": [
+      [
+       35,
+       300
+      ],
+      [
+       370,
+       300
+      ],
+      [
+       180,
+       120
+      ]
+     ]
+    },
+    {
+     "page": 2,
+     "point": [
+      200,
+      600
+     ],
+     "type": "iso",
+     "label": "ISOMETRIC view",
+     "extent": [
+      [
+       95,
+       620
+      ],
+      [
+       300,
+       575
+      ]
+     ]
+    }
+   ],
+   "dimensions": "same as s02_pipe_fitting",
+   "dimensions_complete": true,
+   "build_list": null,
+   "notes": "a multi-page set made from s02"
+  }
+ ]
+}

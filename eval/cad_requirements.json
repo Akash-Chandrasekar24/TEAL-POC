@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "about": "Draft capability candidates from visual inspection of the 11 real input drawings. These are NOT certified minimum feature sets: an engineer must confirm requirements and consider equivalent supported construction strategies before setting reviewed=true. Missing cases are unassessed. Synthetic multipage variants are not independent designs. This does not verify drawing truth or supply a reference build list.",
+  "cases": [
+    {
+      "id": "s01_sheet_metal_bracket",
+      "reviewed": false,
+      "required_capabilities": ["sheet_metal"],
+      "evidence": "inputs/image_1.jpg: flat pattern, bend direction table and bent isometric bracket. Sheet-metal semantics include bends and flat pattern; an approximate solid is not equivalent."
+    },
+    {
+      "id": "s02_pipe_fitting",
+      "required_capabilities": ["extrude_profile_boss", "revolve_on_face", "circle_boss", "hole", "general_edges"],
+      "evidence": "inputs/image_2.png: section shows a hollow elbow with flanged ends and a vertical branch; top/right views locate flange holes. Candidate construction uses the existing bend and face anchors. General edge treatment is a candidate gap for blend edges beyond front/back base planes; verify actual callouts."
+    },
+    {
+      "id": "s03_flange_hub",
+      "required_capabilities": ["extrude_profile_boss", "circle_boss", "hole", "datum_planes", "general_edges"],
+      "evidence": "inputs/image_3.jpg: section S1-S1 and isometric view show a main hub with an inclined tubular branch. Angled placement is the primary candidate gap. The design-variable table also requires dimension reconciliation before planning."
+    },
+    {
+      "id": "s04_gearbox_housing",
+      "required_capabilities": ["extrude_profile_boss", "circle_boss", "hole", "profile_cut", "general_edges"],
+      "evidence": "inputs/image_4.jpg: sections A-A/B-B show two hollow raised regions and side ports on an oblong mounting base. Candidate strategy uses profile bosses and pockets rather than assuming shell is mandatory. Image resolution limits dimension review."
+    },
+    {
+      "id": "s05_pipe_elbow",
+      "required_capabilities": ["extrude_profile_boss", "revolve_on_face", "hole", "fillet_chamfer_edges"],
+      "evidence": "inputs/image_5_no3d.png: section A-A shows a hollow 90-degree elbow joining flanges; detail B shows edge treatment. Existing revolve_on_face plus end anchors may suffice; check flange blend selection against actual menu limits."
+    },
+    {
+      "id": "s06_valve_body",
+      "required_capabilities": ["extrude_profile_boss", "circle_boss", "hole", "revolve_on_face", "general_edges", "termination"],
+      "evidence": "inputs/image_6.jpg: central cylindrical body with multiple hollow branches and flanges; A-A exposes intersecting internal passages. Candidate gaps are local blend selection and controlled cuts through intersecting material. Determine which terminations can instead use printed blind depths."
+    },
+    {
+      "id": "s07_bent_bracket",
+      "required_capabilities": ["extrude_profile_boss", "profile_cut", "hole", "datum_planes"],
+      "evidence": "inputs/image_7.png: side/section C-C show an inclined end transitioning to a flat slotted end, and a two-hole pattern on the inclined face. A side-profile extrusion is a possible solid strategy; holes require inclined-plane placement. Sheet metal is not assumed mandatory without a flat-pattern requirement."
+    },
+    {
+      "id": "s08_curved_lever",
+      "required_capabilities": ["extrude_profile_boss", "circle_boss", "profile_cut", "hole", "fillet_chamfer_edges"],
+      "evidence": "inputs/image_8.jpg: front view specifies tangent circular outline regions and curved slot; section B-B distinguishes local thicknesses. Existing tangent-chain outlines and staged bosses/cuts are candidates. No missing primitive is asserted before trying that strategy."
+    },
+    {
+      "id": "s09_support_block",
+      "required_capabilities": ["extrude_profile_boss", "circle_boss", "hole", "rib", "general_edges"],
+      "evidence": "inputs/image_9.png: mounting plate, central upright cylinder, side lug, horizontal branch and triangular rib. Existing axis-aligned face anchors may construct the branches. Validate rib geometry against the current round-boss and x-direction restrictions; blend selection is a candidate gap."
+    },
+    {
+      "id": "s10_bracket_83",
+      "required_capabilities": ["extrude_profile_boss", "circle_boss", "hole", "profile_cut", "general_edges"],
+      "evidence": "inputs/image_10.jpg: orthographic views and isometric show a central bored boss, two lower lugs and upper mounting ears. Candidate strategy is staged profile bosses and cuts on axis-aligned faces; evaluate dependencies and blends before assuming loft or multibody is needed."
+    },
+    {
+      "id": "s11_triple_clamp",
+      "required_capabilities": ["extrude_profile_boss", "profile_cut", "hole", "datum_planes", "general_edges"],
+      "evidence": "inputs/image_11_triple_clamp.png: plan and sections A-A/C show clamp bores, split slots, varying depths and local counterbores; detail B and the section show inclined geometry. Determine actual hole axes and construction frame before asserting all placements can use axis-aligned anchors."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "source_sha": "4027967864e1fe69f543604fd21154e3f4c2d3916ee80195129a8e2df756761d",
+  "verification": "machine_generated_labels",
+  "scope": "All six generated measurement callouts, two view count, printed units and projection; no CAD reconstruction certification",
+  "measurement_texts": [
+    "100 ±0.1",
+    "60",
+    "4xØ10 THRU",
+    "20 ±0.2",
+    "15",
+    "12"
+  ],
+  "view_count": 2,
+  "unit": "mm",
+  "projection": "third",
+  "projection_symbol_status": "absent",
+  "section_names": [
+    "A-A"
+  ]
+}
