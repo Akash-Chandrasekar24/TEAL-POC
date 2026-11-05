@@ -156,12 +156,16 @@ def check_inspection(plan: AssemblyPlan, data: dict, names: dict[str, str]) -> l
     return errors
 
 
-async def run_assembly(sw, plan: AssemblyPlan, assets: Path, output: Path, approved_hash: str, *, review_only=False) -> dict:
+async def run_assembly(sw, plan: AssemblyPlan, assets: Path, output: Path, approved_hash: str, *, review_only=False, check_every: int | None = None) -> dict:
     """Call only after an explicit approved snapshot AND runtime opt-in.
 
     The caller owns runtime startup. This function requires an empty workspace,
     creates one assembly and never closes user documents. Outputs bundle the
     exact component files to keep native references local to the new run.
+
+    `check_every`: re-read ALL components after every N insert/mate steps (the read has no per-component filter, so each one costs O(parts)).
+    None = every step for up to 20 steps, else every 10. The final and post-save checks always run on everything, so a drift cannot reach export;
+    a larger N only localizes a failure less precisely (it names the batch, not the step).
     """
     report = {"plan_hash": plan.digest(), "status": "failed", "checks": [], "errors": [], "files": {}, "names": {}}
     if approved_hash != plan.digest():
@@ -173,6 +177,8 @@ async def run_assembly(sw, plan: AssemblyPlan, assets: Path, output: Path, appro
     if any(output.iterdir()):
         raise AssemblyError("Assembly output directory must be new and empty")
     names, mate_names, paths = report["names"], {}, {}
+    every = max(1, check_every or (1 if len(plan.occurrences) + len(plan.mates) <= 20 else 10))
+    pending, faces_cache = 0, {}
 
     async def call(name, *args, **kwargs):
         result = await getattr(sw, name)(*args, **kwargs)
@@ -195,9 +201,26 @@ async def run_assembly(sw, plan: AssemblyPlan, assets: Path, output: Path, appro
         return data
 
     async def components(label):
+        nonlocal pending
+        pending = 0
         await workspace(title)
         data = (await call("analyze_assembly", "components")).analysis_json()
         check(label, check_components(plan, data, names, paths), data)
+
+    async def step_check(label):
+        """Full component check after this step, or once enough steps are pending (see check_every)."""
+        nonlocal pending
+        pending += 1
+        if pending >= every:
+            await components(label if every == 1 else f"{label} (and the {pending - 1} step(s) since the last full check)")
+
+    async def faces_of(name):
+        if name not in faces_cache:     # a component's face list is in its own coordinates: mates do not change it
+            data = (await call("analyze_assembly", "faces", component=name)).analysis_json()
+            if data.get("component") != name or not isinstance(data.get("faces"), list) or data.get("face_count") != len(data["faces"]):
+                raise AssemblyError("Incomplete component face enumeration")
+            faces_cache[name] = data["faces"]
+        return faces_cache[name]
 
     try:
         for model in plan.models:
@@ -218,22 +241,25 @@ async def run_assembly(sw, plan: AssemblyPlan, assets: Path, output: Path, appro
             raise AssemblyError("New assembly is not the sole active document")
         models = {m.bom_id: m for m in plan.models}
         for occurrence in plan.occurrences:
-            await workspace(title)
+            if every == 1:
+                await workspace(title)
             result = await call("insert_component", file_path=str(paths[occurrence.bom_id]),
                                 config=models[occurrence.bom_id].configuration, fixed=occurrence.fixed,
                                 transform_json=json.dumps(occurrence.placement.transform(plan.scale)))
             if not result.features or not result.features[0] or result.features[0] in names.values():
                 raise AssemblyError(f"{occurrence.id}: missing or duplicate inserted component name")
             names[occurrence.id] = result.features[0]
-            await components(f"Placement {occurrence.id}")
+            await step_check(f"Placement {occurrence.id}")
         for mate in plan.mates:
-            await workspace(title)
+            if every == 1:
+                await workspace(title)
             indices = []
             for surface in (mate.a, mate.b):
-                data = (await call("analyze_assembly", "faces", component=names[surface.occurrence])).analysis_json()
-                if data.get("component") != names[surface.occurrence] or not isinstance(data.get("faces"), list) or data.get("face_count") != len(data["faces"]):
-                    raise AssemblyError(f"{mate.id}: incomplete component face enumeration")
-                indices.append(select_face(surface, data["faces"], plan.scale, plan.expected.selector_tolerance))
+                try:
+                    faces = await faces_of(names[surface.occurrence])
+                except AssemblyError as ex:
+                    raise AssemblyError(f"{mate.id}: {ex}")
+                indices.append(select_face(surface, faces, plan.scale, plan.expected.selector_tolerance))
             value = mate.value or 0.0
             if mate.type == "distance":
                 value *= plan.scale
@@ -243,7 +269,7 @@ async def run_assembly(sw, plan: AssemblyPlan, assets: Path, output: Path, appro
             if not result.features or not result.features[0] or result.features[0] in mate_names.values():
                 raise AssemblyError(f"{mate.id}: missing or duplicate mate name")
             mate_names[mate.id] = result.features[0]
-            await components(f"After mate {mate.id}")
+            await step_check(f"After mate {mate.id}")
         await components("Final component count, configuration and placements")
         data = (await call("analyze_assembly", "mates")).analysis_json()
         check("Mate identities and dimensions", check_mates(plan, data, names, mate_names), data)

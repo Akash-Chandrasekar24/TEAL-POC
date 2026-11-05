@@ -11,7 +11,7 @@ help (its pages are JavaScript-rendered, so only search snippets were readable),
 | The 8 mate types | Works (upstream maps exactly these) | `coincident, concentric, perpendicular, parallel, tangent, distance, angle, lock`. |
 | Edge mates | Cheap to add | Upstream `add_mate` already takes `a_kind/b_kind` = `face` or `edge` with indices from `analyze_assembly(edges)`. Our plan model only has plane/cylinder faces. |
 | Other mate types (width, symmetric, gear, hinge, limits) | Needs our own C# extension | Upstream rejects any other name. `AddMate5` is marked obsolete (replacement `IAssemblyDoc.CreateMate`); it still exists, but a new extension should target `CreateMate`. The full `swMateType_e` list could not be read. |
-| Per-step verification of every component | Works, but O(n²) | `analyze_assembly components` has no per-component filter, so each step re-reads all components. Fix in Python by batching, or add an endpoint to our extension. |
+| Per-step verification of every component | Was O(n²); now batched | `analyze_assembly components` has no per-component filter. `run_assembly(check_every=N)` re-reads all components every N steps (default: every step up to 20 steps, then every 10), face lists are cached per component, and the final and post-save checks always cover everything. Offline test: 30 blocks go from 61+ whole-assembly reads to about 8, face reads from 60 to 31. Real time saved is unmeasured. |
 | Constraint status, interference | Works with caveats | `IComponent2.GetConstrainedStatus` reportedly reports only first-level components (secondhand forum report); interference needs `TreatSubAssembliesAsComponents` set deliberately. Moot while we stay flat. |
 | Insertion speed | Slow per part | Upstream opens and closes each part file for every insertion, even a repeated part. `ForceRebuild3(TopOnly)` and deferring rebuilds are the documented levers. |
 
@@ -19,5 +19,5 @@ help (its pages are JavaScript-rendered, so only search snippets were readable),
 1. **Transform convention:** insert an asymmetric part at a 90 deg rotation about z with translation (3,-4,7); read back a known face point. Expect the row convention (`x` -> `+y`). If not, flip `_row_apply`/`_axis_angle` in `compose.py`.
 2. **Composed instance:** a rotated sub-assembly instance; compare every component's bounds to the composed prediction.
 3. **Bolt circle:** 8-copy circular pattern with one mate per copy; all fully constrained, no interference.
-4. **Scale:** time a 50-part flat assembly; record readback call counts before the batching change.
+4. **Scale:** time a 50-part flat assembly with `check_every=1` and the default; record both.
 5. **Mate readback:** each of the 8 mate types once; names, alignment and values match the plan.
