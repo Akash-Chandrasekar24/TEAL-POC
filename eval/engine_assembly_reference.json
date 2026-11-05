@@ -1,0 +1,233 @@
+{
+ "source_sha": "14d346e20cdfb00b3f845744c1a9ad4aba1ab61fbee84e58764f99184bf95e35",
+ "source_file": "inputs/image_12_engine_assembly.png",
+ "verification": "assistant_visual_transcription_not_engineer_verified",
+ "scope": "Sheet 2 of 2, '4 Cylinder Engine (18)', A3, scale 1:2, all dimensions in mm. Six parts, 01-06. Callout texts read by eye from a low-resolution picture; association of a callout to a part is by view only. Not certified.",
+ "document": {
+  "title": "4 Cylinder Engine Assembly",
+  "drawing_no": "4 Cylinder Engine (18)",
+  "unit": "mm",
+  "sheet": "2 of 2",
+  "size": "A3",
+  "scale": "1:2",
+  "projection_symbol": "present, convention not read here"
+ },
+ "bom_items": [
+  {
+   "item": "01",
+   "name": "PISTON"
+  },
+  {
+   "item": "02",
+   "name": "PISTON RING"
+  },
+  {
+   "item": "03",
+   "name": "CRANKSHAFT"
+  },
+  {
+   "item": "04",
+   "name": "CONNECTING ROD"
+  },
+  {
+   "item": "05",
+   "name": "CONNECTING ROD CAP"
+  },
+  {
+   "item": "06",
+   "name": "PISTON PIN"
+  }
+ ],
+ "bom_note": "No BOM table or quantities are printed on this sheet. 4-cylinder implies 4 pistons/rods/caps/pins and 1 crankshaft, but the ring count per piston is not stated: reviewer must supply quantities.",
+ "by_part": {
+  "01 PISTON": [
+   "Ø85",
+   "90",
+   "27",
+   "7.3",
+   "5",
+   "11.6",
+   "Ø33.8"
+  ],
+  "01 PISTON section A-A (1:1.5)": [
+   "Ø79",
+   "Ø76",
+   "4.3",
+   "85",
+   "R40",
+   "12",
+   "38",
+   "50",
+   "R10"
+  ],
+  "02 PISTON RING": [
+   "4.3",
+   "Ø79",
+   "Ø85"
+  ],
+  "03 CRANKSHAFT": [
+   "2X45°",
+   "All R3",
+   "15",
+   "15",
+   "15",
+   "Ø32",
+   "Ø72",
+   "Ø54",
+   "Ø110",
+   "Ø144",
+   "80",
+   "38",
+   "46",
+   "38",
+   "46",
+   "Ø10 - 8 hole"
+  ],
+  "03 CRANKSHAFT section C-C (1:3.5)": [
+   "R80",
+   "33°",
+   "44",
+   "R36"
+  ],
+  "04 CONNECTING ROD": [
+   "Ø45",
+   "Ø33.8",
+   "R22.5",
+   "20",
+   "6°",
+   "201.2",
+   "R8",
+   "R40",
+   "R36",
+   "R27",
+   "30",
+   "38",
+   "76",
+   "R9",
+   "Ø9"
+  ],
+  "04 CONNECTING ROD section B-B": [
+   "38",
+   "18",
+   "R1",
+   "4",
+   "4",
+   "R3",
+   "38"
+  ],
+  "05 CONNECTING ROD CAP": [
+   "Ø9",
+   "R9",
+   "R3",
+   "38",
+   "76"
+  ],
+  "05 CONNECTING ROD CAP section D-D": [
+   "47",
+   "R27",
+   "R36",
+   "22",
+   "60",
+   "18",
+   "27",
+   "R10"
+  ],
+  "06 PISTON PIN": [
+   "Ø33.8",
+   "82",
+   "2X45°"
+  ]
+ },
+ "section_names": [
+  "A-A",
+  "B-B",
+  "C-C",
+  "D-D"
+ ],
+ "view_count_estimate": 17,
+ "review_notes": [
+  "Printed values are low-confidence at this resolution: R1, 18, 4, 4 on section B-B and 22/18/27 on D-D must be checked against the original.",
+  "Ø33.8 is printed on the piston, the connecting rod and the piston pin: the pin, the piston bore and the rod small end share it.",
+  "No crankshaft journal diameter is stated for the connecting rod big end: the rod-to-crank mate cannot be built from this sheet alone."
+ ],
+ "measurement_texts": [
+  "Ø85",
+  "90",
+  "27",
+  "7.3",
+  "5",
+  "11.6",
+  "Ø33.8",
+  "Ø79",
+  "Ø76",
+  "4.3",
+  "85",
+  "R40",
+  "12",
+  "38",
+  "50",
+  "R10",
+  "4.3",
+  "Ø79",
+  "Ø85",
+  "2X45°",
+  "All R3",
+  "15",
+  "15",
+  "15",
+  "Ø32",
+  "Ø72",
+  "Ø54",
+  "Ø110",
+  "Ø144",
+  "80",
+  "38",
+  "46",
+  "38",
+  "46",
+  "Ø10 - 8 hole",
+  "R80",
+  "33°",
+  "44",
+  "R36",
+  "Ø45",
+  "Ø33.8",
+  "R22.5",
+  "20",
+  "6°",
+  "201.2",
+  "R8",
+  "R40",
+  "R36",
+  "R27",
+  "30",
+  "38",
+  "76",
+  "R9",
+  "Ø9",
+  "38",
+  "18",
+  "R1",
+  "4",
+  "4",
+  "R3",
+  "38",
+  "Ø9",
+  "R9",
+  "R3",
+  "38",
+  "76",
+  "47",
+  "R27",
+  "R36",
+  "22",
+  "60",
+  "18",
+  "27",
+  "R10",
+  "Ø33.8",
+  "82",
+  "2X45°"
+ ],
+ "resolution_note": "860x609 px: dimension text is about 7-8 px tall, so small values are unreliable for any reader"
+}
