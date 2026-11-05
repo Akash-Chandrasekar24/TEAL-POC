@@ -1,0 +1,64 @@
+{
+ "list_version": "1",
+ "part_name": "02 PISTON RING (engine sheet)",
+ "unit": "mm",
+ "projection": "first",
+ "seen_dimensions": [
+  "Ø85",
+  "Ø79",
+  "4.3"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "Ø85, Ø79, 4.3",
+   "note": "Plain closed ring: the sheet prints no end gap or section profile, so none is modelled. r = 39.5 (Ø79) to 42.5 (Ø85), width 4.3.",
+   "params": {
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       39.5
+      ],
+      [
+       4.3,
+       39.5
+      ],
+      [
+       4.3,
+       42.5
+      ],
+      [
+       0,
+       42.5
+      ]
+     ]
+    },
+    "axis": "horizontal"
+   },
+   "derived": true,
+   "derived_from": "r 39.5 = 79/2; r 42.5 = 85/2"
+  }
+ ],
+ "unsupported": [],
+ "needs_human": [],
+ "accepted_gaps": [],
+ "expected_final": {
+  "bbox_mm": [
+   [
+    -2.15,
+    -42.5,
+    0
+   ],
+   [
+    2.15,
+    42.5,
+    85
+   ]
+  ],
+  "bodies": 1,
+  "tol_mm": 0.05
+ }
+}

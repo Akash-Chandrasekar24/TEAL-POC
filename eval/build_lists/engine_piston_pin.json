@@ -1,0 +1,72 @@
+{
+ "list_version": "1",
+ "part_name": "06 PISTON PIN (engine sheet)",
+ "unit": "mm",
+ "projection": "first",
+ "seen_dimensions": [
+  "Ø33.8",
+  "82",
+  "2X45°"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "Ø33.8, 82, 2X45°",
+   "note": "Solid cylinder per the sheet's end view; 2X45 chamfer at both ends. Half-section: u along the axis, r from the axis.",
+   "params": {
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       14.9
+      ],
+      [
+       2,
+       16.9
+      ],
+      [
+       80,
+       16.9
+      ],
+      [
+       82,
+       14.9
+      ],
+      [
+       82,
+       0
+      ]
+     ]
+    },
+    "axis": "horizontal"
+   },
+   "derived": true,
+   "derived_from": "radius 16.9 = 33.8/2; chamfer start 14.9 = 16.9-2 (2X45); 80 = 82-2"
+  }
+ ],
+ "unsupported": [],
+ "needs_human": [],
+ "accepted_gaps": [],
+ "expected_final": {
+  "bbox_mm": [
+   [
+    -41,
+    -16.9,
+    0
+   ],
+   [
+    41,
+    16.9,
+    33.8
+   ]
+  ],
+  "bodies": 1,
+  "tol_mm": 0.05
+ }
+}
