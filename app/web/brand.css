@@ -1,0 +1,79 @@
+/* GWC Data.AI brand layer: palette, Poppins, logo lockup and loader taken from https://www.gwcdata.ai/.
+   Loaded after ui.css and only overrides it, so removing the <link> restores the old look. */
+@font-face{font-family:Poppins;font-weight:400;font-style:normal;font-display:swap;src:url(/fonts/poppins-400.woff2) format("woff2")}
+@font-face{font-family:Poppins;font-weight:500;font-style:normal;font-display:swap;src:url(/fonts/poppins-500.woff2) format("woff2")}
+@font-face{font-family:Poppins;font-weight:600;font-style:normal;font-display:swap;src:url(/fonts/poppins-600.woff2) format("woff2")}
+@font-face{font-family:Poppins;font-weight:700;font-style:normal;font-display:swap;src:url(/fonts/poppins-700.woff2) format("woff2")}
+
+:root{
+  --brand:#6f2b8b;            /* logo wordmark / nav underline */
+  --brand-hover:#59226f;
+  --brand-soft:#f3ecf7;
+  --brand-ring:#6f2b8b40;
+  --orange:#f89e61;           /* site accent (hsl 24 90% 67%) */
+  --brand-gradient:conic-gradient(from 0deg,#4296d1,#5762af,#6f2b8b,#f16b66,#f89e61,#fdc25e,#4296d1);
+  --font:Poppins,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --bg:#f4f4f0;--ink:#0f1729;--muted:#65758b;--line:#ddddd5;
+  --accent:var(--brand);--box:var(--brand);--box-hi:var(--orange);
+}
+body{font-family:var(--font);font-size:13.5px;line-height:1.6}
+button,input,textarea,select{font-family:var(--font)}
+a{color:var(--brand)}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline-color:var(--brand-ring)}
+input:focus,textarea:focus,select:focus{outline-color:var(--brand-ring);border-color:var(--brand)!important}
+
+/* header: logo lockup like the site's nav */
+.studio-header{background:#fffffff2;border-bottom:1px solid #ddddd566}
+.brand-lockup{gap:16px}
+.brand-logo{display:block;height:38px;width:auto}
+.brand-lockup h1{font-size:14px;font-weight:500;letter-spacing:0;color:var(--muted);padding-left:16px;border-left:1px solid var(--line);line-height:1.2}
+
+/* buttons: pill shape + brand purple, as the site's CTAs */
+.btn{border-radius:999px;font-weight:500;letter-spacing:.01em}
+.btn:not(:disabled):hover{background:var(--brand-hover);box-shadow:0 4px 14px #6f2b8b2e}
+.btn.secondary{background:var(--brand-soft);color:var(--brand)}
+.btn.secondary:not(:disabled):hover{background:#e8dcf0}
+
+/* stepper: active step carries the site's purple underline */
+.stepper-item.active{color:var(--brand);font-weight:600;position:relative}
+.stepper-item.active::after{content:"";position:absolute;left:50%;bottom:2px;width:28px;height:3px;border-radius:3px;background:var(--brand);transform:translateX(-50%)}
+.stepper-item.available:hover{background:var(--brand-soft)}
+
+.drop:hover,.drop.over{border-color:var(--brand);background:#faf6fc}
+.drop strong{font-weight:600}
+h2,h3{font-weight:600}
+
+/* loader: brand-gradient ring (small inline + large overlay), logo-coloured progress bar */
+.spinner,.processing-spinner{border:0;background:var(--brand-gradient);border-radius:50%;
+  -webkit-mask:radial-gradient(farthest-side,#0000 calc(100% - 3px),#000 calc(100% - 2px));mask:radial-gradient(farthest-side,#0000 calc(100% - 3px),#000 calc(100% - 2px));
+  animation:spin 1s linear infinite}
+.processing-spinner{width:56px;height:56px;margin-bottom:26px;
+  -webkit-mask:radial-gradient(farthest-side,#0000 calc(100% - 5px),#000 calc(100% - 4px));mask:radial-gradient(farthest-side,#0000 calc(100% - 5px),#000 calc(100% - 4px))}
+.processing-overlay{background:#f4f4f0cc}
+.processing-card{border-color:var(--line);box-shadow:0 20px 80px #6f2b8b14}
+.processing-card h2{color:var(--ink)}
+.processing-track{background:var(--brand-soft)}
+.processing-track:after{background:linear-gradient(90deg,#4296d1,#6f2b8b,#f16b66,#f89e61)}
+@media(prefers-reduced-motion:reduce){.spinner,.processing-spinner{animation:pulse 2s ease-in-out infinite!important}}
+@keyframes pulse{50%{opacity:.45}}
+
+/* upload previews */
+.files li{padding:6px 10px 6px 6px;background:#fff;border:1px solid var(--line);gap:12px}
+.files li .fname{flex:1;min-width:0}
+.thumb{flex:none;width:52px;height:52px;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--brand-soft);overflow:hidden;display:grid;place-items:center}
+.thumb:hover{border-color:var(--brand)}
+.thumb img{width:100%;height:100%;object-fit:contain;background:#fff;display:block}
+.pdf-badge{font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--brand)}
+#file-preview{width:min(900px,92vw);height:min(86vh,900px);padding:44px 16px 16px;border:0;border-radius:18px;box-shadow:0 30px 100px #0f172a55;background:#fff}
+#file-preview::backdrop{background:#0f172a99;backdrop-filter:blur(4px)}
+#file-preview img,#file-preview iframe{display:block;width:100%;height:100%;border:0;object-fit:contain;background:var(--bg);border-radius:10px}
+.preview-name{position:absolute;top:12px;left:18px;right:56px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.preview-close{position:absolute;top:8px;right:10px;width:32px;height:32px;border:0;border-radius:50%;background:var(--brand-soft);color:var(--brand);font-size:20px;line-height:1}
+
+/* unclear unit / projection: highlighted until the reviewer chooses */
+.meta-field.needs-input select{border:1.5px solid var(--orange)!important;background:#fff6ee!important;color:#8a4a12;font-weight:500;box-shadow:0 0 0 3px #f89e6126;animation:needs-pulse 2.4s ease-in-out infinite}
+.meta-notes{margin:-6px 0 14px}
+.meta-warn{margin:4px 0 0;font-size:11px;line-height:1.4;color:#a35a1c}
+.meta-warn:empty{display:none}
+.meta-warn::before{content:"⚠ ";font-weight:700}
+@keyframes needs-pulse{50%{box-shadow:0 0 0 6px #f89e6100}}

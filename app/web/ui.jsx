@@ -86,7 +86,7 @@ function App() {
 
   return <>
     <header className="studio-header">
-      <div className="brand-lockup"><svg className="brand-glyph" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m16 3 12 7v13l-12 7-12-7V10Zm0 14 12-7M16 17 4 10m12 7v13M10 6.5l12 7v6.5"/></svg><h1>Drawing Studio</h1></div>
+      <div className="brand-lockup"><img className="brand-logo" src="/gwc-logo.svg" alt="GWC Data.Ai"/><h1>Drawing Studio</h1></div>
       <div className="header-status">SolidWorks workspace</div>
     </header>
     <div className="studio-frame">

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Drawing Studio · SolidWorks</title>
 <link rel="stylesheet" href="/ui.css">
+<link rel="stylesheet" href="/brand.css">
 </head>
 <body>
 <div id="studio-root"></div>
@@ -80,10 +81,23 @@ async function loadConfig() {
   if (first) sel.value = first; else { $("#doRead").checked = false; $("#status").textContent = "No model key in .env: only the view boxes can be shown."; }
 }
 
+const _urls = new WeakMap();   // File -> object URL, revoked when the file is removed
+const fileUrl = (f) => { if (!_urls.has(f)) _urls.set(f, URL.createObjectURL(f)); return _urls.get(f); };
+const isPdf = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+function previewFile(f) {
+  let dlg = $("#file-preview");
+  if (!dlg) { dlg = el("dialog", { id: "file-preview", "aria-label": "File preview" }); dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); }); document.body.append(dlg); }
+  dlg.replaceChildren(el("button", { class: "preview-close", "aria-label": "Close preview", text: "×", onclick: () => dlg.close() }), el("div", { class: "preview-name", text: f.name }),
+    isPdf(f) ? el("iframe", { src: fileUrl(f) + "#view=FitH", title: `Preview of ${f.name}` }) : el("img", { src: fileUrl(f), alt: `Preview of ${f.name}` }));
+  dlg.showModal();
+}
 function renderFiles() {
   const ul = $("#files");
-  ul.replaceChildren(...state.files.map((f, i) => el("li", {}, el("span", { text: `${f.name} · ${(f.size / 1024).toFixed(0)} KB`, title: f.name }),
-    el("button", { class: "x", "aria-label": `Remove ${f.name}`, text: "×", onclick: () => { state.files.splice(i, 1); renderFiles(); } }))));
+  ul.replaceChildren(...state.files.map((f, i) => el("li", {},
+    el("button", { class: "thumb", title: "Preview", "aria-label": `Preview ${f.name}`, onclick: () => previewFile(f) },
+      isPdf(f) ? el("span", { class: "pdf-badge", text: "PDF" }) : el("img", { src: fileUrl(f), alt: "" })),
+    el("span", { class: "fname", text: `${f.name} · ${(f.size / 1024).toFixed(0)} KB`, title: f.name }),
+    el("button", { class: "x", "aria-label": `Remove ${f.name}`, text: "×", onclick: () => { URL.revokeObjectURL(_urls.get(f)); _urls.delete(f); state.files.splice(i, 1); renderFiles(); } }))));
   $("#run").disabled = !state.files.length;
 }
 
@@ -435,7 +449,19 @@ function designCard(r) {
   };
   const unit = metaSelect("Drawing unit", [["unknown", "Confirm unit"], ["mm", "Millimetres"], ["inch", "Inches"]], model.unit);
   const projection = metaSelect("Drawing projection", [["unknown", "Confirm projection"], ["first", "First angle"], ["third", "Third angle"]], model.projection);
-  controls.append(el("div", { class: "meta" }, el("label", {}, "Unit ", unit), el("label", {}, "Projection ", projection)));
+  // An unresolved unit / projection is highlighted with a reason instead of sitting blank; it clears as soon as one is chosen.
+  const notes = el("div", { class: "meta-notes", "aria-live": "polite" });
+  const needsInput = (select, label, why) => {
+    const note = el("p", { class: "meta-warn", role: "alert" });
+    const field = el("label", { class: "meta-field" }, label + " ", select);
+    notes.append(note);
+    const sync = () => { const unclear = select.value === "unknown"; field.classList.toggle("needs-input", unclear); note.textContent = unclear ? why : ""; };
+    select.addEventListener("change", sync); sync();
+    return field;
+  };
+  controls.append(el("div", { class: "meta" },
+    needsInput(unit, "Unit", "Unit is not clear on the drawing — confirm mm or inches. Values are never converted automatically."),
+    needsInput(projection, "Projection", "No projection symbol or note was readable — confirm first or third angle.")), notes);
   const inputs = model.dimensions.map((d) => {
     const assessment = r.measurement_review?.[d.id] || r.design?.measurement_review?.[d.id] || {};
     const score = typeof assessment.confidence === "number" ? assessment.confidence : null;

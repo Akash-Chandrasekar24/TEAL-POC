@@ -656,6 +656,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("ui.js", "text/javascript; charset=utf-8")
         if path == "/ui.css":
             return self._static("ui.css", "text/css; charset=utf-8")
+        if path == "/brand.css":
+            return self._static("brand.css", "text/css; charset=utf-8")
+        if path == "/gwc-logo.svg":
+            return self._static("gwc-logo.svg", "image/svg+xml")
+        if re.fullmatch(r"/fonts/poppins-(400|500|600|700)\.woff2", path):
+            return self._static(path[1:], "font/woff2")
         if path == "/api/config":
             return self._json(200, {"providers": providers(), "default": config.WORKER_LLM_PROVIDER, "max_files": MAX_FILES,
                                     "models": {"domo": config.DOMO_MODEL, "gemini": config.GEMINI_MODEL}})
