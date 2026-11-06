@@ -451,21 +451,29 @@ function designCard(r) {
   const projection = metaSelect("Drawing projection", [["unknown", "Confirm projection"], ["first", "First angle"], ["third", "Third angle"]], model.projection);
   // An unresolved unit / projection is highlighted with a reason instead of sitting blank; it clears as soon as one is chosen.
   const notes = el("div", { class: "meta-notes", "aria-live": "polite" });
-  const needsInput = (select, label, why) => {
+  const needsInput = (select, label, why, evidence) => {
     const note = el("p", { class: "meta-warn", role: "alert" });
-    const field = el("label", { class: "meta-field" }, label + " ", select);
+    const chip = el("span", { class: "m-chip" });
+    const field = el("label", { class: "meta-field" }, label + " ", select, chip);
     notes.append(note);
-    const sync = () => { const unclear = select.value === "unknown"; field.className = unclear ? "meta-field needs-input" : "meta-field"; note.textContent = unclear ? why : ""; };
+    const sync = () => {
+      const unclear = select.value === "unknown";
+      field.className = unclear ? "meta-field needs-input" : "meta-field";
+      note.textContent = unclear ? why : "";
+      const e = unclear ? null : evidence(select.value);                 // how well the sheet supports the chosen value
+      chip.hidden = !e;
+      if (e) { chip.className = `m-chip ${e.level}`; chip.textContent = e.label; chip.setAttribute("title", `Confidence in this setting, from what was found on the sheet (not a probability). ${e.detail}`); }
+    };
     select.addEventListener("change", sync); sync();
     return field;
   };
   controls.append(el("div", { class: "meta" },
-    needsInput(unit, "Unit", "Unit is not clear on the drawing — confirm mm or inches. Values are never converted automatically."),
-    needsInput(projection, "Projection", "No projection symbol or note was readable — confirm first or third angle.")), notes);
+    needsInput(unit, "Unit", "Unit is not clear on the drawing — confirm mm or inches. Values are never converted automatically.", (v) => settingEvidence("unit", model, v)),
+    needsInput(projection, "Projection", "No projection symbol or note was readable — confirm first or third angle.", (v) => settingEvidence("projection", model, v))), notes);
   // ---- measurements: ONE filtered list. Hovering a row outlines its callout on the drawing (and the reverse); click a value to correct it.
   const where = measureBoxes(r);
   const tell = () => { if (typeof Event !== "undefined") controls.dispatchEvent(new Event("change", { bubbles: true })); };   // marks the review as edited
-  const view = { tab: null, query: "" };
+  const view = { tab: null, query: "", groupOpen: new Map(), allOpen: false };
   const inputs = model.dimensions.map((d) => {
     const assessment = r.measurement_review?.[d.id] || r.design?.measurement_review?.[d.id] || {};
     const score = typeof assessment.confidence === "number" ? assessment.confidence : null;
@@ -473,7 +481,7 @@ function designCard(r) {
     // These two inputs are the review's state (the save step reads them); the text box is only shown while editing.
     const checked = el("input", {type:"checkbox",checked:d.confirmed,"aria-label":`Confirm ${d.id}`});
     const correction = el("input", {type:"text",value:d.corrected_text || "",placeholder:"Correct value",maxlength:200,"aria-label":`Correct ${d.id}`,class:"m-input"});
-    const item = {d,checked,correction,approved,forced:false};
+    const item = {d,checked,correction,approved,forced:false,group:viewGroup(r, d)};
     const shown = () => correction.value.trim() || d.corrected_text || d.text;
     const stateOf = () => checked.checked ? "verified" : item.approved ? "ai" : "open";
     item.state = stateOf;
@@ -485,7 +493,7 @@ function designCard(r) {
     const detail = el("div", {class:"m-detail",hidden:true},
       el("p", {class:"m-why",text:assessment.review_reason || assessment.confidence_reason || "No reason recorded."}),
       assessment.confidence_metrics?.length ? assessment.confidence_metrics.map(c => el("div",{class:"criterion-row"},el("span",{text:c.label}),el("b",{text:`${c.rating}/5`}),el("small",{text:`${c.weight}% weight`}))) : el("p",{text:"The agent has not rated the five confidence criteria."}),
-      el("p", {class:"m-id",text:`${d.id} · page ${d.page} · ${d.views.join(", ") || "view not located"}`}));
+      el("p", {class:"m-id",text:`${d.id} · page ${d.page} · ${d.views.join(", ") || "view not located"}${where[d.id] ? (where[d.id].exact ? " · outline = the extraction model's estimate, may be a little off" : " · outline = its whole view") : ""}`}));
     let verify, flag;
     const sync = () => {
       const st = stateOf();
@@ -527,7 +535,7 @@ function designCard(r) {
     return item;
   });
   const count = (st) => inputs.filter((i) => i.state() === st).length;
-  const TABS = [["open", "Needs review"], ["ai", "AI approved"], ["verified", "Verified"], ["all", "All"]];
+  const TABS = [["open", "To verify"], ["ai", "AI verified"], ["verified", "Verified by you"], ["all", "All"]];
   const tabButtons = TABS.map(([key]) => el("button", {type:"button",class:"m-tab","data-tab":key,"aria-pressed":"false"}));
   const search = el("input", {type:"search",class:"m-search",placeholder:"Search value or ID","aria-label":"Search measurements"});
   const list = el("div", {class:"m-list"});
@@ -541,13 +549,41 @@ function designCard(r) {
     });
     const q = view.query.trim().toLowerCase();
     const rows = inputs.filter((i) => (view.tab === "all" || i.state() === view.tab) && (!q || `${i.d.id} ${i.d.text} ${i.correction.value}`.toLowerCase().includes(q)));
-    list.replaceChildren(...(rows.length ? rows.map((i) => i.row) : [el("p", {class:"lane-empty",text: q ? "No measurement matches your search." : view.tab === "open" ? "Nothing left to review." : "Nothing here yet."})]));
+    if (!rows.length) { list.replaceChildren(el("p", {class:"lane-empty",text: q ? "No measurement matches your search." : view.tab === "open" ? "Nothing left to verify." : "Nothing here yet."})); return; }
+    // one group per view / section of the drawing, in drawing order; each shows what still needs the reviewer
+    const groups = new Map();
+    for (const i of rows) { const k = i.group.key; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); }
+    const order = [...groups.keys()].sort((x, y) => (inputs.find((i) => i.group.key === x).group.order) - (inputs.find((i) => i.group.key === y).group.order));
+    list.replaceChildren(...order.map((k) => {
+      const mine = groups.get(k), g = mine[0].group, all = inputs.filter((i) => i.group.key === k);
+      const n = (st) => all.filter((i) => i.state() === st).length;
+      const wantOpen = view.groupOpen.has(k) ? view.groupOpen.get(k) : n("open") > 0 || view.tab !== "all";   // groups with something to verify start open
+      const head = el("summary", {class:"m-ghead"},
+        el("span", {class:"m-gname"}, g.title, g.scale ? el("small", {text:` ${g.scale}`}) : null),
+        g.kind ? el("span", {class:"m-gkind", text:g.kind}) : null,
+        el("span", {class:"m-gcounts"},
+          n("open") ? el("b", {class:"c-open", text:`${n("open")} to verify`}) : null,
+          n("ai") ? el("b", {class:"c-ai", text:`${n("ai")} AI verified`}) : null,
+          n("verified") ? el("b", {class:"c-you", text:`${n("verified")} verified by you`}) : null));
+      const box = el("details", {class:"m-group", ...(wantOpen ? {open:true} : {})}, head, el("div", {class:"m-gbody"}, mine.map((i) => i.row)));
+      box.addEventListener("toggle", () => view.groupOpen.set(k, box.open));
+      head.addEventListener("mouseenter", () => { if (g.page && g.no) highlight(g.page, [g.no], true); });
+      head.addEventListener("mouseleave", () => { if (g.page && g.no) highlight(g.page, [g.no], false); });
+      return box;
+    }));
   };
   tabButtons.forEach((b, n) => b.addEventListener("click", () => { view.tab = TABS[n][0]; redraw(); }));
   search.addEventListener("input", (e) => { if (e && e.stopPropagation) e.stopPropagation(); view.query = search.value; redraw(); });          // typing here is not an edit of the review
   search.addEventListener("change", (e) => { if (e && e.stopPropagation) e.stopPropagation(); });
   inputs.forEach((item) => { item.redraw = redraw; });
-  const review = el("div", {class:"m-panel"}, el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search), list);
+  const expandAll = el("button", {type:"button",class:"m-link",text:"Expand all"});
+  expandAll.addEventListener("click", () => {
+    view.allOpen = !view.allOpen;
+    new Set(inputs.map((i) => i.group.key)).forEach((k) => view.groupOpen.set(k, view.allOpen));
+    expandAll.textContent = view.allOpen ? "Collapse all" : "Expand all";
+    redraw();
+  });
+  const review = el("div", {class:"m-panel"}, el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, expandAll), list);
   redraw();
   // From the drawing: hovering a callout highlights its row; clicking it jumps to the row.
   globalThis.__measureFocus = (id, on) => { const row = inputs.find((i) => i.d.id === id)?.row; if (row && row.classList) row.classList.toggle("m-hover", on); };
@@ -1045,6 +1081,56 @@ function drawingReviewCard(r) {
     el("label", {class:"source-selector"}, "Source drawing", select), content);
 }
 
+// How well the sheet itself supports the unit / projection currently chosen. Evidence-based, never a made-up number:
+//   High = a readable symbol (projection) or a title-block value AND a printed note (unit) agree; Medium = one of them; Low = the agent's reading only;
+//   Check = the sheet says something different from your choice; Set by you = you chose it.
+function settingEvidence(kind, model, value) {
+  const e = sheetEvidence(kind, model, value), chosen = (model.resolutions || {})[kind] === value;
+  if (!chosen) return e;
+  if (e.level === "low") return { level: "you", label: "Set by you", detail: "You chose this value and the sheet gives no support for it. " + e.detail };
+  return { ...e, detail: `${e.detail} You confirmed this value.` };
+}
+
+function sheetEvidence(kind, model, value) {
+  const pages = model.pages || [], blocks = pages.map((p) => p.title_block || {});
+  if (kind === "projection") {
+    const symbols = blocks.map((b) => b.projection_symbol).filter((s) => s && s.status === "present" && ["first", "third"].includes(s.convention));
+    const printed = blocks.map((b) => b.projection).filter((v) => v && v !== "unknown");
+    const clash = symbols.find((s) => s.convention !== value);
+    if (clash) return { level: "check", label: "Check", detail: `The projection symbol on the sheet shows ${clash.convention} angle. ${clash.evidence || ""}` };
+    if (symbols.length) return { level: "high", label: "High · symbol found", detail: symbols[0].evidence || `The projection symbol shows ${symbols[0].convention} angle.` };
+    if (printed.includes(value)) return { level: "medium", label: "Medium · title block", detail: "Read from the title block text; no projection symbol was read." };
+    return { level: "low", label: "Low · agent only", detail: "The agent reported this without a readable symbol or printed text. Check the symbol near the title block." };
+  }
+  const printed = blocks.map((b) => b.unit).filter((v) => v && v !== "unknown");
+  const noteWords = { mm: /\bmm\b|millimet/i, inch: /\binch\b|\binches\b|\bin\.|"/i }[value];
+  const notes = pages.flatMap((p) => p.notes || []);
+  const note = notes.find((n) => noteWords && noteWords.test(n));
+  const other = value === "mm" ? /\binch\b|\binches\b/i : /\bmm\b|millimet/i;
+  if (notes.some((n) => other.test(n)) && !note) return { level: "check", label: "Check", detail: "A printed note on the sheet mentions a different unit." };
+  if (printed.includes(value) && note) return { level: "high", label: "High · printed note", detail: `Title block and a printed note agree: "${note}".` };
+  if (printed.includes(value) || note) return { level: "medium", label: "Medium · one source", detail: note ? `Printed note: "${note}".` : "Read from the title block; no printed units note was found." };
+  return { level: "low", label: "Low · agent only", detail: "No printed units note or title-block value was found. Check the sheet." };
+}
+
+// Which view / section of the drawing a reading belongs to, named as the sheet names it ("SECTION A-A", "01. PISTON", ...).
+const VIEW_KINDS = { front: "Front view", side: "Side view", plan: "Plan view", section: "Section", detail: "Detail", iso: "3D view", other: "Other" };
+function viewGroup(r, d) {
+  const m = /^P(\d+)\.v(\d+)$/.exec((d.views || [])[0] || "");
+  if (!m) return { key: "none", title: "Not located in a view", scale: "", kind: "", order: 1e6, page: 0, no: 0 };
+  const page = Number(m[1]), no = Number(m[2]);
+  const v = ((r.pages || []).find((p) => p.no === page)?.read?.views || []).find((x) => x.no === no);
+  const raw = (v && v.label) || `View ${no}`;
+  const scale = (/\s+SCALE\s+[\d:.,]+\s*$/i.exec(raw) || [""])[0].trim();
+  return { key: `${page}.${no}`, title: raw.replace(/\s+SCALE\s+[\d:.,]+\s*$/i, "") || `View ${no}`, scale: scale ? scale.toLowerCase().replace(/^scale/, "scale") : "",
+           kind: v ? VIEW_KINDS[v.type] || "" : "", order: page * 1000 + no, page, no };
+}
+
+// The reader records each callout box NORMALIZED to 0..1000 of the original page (its view boxes are already pixels): convert to page pixels.
+function calloutPixels(p, box) {
+  return [box[0] * p.width / 1000, box[1] * p.height / 1000, box[2] * p.width / 1000, box[3] * p.height / 1000];
+}
+
 // ---- where each reading sits on the drawing: the callout box when the reader recorded one, else the view it belongs to
 function measureBoxes(r) {
   const out = {};
@@ -1053,7 +1139,7 @@ function measureBoxes(r) {
     const callouts = (read.evidence?.extraction?.callouts || []).filter((c) => c.category === "measurement");
     (read.dims || []).forEach((d, i) => {
       const c = callouts[i], v = (d.views || [])[0], vb = v && p.boxes[v - 1];
-      if (c && c.text === d.text && Array.isArray(c.box)) out[d.id] = { page: p.no, box: c.box, exact: true };
+      if (c && c.text === d.text && Array.isArray(c.box)) out[d.id] = { page: p.no, box: calloutPixels(p, c.box), exact: true };
       else if (vb) out[d.id] = { page: p.no, box: vb, exact: false };
     });
   }
@@ -1066,7 +1152,7 @@ function showMeasureBox(pageNo, spot, on) {
   let hl = svg.querySelector(".measure-hl");
   if (!on || !spot || spot.page !== pageNo) { if (hl) hl.setAttribute("visibility", "hidden"); return; }
   if (!hl) { hl = svgEl("rect", { class: "measure-hl" }); svg.append(hl); }
-  const pad = spot.exact ? 4 : 0, b = spot.box;
+  const pad = spot.exact ? 8 : 0, b = spot.box;        // callout boxes are the model's own estimates: leave a margin around them
   hl.setAttribute("x", b[0] - pad); hl.setAttribute("y", b[1] - pad); hl.setAttribute("width", b[2] - b[0] + 2 * pad); hl.setAttribute("height", b[3] - b[1] + 2 * pad);
   hl.setAttribute("visibility", "visible");
 }
@@ -1089,8 +1175,9 @@ function pageCard(p, focus = false) {
   (p.read?.dims || []).forEach((d, i) => {
     const c = callouts[i];
     if (!c || c.text !== d.text || !Array.isArray(c.box)) return;
-    const t = svgEl("rect", { class: "m-box", x: c.box[0] - 3, y: c.box[1] - 3, width: c.box[2] - c.box[0] + 6, height: c.box[3] - c.box[1] + 6, "data-dim": d.id });
-    t.addEventListener("mouseenter", () => { showMeasureBox(p.no, { page: p.no, box: c.box, exact: true }, true); if (globalThis.__measureFocus) globalThis.__measureFocus(d.id, true); });
+    const px = calloutPixels(p, c.box);
+    const t = svgEl("rect", { class: "m-box", x: px[0] - 3, y: px[1] - 3, width: px[2] - px[0] + 6, height: px[3] - px[1] + 6, "data-dim": d.id });
+    t.addEventListener("mouseenter", () => { showMeasureBox(p.no, { page: p.no, box: px, exact: true }, true); if (globalThis.__measureFocus) globalThis.__measureFocus(d.id, true); });
     t.addEventListener("mouseleave", () => { showMeasureBox(p.no, null, false); if (globalThis.__measureFocus) globalThis.__measureFocus(d.id, false); });
     t.addEventListener("click", () => { if (globalThis.__measureSelect) globalThis.__measureSelect(d.id); });
     svg.append(t);
