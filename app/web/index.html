@@ -462,51 +462,100 @@ function designCard(r) {
   controls.append(el("div", { class: "meta" },
     needsInput(unit, "Unit", "Unit is not clear on the drawing — confirm mm or inches. Values are never converted automatically."),
     needsInput(projection, "Projection", "No projection symbol or note was readable — confirm first or third angle.")), notes);
+  // ---- measurements: ONE filtered list. Hovering a row outlines its callout on the drawing (and the reverse); click a value to correct it.
+  const where = measureBoxes(r);
+  const tell = () => { if (typeof Event !== "undefined") controls.dispatchEvent(new Event("change", { bubbles: true })); };   // marks the review as edited
+  const view = { tab: null, query: "" };
   const inputs = model.dimensions.map((d) => {
     const assessment = r.measurement_review?.[d.id] || r.design?.measurement_review?.[d.id] || {};
     const score = typeof assessment.confidence === "number" ? assessment.confidence : null;
     const approved = assessment.ai_approved === true && !d.confirmed;
+    // These two inputs are the review's state (the save step reads them); the text box is only shown while editing.
     const checked = el("input", {type:"checkbox",checked:d.confirmed,"aria-label":`Confirm ${d.id}`});
-    const correction = el("input", {type:"text",value:d.corrected_text || "",placeholder:"Enter corrected value",maxlength:200,"aria-label":`Correct ${d.id}`});
+    const correction = el("input", {type:"text",value:d.corrected_text || "",placeholder:"Correct value",maxlength:200,"aria-label":`Correct ${d.id}`,class:"m-input"});
     const item = {d,checked,correction,approved,forced:false};
-    const ask = el("button", {class:"reading-ask",type:"button",text:"Ask agent", "aria-label":`Ask about ${d.id}`});
-    ask.addEventListener("click",() => {
+    const shown = () => correction.value.trim() || d.corrected_text || d.text;
+    const stateOf = () => checked.checked ? "verified" : item.approved ? "ai" : "open";
+    item.state = stateOf;
+    const icon = (glyph, label, onclick, extra = "") => { const b = el("button", {type:"button",class:`m-btn ${extra}`,title:label,"aria-label":`${label} ${d.id}`,text:glyph}); b.addEventListener("click", (e) => { if (e && e.stopPropagation) e.stopPropagation(); onclick(); }); return b; };
+    const valueBtn = el("button", {type:"button",class:"m-value",title:"Click to correct this value","aria-label":`Correct ${d.id}: ${d.text}`,text:shown()});
+    const was = el("span", {class:"m-was"});
+    const pill = el("span", {class:`confidence-pill ${score === null ? "unscored" : approved ? "high" : "review"}`,
+      title:assessment.confidence_reason || "Extraction-agent estimate, not a calibrated accuracy probability.","aria-label":`Extraction agent confidence for ${d.id}: ${score === null ? "not scored" : score + " percent"}`,text:score===null ? "Not scored" : `${score}%`});
+    const detail = el("div", {class:"m-detail",hidden:true},
+      el("p", {class:"m-why",text:assessment.review_reason || assessment.confidence_reason || "No reason recorded."}),
+      assessment.confidence_metrics?.length ? assessment.confidence_metrics.map(c => el("div",{class:"criterion-row"},el("span",{text:c.label}),el("b",{text:`${c.rating}/5`}),el("small",{text:`${c.weight}% weight`}))) : el("p",{text:"The agent has not rated the five confidence criteria."}),
+      el("p", {class:"m-id",text:`${d.id} · page ${d.page} · ${d.views.join(", ") || "view not located"}`}));
+    let verify, flag;
+    const sync = () => {
+      const st = stateOf();
+      item.row.setAttribute("data-state", st);
+      valueBtn.textContent = shown();
+      was.textContent = correction.value.trim() && correction.value.trim() !== d.text ? `was ${d.text}` : "";
+      verify.hidden = st === "verified";
+      flag.hidden = st !== "ai" && st !== "verified";
+    };
+    const changed = () => { sync(); if (item.redraw) item.redraw(); tell(); };
+    verify = icon("✓", "Mark as verified", () => { checked.checked = true; item.forced = false; changed(); }, "m-ok");
+    flag = icon("⚑", "Send back to needs review", () => { item.forced = true; checked.checked = false; item.approved = false; changed(); });
+    const ask = icon("?", "Ask the assistant about", () => {
       r.chatDraft={mode:"ask",target:d.id,text:`Explain ${d.id} and its confidence.`,context:"",measurement:"",view:""};
       renderAgentChat(r);$("#chat-reply")?.focus();
     });
-    const flag=el("button",{class:"reading-ask",type:"button",text:"Flag for review"});
-    flag.addEventListener("click",() => {item.forced=true;checked.checked=false;item.approved=false;item.row.className="measurement-card needs-review";flag.disabled=true;item.row.append(el("p",{class:"reading-reason",text:"Flagged by you. Save to request a new review."}));redrawLanes();controls.dispatchEvent(new Event("change",{bubbles:true}));});
-    correction.addEventListener("input",() => {checked.checked=true;item.approved=false;});
-    checked.addEventListener("change",() => {item.forced=!checked.checked;if(item.redraw)item.redraw();});
-    const confidence=el("span",{class:`confidence-pill ${score === null ? "unscored" : approved ? "high" : "review"}`,
-      title:assessment.confidence_reason || "Extraction-agent estimate, not a calibrated accuracy probability.","aria-label":`Extraction agent confidence for ${d.id}: ${score === null ? "not scored" : score + " percent"}`,text:score===null ? "Not scored" : `${score}%`});
-    const edit=el("details",{class:"reading-edit"},el("summary",{text:approved ? "Correct reading" : "Verify or correct"}),
-      correction,el("label",{class:"reading-confirm"},checked,"Verified against the drawing"));
-    const breakdown=el("details",{class:"confidence-breakdown"},el("summary",{text:"Why this score?"}),
-      assessment.confidence_metrics?.length ? assessment.confidence_metrics.map(c=>el("div",{class:"criterion-row"},el("span",{text:c.label}),el("b",{text:`${c.rating}/5`}),el("small",{text:`${c.weight}% weight`}))) : el("p",{text:"The agent has not rated the five confidence criteria. This reading needs human review."}),
-      assessment.confidence_reason ? el("p",{text:assessment.confidence_reason}) : null);
-    item.row=el("article",{class:`measurement-card ${approved ? "ai-approved" : d.confirmed ? "human-reviewed" : "needs-review"}`,"data-reading-id":d.id},
-      el("div",{class:"reading-top"},el("strong",{class:"reading-value",text:d.corrected_text || d.text}),confidence),
-      el("div",{class:"reading-source",text:`${d.id} · Page ${d.page} · ${d.views.join(", ") || "View not located"}`}),
-      d.confirmed ? el("span",{class:"human-verified",text:"Verified by you"}) : !approved ? el("p",{class:"reading-reason",text:assessment.review_reason || "Confirm this reading against the source."}) : null,
-      el("div",{class:"reading-actions"},ask,approved ? flag : null),breakdown,edit);
+    const info = icon("i", "Why this score for", () => { detail.hidden = !detail.hidden; });
+    const editBox = el("span", {class:"m-edit",hidden:true}, correction);
+    const stop = (apply) => {
+      editBox.hidden = true; valueBtn.hidden = false;
+      if (apply) { checked.checked = true; item.approved = false; item.forced = false; changed(); }
+      else { correction.value = d.corrected_text || ""; sync(); }
+    };
+    editBox.append(icon("Save", "Save value", () => stop(true), "m-save"), icon("Cancel", "Cancel the edit of", () => stop(false), "m-cancel"));
+    valueBtn.addEventListener("click", () => {
+      correction.value = correction.value.trim() || d.corrected_text || d.text;
+      valueBtn.hidden = true; editBox.hidden = false;
+      if (correction.focus) correction.focus();
+      if (correction.select) correction.select();
+    });
+    correction.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); stop(true); } else if (e.key === "Escape") { stop(false); } });
+    item.row = el("article", {class:"m-row",tabindex:"0","data-reading-id":d.id,"data-state":stateOf()},
+      el("div", {class:"m-main"}, el("span",{class:"m-dot","aria-hidden":"true"}), valueBtn, editBox, was, pill, el("span",{class:"m-actions"}, verify, ask, flag, info)),
+      detail);
+    const hover = (on) => showMeasureBox(d.page, where[d.id], on);
+    item.row.addEventListener("mouseenter", () => hover(true)); item.row.addEventListener("mouseleave", () => hover(false));
+    item.row.addEventListener("focusin", () => hover(true)); item.row.addEventListener("focusout", () => hover(false));
+    sync();
     return item;
   });
-  const lane=(approved,title,subtitle) => {
-    const items=inputs.filter(item=>item.approved===approved);
-    const open=approved ? items : items.filter(item=>!item.checked.checked);          // still needs the reviewer
-    const done=approved ? [] : items.filter(item=>item.checked.checked);              // verified by the reviewer: kept, but out of the way
-    return el("section",{class:`review-lane ${approved ? "approved-lane" : "attention-lane"}`,"aria-label":title},
-      el("div",{class:"lane-heading"},el("span",{class:"lane-dot"}),el("h3",{text:title}),el("span",{class:"lane-count",text:open.length})),
-      el("p",{class:"lane-description",text:subtitle}),
-      el("div",{class:"reading-list"},
-        open.length ? open.map(i=>i.row) : el("p",{class:"lane-empty",text:approved ? "Clear readings above 80% will appear here." : "All readings have been reviewed."}),
-        done.length ? el("details",{class:"verified-group"},el("summary",{text:`Verified by you (${done.length})`}),done.map(i=>i.row)) : null));
+  const count = (st) => inputs.filter((i) => i.state() === st).length;
+  const TABS = [["open", "Needs review"], ["ai", "AI approved"], ["verified", "Verified"], ["all", "All"]];
+  const tabButtons = TABS.map(([key]) => el("button", {type:"button",class:"m-tab","data-tab":key,"aria-pressed":"false"}));
+  const search = el("input", {type:"search",class:"m-search",placeholder:"Search value or ID","aria-label":"Search measurements"});
+  const list = el("div", {class:"m-list"});
+  const redraw = () => {
+    if (view.tab === null) view.tab = count("open") ? "open" : "all";
+    TABS.forEach(([key, label], n) => {
+      const total = key === "all" ? inputs.length : count(key);
+      tabButtons[n].textContent = `${label} ${total}`;
+      tabButtons[n].setAttribute("aria-pressed", String(view.tab === key));
+      tabButtons[n].className = view.tab === key ? "m-tab on" : "m-tab";
+    });
+    const q = view.query.trim().toLowerCase();
+    const rows = inputs.filter((i) => (view.tab === "all" || i.state() === view.tab) && (!q || `${i.d.id} ${i.d.text} ${i.correction.value}`.toLowerCase().includes(q)));
+    list.replaceChildren(...(rows.length ? rows.map((i) => i.row) : [el("p", {class:"lane-empty",text: q ? "No measurement matches your search." : view.tab === "open" ? "Nothing left to review." : "Nothing here yet."})]));
   };
-  const review=el("div",{class:"review-lanes"},
-    lane(true,"AI approved","Agent confidence above 80%"),lane(false,"Needs review","Your input where it matters"));
-  const redrawLanes=()=>review.replaceChildren(lane(true,"AI approved","Agent confidence above 80%"),lane(false,"Needs review","Your input where it matters"));
-  inputs.forEach(item=>{item.redraw=redrawLanes;});
+  tabButtons.forEach((b, n) => b.addEventListener("click", () => { view.tab = TABS[n][0]; redraw(); }));
+  search.addEventListener("input", (e) => { if (e && e.stopPropagation) e.stopPropagation(); view.query = search.value; redraw(); });          // typing here is not an edit of the review
+  search.addEventListener("change", (e) => { if (e && e.stopPropagation) e.stopPropagation(); });
+  inputs.forEach((item) => { item.redraw = redraw; });
+  const review = el("div", {class:"m-panel"}, el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search), list);
+  redraw();
+  // From the drawing: hovering a callout highlights its row; clicking it jumps to the row.
+  globalThis.__measureFocus = (id, on) => { const row = inputs.find((i) => i.d.id === id)?.row; if (row && row.classList) row.classList.toggle("m-hover", on); };
+  globalThis.__measureSelect = (id) => {
+    view.tab = "all"; view.query = ""; search.value = ""; redraw();
+    const row = inputs.find((i) => i.d.id === id)?.row;
+    if (row && row.scrollIntoView) { row.scrollIntoView({ block: "center", behavior: "smooth" }); row.classList.add("m-flash"); setTimeout(() => row.classList.remove("m-flash"), 1600); }
+  };
   const clarifications = [];
   const note = {value:model.resolutions.note || ""};
   const btn = el("button", { class: "btn", type: "button", text: "Review measurements and continue" });
@@ -996,9 +1045,35 @@ function drawingReviewCard(r) {
     el("label", {class:"source-selector"}, "Source drawing", select), content);
 }
 
+// ---- where each reading sits on the drawing: the callout box when the reader recorded one, else the view it belongs to
+function measureBoxes(r) {
+  const out = {};
+  for (const p of r.pages || []) {
+    const read = p.read; if (!read) continue;
+    const callouts = (read.evidence?.extraction?.callouts || []).filter((c) => c.category === "measurement");
+    (read.dims || []).forEach((d, i) => {
+      const c = callouts[i], v = (d.views || [])[0], vb = v && p.boxes[v - 1];
+      if (c && c.text === d.text && Array.isArray(c.box)) out[d.id] = { page: p.no, box: c.box, exact: true };
+      else if (vb) out[d.id] = { page: p.no, box: vb, exact: false };
+    });
+  }
+  return out;
+}
+
+function showMeasureBox(pageNo, spot, on) {
+  const svg = document.querySelector(`.source-review svg[data-page="${pageNo}"]`);
+  if (!svg) return;
+  let hl = svg.querySelector(".measure-hl");
+  if (!on || !spot || spot.page !== pageNo) { if (hl) hl.setAttribute("visibility", "hidden"); return; }
+  if (!hl) { hl = svgEl("rect", { class: "measure-hl" }); svg.append(hl); }
+  const pad = spot.exact ? 4 : 0, b = spot.box;
+  hl.setAttribute("x", b[0] - pad); hl.setAttribute("y", b[1] - pad); hl.setAttribute("width", b[2] - b[0] + 2 * pad); hl.setAttribute("height", b[3] - b[1] + 2 * pad);
+  hl.setAttribute("visibility", "visible");
+}
+
 function pageCard(p, focus = false) {
   const read = p.read;
-  const svg = svgEl("svg", { viewBox: `0 0 ${p.width} ${p.height}`, preserveAspectRatio: "none", role: "img", "aria-label": `View boxes on page ${p.no}` });
+  const svg = svgEl("svg", { viewBox: `0 0 ${p.width} ${p.height}`, preserveAspectRatio: "none", role: "img", "aria-label": `View boxes on page ${p.no}`, "data-page": p.no });
   const fs = Math.max(14, Math.round(p.width / 70));
   p.boxes.forEach((b, i) => {
     const n = i + 1;
@@ -1008,6 +1083,17 @@ function pageCard(p, focus = false) {
     rect.addEventListener("click", () => document.getElementById(`crop-${p.no}-${n}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
     svg.append(rect, svgEl("text", { x: b[0] + 4, y: b[1] + fs, "font-size": fs, "data-box": `${p.no}-${n}` }));
     svg.lastChild.textContent = n;
+  });
+  // one invisible target per located measurement: hover = highlight its row, click = jump to it
+  const callouts = (p.read?.evidence?.extraction?.callouts || []).filter((c) => c.category === "measurement");
+  (p.read?.dims || []).forEach((d, i) => {
+    const c = callouts[i];
+    if (!c || c.text !== d.text || !Array.isArray(c.box)) return;
+    const t = svgEl("rect", { class: "m-box", x: c.box[0] - 3, y: c.box[1] - 3, width: c.box[2] - c.box[0] + 6, height: c.box[3] - c.box[1] + 6, "data-dim": d.id });
+    t.addEventListener("mouseenter", () => { showMeasureBox(p.no, { page: p.no, box: c.box, exact: true }, true); if (globalThis.__measureFocus) globalThis.__measureFocus(d.id, true); });
+    t.addEventListener("mouseleave", () => { showMeasureBox(p.no, null, false); if (globalThis.__measureFocus) globalThis.__measureFocus(d.id, false); });
+    t.addEventListener("click", () => { if (globalThis.__measureSelect) globalThis.__measureSelect(d.id); });
+    svg.append(t);
   });
   const figure = el("div", { class: "figure" }, el("div", { class: "stage" },
     el("img", { src: `/api/page/${p.sha}`, loading:"lazy", decoding:"async", alt: `Page ${p.no} of the drawing`, width: p.width, height: p.height }), svg));

@@ -47,10 +47,11 @@ async function main() {
   const download = () => all(card, (e) => e.tagName === "a" && e.attrs.download);
   assert.equal(build().length, 1);
   assert.equal(download().length, 0, "planning must not offer CAD exports");
-  const correction = all(card, (e) => e.attrs["aria-label"] === "Correct P1.d1")[0];
-  correction.value = "125"; await correction.fire("input");
-  const confirmed = all(card, (e) => e.attrs["aria-label"] === "Confirm P1.d1")[0];
-  assert.equal(confirmed.checked, true);
+  const correction = all(card, (e) => e.tagName === "input" && e.attrs["aria-label"] === "Correct P1.d1")[0];
+  correction.value = "125";
+  const save = all(card, (e) => e.attrs["aria-label"] === "Save value P1.d1")[0];
+  await save.fire("click");                                   // saving a corrected value also marks it verified
+  assert.equal(all(card, (e) => e.attrs["data-reading-id"] === "P1.d1").length, 0, "a verified reading leaves the Needs review tab");
   const controls = all(card, (e) => e.tagName === "fieldset")[0];
   await controls.fire("input"); // browser input events bubble to the fieldset
   assert.equal(build().length, 0, "editing must hide the previous plan's build approval");
@@ -119,11 +120,24 @@ async function main() {
   confidenceResult.drawing_model.dimensions[0].corrected_text=null;
   confidenceResult.measurement_review={"P1.d1":{confidence:96,confidence_reason:"Source text is clear",ai_approved:true},"P1.d2":{confidence:80,ai_approved:false,review_reason:"Agent confidence is 80% or lower"}};
   const confidenceCard=context.designCard(confidenceResult);
-  const approvedLane=all(confidenceCard,e=>e.attrs["aria-label"]==="AI approved")[0];
-  const reviewLane=all(confidenceCard,e=>e.attrs["aria-label"]==="Needs review")[0];
-  assert.equal(all(approvedLane,e=>e.attrs["data-reading-id"]==="P1.d1").length,1);
-  assert.equal(all(reviewLane,e=>e.attrs["data-reading-id"]==="P1.d2").length,1,"80 percent needs review");
-  assert.ok(confidenceCard.textContent.includes("96%") && confidenceCard.textContent.includes("Not scored"));
+  const ids=(node) => all(node,(e) => e.attrs["data-reading-id"]).map((e) => e.attrs["data-reading-id"]);
+  assert.ok(ids(confidenceCard).includes("P1.d2") && !ids(confidenceCard).includes("P1.d1"),"80 percent needs review; 96 percent is approved");
+  assert.ok(confidenceCard.textContent.includes("Not scored"));
+  assert.ok(confidenceCard.textContent.includes("Needs review") && confidenceCard.textContent.includes("AI approved"));
+  const aiTab=all(confidenceCard,(e) => e.attrs["data-tab"]==="ai")[0];
+  await aiTab.fire("click");
+  assert.deepEqual(ids(confidenceCard),["P1.d1"],"the AI approved tab lists only approved readings");
+  assert.ok(confidenceCard.textContent.includes("96%"));
+  const allTab=all(confidenceCard,(e) => e.attrs["data-tab"]==="all")[0];
+  await allTab.fire("click");
+  assert.equal(ids(confidenceCard).length,confidenceResult.drawing_model.dimensions.length,"All lists every reading");
+  const search=all(confidenceCard,(e) => e.attrs["aria-label"]==="Search measurements")[0];
+  search.value="P1.d2";await search.fire("input");
+  assert.deepEqual(ids(confidenceCard),["P1.d2"],"search narrows the list");
+  const where=context.measureBoxes({pages:[{no:1,boxes:[[0,0,10,10]],read:{dims:[{id:"P1.d1",text:"5",views:[1]}],evidence:{extraction:{callouts:[{category:"measurement",text:"5",box:[1,2,3,4]}]}}}}]});
+  assert.deepEqual(JSON.parse(JSON.stringify(where["P1.d1"])),{page:1,box:[1,2,3,4],exact:true},"a recorded callout box wins over the view box");
+  const legacy=context.measureBoxes({pages:[{no:1,boxes:[[0,0,10,10]],read:{dims:[{id:"P1.d1",text:"5",views:[1]}]}}]});
+  assert.deepEqual(JSON.parse(JSON.stringify(legacy["P1.d1"])),{page:1,box:[0,0,10,10],exact:false},"without a callout box the view box is used");
   const showBody=html.slice(html.indexOf("function show(r)"),html.indexOf("function updateExtractionProgress"));
   assert.ok(!showBody.includes("assemblyCard(r)") && !showBody.includes("featureCard(r)") && !showBody.includes("assessmentCard(r)"),"review page omits the removed inspector sections");
   console.log("Drawing review UI smoke test passed");
