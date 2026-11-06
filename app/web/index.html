@@ -43,7 +43,7 @@
       <span class="hint">You’ll review the extracted features and measurements, answer any questions, and compare the finished 3D model with your drawing before exporting.</span></div>
   </main>
   <aside class="card agent-chat" id="agent-chat" aria-label="Agent chat">
-    <div class="chat-heading"><span class="chat-agent-dot" aria-hidden="true"></span><div><h2>Your drawing assistant</h2><p class="hint">Measurements, sections and clarity.</p></div><span class="chat-scope-badge">Drawing only</span></div>
+    <div class="chat-heading"><span class="chat-agent-dot" aria-hidden="true"></span><div><h2>Your drawing assistant</h2><p class="hint">Measurements, sections and clarity.</p></div><span class="chat-scope-badge">Drawing only</span><button type="button" class="chat-expand" aria-label="Make the assistant wider" title="Wider / narrower">⤢</button></div>
     <div id="chat-body"></div>
   </aside>
 </div>
@@ -1289,6 +1289,7 @@ drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.ad
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
 drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); addFiles([...e.dataTransfer.files]); });
 $("#run").addEventListener("click", run);
+document.addEventListener("click", (e) => { const b = e.target && e.target.closest ? e.target.closest(".chat-expand") : null; if (b) { document.body.classList.toggle("chat-wide"); b.setAttribute("aria-pressed", String(document.body.classList.contains("chat-wide"))); } });
 window.addEventListener("hashchange", openFromHash);
 renderAgentChat(null);
 loadConfig().catch((error) => { $("#status").textContent = error.message; });

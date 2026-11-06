@@ -165,3 +165,21 @@ h2,h3{font-weight:600}
 .m-done h3{margin:0 0 6px;color:#2e7d50}
 .m-done-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
 .m-done-actions .btn{margin:0;width:auto;text-decoration:none}
+
+/* the assistant: room for the conversation (it used to be a short box with its answer buttons cut off) */
+#agent-chat{height:calc(100vh - 110px)!important;max-height:none!important;min-height:560px!important;position:sticky;top:12px}
+.stage-slot:has(>#agent-chat){align-self:stretch}
+#agent-chat .chat-messages{flex:1 1 auto;min-height:0!important;overflow:auto}
+#agent-chat .chat-composer{flex:none}
+#agent-chat .chat-composer textarea{min-height:64px;max-height:120px}
+#agent-chat .chat-heading{padding:14px 16px}
+.chat-expand{margin-left:6px;border:0;background:transparent;border-radius:8px;width:28px;height:28px;font-size:15px;color:var(--muted)}
+.chat-expand:hover{background:var(--brand-soft);color:var(--brand)}
+.stage-grid{grid-template-columns:minmax(0,1fr) 420px}
+body.chat-wide .stage-grid{grid-template-columns:minmax(0,1fr) 680px}
+@media(max-width:1100px){.stage-grid,body.chat-wide .stage-grid{grid-template-columns:1fr}#agent-chat{position:static;height:70vh!important}}
+#agent-chat .chat-heading{display:flex;align-items:center;gap:10px;padding:12px 14px!important}
+#agent-chat .chat-heading .hint{display:none}
+#agent-chat .chat-heading h2{font-size:15px;margin:0}
+#agent-chat .chat-heading .chat-scope-badge{margin-left:auto}
+#agent-chat .chat-agent-dot{margin:0}
