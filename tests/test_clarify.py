@@ -1,0 +1,100 @@
+"""AI-drafted clarification answers are proposals: grounded, validated, never saved by this step."""
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+import fakes  # noqa: F401
+from drawing_fixtures import drawing_result, model
+
+from app.agent.orchestrator import Orchestrator
+from app.agent.workers import ExtractionAgent
+from app.drawing.clarify import open_questions, suggest
+from app.drawing.model import Resolutions, reconcile
+from app.llm.base import LLMResponse
+
+
+class Scripted:
+    model = "fake"
+    provider = "fake"
+
+    def __init__(self, data):
+        self.data, self.calls = data, []
+
+    def generate_json(self, system, parts):
+        self.calls.append((system, parts))
+        return LLMResponse(json.dumps(self.data), self.data, "fake", 0, {})
+
+
+def with_questions():
+    result = drawing_result()
+    result["pages"][0]["read"]["issues"] = ["The small dimension reads 42 but 22 is plausible", "Is the projection symbol first angle?", "Scale label"]
+    return result
+
+
+VIEWS = [{"id": "P1.v1", "label": "PLAN", "type": "plan"}, {"id": "P1.v2", "label": "SECTION A-A", "type": "section"}]
+
+
+def test_open_questions_skip_the_ones_already_answered():
+    result = with_questions()
+    m = reconcile(result)
+    assert [q["key"] for q in open_questions(result, m)] == ["P1.u1", "P1.u2", "P1.u3"]
+    answered = reconcile(result, Resolutions.model_validate({"clarifications": [{"id": "P1.u2", "answer": "It is first angle", "text": None, "views": []}]}))
+    assert [q["key"] for q in open_questions(result, answered)] == ["P1.u1", "P1.u3"]
+
+
+def test_proposals_are_cleaned_and_every_asked_question_is_accounted_for():
+    questions = [{"key": "P1.u1", "question": "q1"}, {"key": "P1.u2", "question": "q2"}, {"key": "P1.u3", "question": "q3"}]
+    llm = Scripted({"suggestions": [
+        {"key": "P1.u1", "can_answer": True, "answer": "It prints 22.", "measurement": "22", "view": "P1.v2", "basis": "the section label"},
+        {"key": "P1.u2", "can_answer": False, "answer": "should be ignored", "measurement": "99", "view": "P1.v1", "basis": "too small"},
+        {"key": "P9.u9", "can_answer": True, "answer": "an invented key", "measurement": None, "view": None, "basis": ""}]})
+    out = {s["key"]: s for s in suggest(llm, 1, b"png", questions, VIEWS, ["120", "22"])}
+    assert set(out) == {"P1.u1", "P1.u2", "P1.u3"}                                   # the invented key is gone; the skipped one is still listed
+    assert out["P1.u1"]["can_answer"] and out["P1.u1"]["measurement"] == "22" and out["P1.u1"]["view"] == "P1.v2"
+    assert out["P1.u2"]["can_answer"] is False and out["P1.u2"]["answer"] == "" and out["P1.u2"]["measurement"] is None
+    assert out["P1.u3"]["can_answer"] is False and "did not answer" in out["P1.u3"]["basis"]
+    sent = json.loads(llm.calls[0][1][1])                                            # the model is told the real views and only the asked questions
+    assert [q["key"] for q in sent["questions"]] == ["P1.u1", "P1.u2", "P1.u3"] and sent["views"][1]["id"] == "P1.v2"
+
+
+def test_a_measurement_without_a_real_view_or_with_several_numbers_is_dropped_but_the_answer_stays():
+    questions = [{"key": "P1.u1", "question": "q1"}, {"key": "P1.u2", "question": "q2"}]
+    llm = Scripted({"suggestions": [
+        {"key": "P1.u1", "can_answer": True, "answer": "It is 22.", "measurement": "22", "view": "P1.v77", "basis": "x"},
+        {"key": "P1.u2", "can_answer": True, "answer": "Both numbers.", "measurement": "22 and 42", "view": "P1.v1", "basis": "y"}]})
+    out = {s["key"]: s for s in suggest(llm, 1, b"png", questions, VIEWS, [])}
+    assert out["P1.u1"]["answer"] == "It is 22." and out["P1.u1"]["measurement"] is None
+    assert out["P1.u2"]["answer"] == "Both numbers." and out["P1.u2"]["measurement"] is None
+
+
+def test_a_title_or_label_is_never_proposed_as_a_measurement():
+    from app.drawing.clarify import looks_like_dimension
+    assert looks_like_dimension("22") and looks_like_dimension("Ø10 - 8 hole") and looks_like_dimension("2X45°") and looks_like_dimension("R27")
+    assert not looks_like_dimension("05. CONNECTING ROD CAP") and not looks_like_dimension("SCALE 1:1,5") and not looks_like_dimension("SECTION D-D")
+    llm = Scripted({"suggestions": [{"key": "P1.u1", "can_answer": True, "answer": "It is the part title.", "measurement": "05. CONNECTING ROD CAP", "view": "P1.v1", "basis": "x"}]})
+    out = suggest(llm, 1, b"png", [{"key": "P1.u1", "question": "q"}], VIEWS, [])
+    assert out[0]["answer"] == "It is the part title." and out[0]["measurement"] is None
+
+
+def test_a_reply_without_a_suggestions_list_is_refused_not_guessed():
+    try:
+        suggest(Scripted({"oops": 1}), 1, b"png", [{"key": "P1.u1", "question": "q"}], VIEWS, [])
+        assert False, "a malformed reply was accepted"
+    except ValueError:
+        pass
+
+
+def test_the_worker_action_is_allowed_and_server_returns_proposals_only():
+    from app.agent.harness import ACTIONS
+    from app.web import server
+    assert "suggest_clarifications" in ACTIONS["extraction"]
+    result = with_questions()
+    m = reconcile(result)
+    llm = Scripted({"suggestions": [{"key": "P1.u1", "can_answer": True, "answer": "It prints 22.", "measurement": "22", "view": "P1.v2", "basis": "b"}]})
+    with patch.object(server, "result_with_design", lambda rid: {**result, "drawing_model": m.model_dump()}), \
+         patch.object(server, "default_cache", lambda: type("C", (), {"get_blob": lambda self, sha: b"png"})()):
+        out = server.clarify_suggestions("abcdef123456", client=llm)
+    assert out["calls"] == 1 and out["model_hash"] == m.digest() and out["source_hash"] == m.source_hash
+    assert {s["key"] for s in out["suggestions"]} == {"P1.u1", "P1.u2", "P1.u3"} and all(s["page"] == 1 for s in out["suggestions"])
+    assert "Nothing is saved" in out["note"]
+    assert reconcile(result).resolutions.clarifications == []                        # the model's own state is untouched

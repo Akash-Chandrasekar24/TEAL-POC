@@ -54,6 +54,11 @@ class ExtractionAgent(_ModelWorker):
         from app.drawing.readiness import assess_page
         return assess_page(self.model_client, png)
 
+    def suggest_clarifications(self, page_no, png, questions, views, dimensions):
+        """Draft answers for the reviewer to accept or reject. Proposals only: nothing is saved here."""
+        from app.drawing.clarify import suggest
+        return suggest(self.model_client, page_no, png, questions, views, dimensions)
+
     def read_page(self, page_no, png, boxes):
         from app.perception.extract import read_page
         return read_page(self.model_client, page_no, png, boxes)

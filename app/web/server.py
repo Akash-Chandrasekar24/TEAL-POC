@@ -385,6 +385,39 @@ def chat_question(rid,source_hash,model_hash,text,target="note"):
     return {"entry":entry,"history":history,"review_hash":model.digest()}
 
 
+def clarify_suggestions(rid: str, llm_name=None, client=None) -> dict:
+    """AI-drafted answers to the open clarification questions. Proposals only: nothing is saved until the reviewer accepts each one."""
+    from app.drawing.clarify import open_questions
+    from app.llm import make_client
+    result = result_with_design(rid)
+    model = DrawingModel.model_validate(result["drawing_model"])
+    questions = open_questions(result, model)
+    if not questions:
+        return {"id": None, "result_id": rid, "source_hash": model.source_hash, "model_hash": model.digest(), "suggestions": [], "calls": 0}
+    attempt = uuid.uuid4().hex[:12]
+    with trace.run(attempt, RUNS / attempt, save_files=config.TRACE_FILES, workflow="clarification_suggestions", drawing_result=rid):
+        supervisor = Orchestrator(extraction=ExtractionAgent(client if client is not None else make_client(llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER,
+                                                                                                          reasoning_effort=config.EXTRACTION_REASONING_EFFORT)))
+        out, calls = [], 0
+        try:
+            for page in model.pages:
+                mine = [q for q in questions if q["page"] == page.no]
+                if not mine:
+                    continue
+                png = default_cache().get_blob(next(p["sha"] for p in result["pages"] if p["no"] == page.no))
+                if png is None:
+                    raise ValueError(f"Page {page.no}: original page is unavailable")
+                found = supervisor.suggest_clarifications(page.no, png, mine, [v.model_dump() for v in page.views],
+                                                          [d.effective_text for d in model.dimensions if d.page == page.no])
+                out.extend({**s, "page": page.no} for s in found)
+                calls += 1
+        except LLMError as ex:
+            ex.run_id = attempt
+            raise
+    return {"id": attempt, "result_id": rid, "source_hash": model.source_hash, "model_hash": model.digest(), "suggestions": out, "calls": calls,
+            "note": "Proposals only. Nothing is saved until you accept each one."}
+
+
 def assess_result(rid: str, llm_name=None, client=None) -> dict:
     from app.llm import make_client
     source = assembly_source(rid)
@@ -747,7 +780,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
+        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
             return self._json(404, {"error": "not found"})
         size = int(self.headers.get("Content-Length") or 0)
         if not 0 < size <= MAX_BODY:
@@ -784,6 +817,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, job)
                 decision = {key: body[key] for key in ("review_hash", "compared_drawing", "checked_measurements", "message", "params") if key in body}
                 return self._json(200, WORKFLOW.action(str(body.get("job_id", "")), body.get("revision"), str(body.get("action", "")), **decision))
+            if self.path == "/api/clarify":
+                if not self._same_origin_json():
+                    return self._json(403, {"error": "Ask for suggestions from this drawing workspace"})
+                if not _PLAN_LOCK.acquire(blocking=False):
+                    return self._json(409, {"error": "A review or plan is running. Wait for it to finish."})
+                try:
+                    return self._json(200, clarify_suggestions(str(body.get("result_id", "")), llm))
+                finally:
+                    _PLAN_LOCK.release()
             if self.path == "/api/assess":
                 if not _PLAN_LOCK.acquire(blocking=False):
                     return self._json(409, {"error": "A plan or assessment is already running. Wait for it to finish."})

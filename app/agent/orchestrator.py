@@ -101,6 +101,9 @@ class Orchestrator:
     def assess_page(self, png):
         return self._dispatch("extraction", "assess_page", png)
 
+    def suggest_clarifications(self, page_no, png, questions, views, dimensions):
+        return self._dispatch("extraction", "suggest_clarifications", page_no, png, questions, views, dimensions)
+
     def read_bom(self, result, pictures):
         return self._dispatch("extraction", "read_bom", result, pictures)
 

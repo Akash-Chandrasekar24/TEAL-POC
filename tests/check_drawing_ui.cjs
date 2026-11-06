@@ -165,6 +165,29 @@ async function main() {
   assert.ok(csv.startsWith("﻿view,id,value,original,status,confidence_percent,page"),"CSV starts with a BOM (Excel) and a header");
   assert.ok(csv.includes('"SECTION A-A (scale 1:1,5)","P1.d1","Ø79 ""x""","Ø79","AI verified","87","1"'),"cells are quoted and quotes doubled");
   assert.ok(csv.includes('"01. PISTON","P1.d2","5","5","To verify","",\"1\"'),"a missing score stays empty");
+  const qr={pages:[{no:1,read:{issues:["Scale label","The rotated dimension reads 42"]}}]};
+  assert.equal(context.clarificationKey(qr,"Page 1: unreadable source callout: The rotated dimension reads 42"),"P1.u2","an issue line maps back to its question id");
+  assert.equal(context.clarificationKey(qr,"Confirm projection: unreadable"),null,"other blockers are not clarification questions");
+  assert.equal(context.clarificationKey(qr,"Page 1: unreadable source callout: not a real question"),null,"an unknown question is not answerable");
+  const qlist=context.questionList(qr,["Page 1: unreadable source callout: Scale label","Confirm projection: unreadable"]);
+  assert.equal(all(qlist,(e) => e.attrs["data-question"]==="P1.u1").length,1,"a clarification question gets an answer box");
+  assert.equal(all(qlist,(e) => e.tagName==="textarea" && e.attrs["aria-label"]==="Answer P1.u1").length,1);
+  assert.equal(all(qlist,(e) => e.tagName==="li").length,2,"a non-clarification blocker stays plain text");
+  assert.equal(context.suggestPanel(qr,["Confirm projection: unreadable"]),null,"no AI option when nothing can be answered here");
+  const sp=context.suggestPanel(qr,["Page 1: unreadable source callout: Scale label"]);
+  assert.ok(all(sp,(e) => e.tagName==="button" && e.textContent==="Let AI suggest answers (1)").length===1,"the AI option is offered");
+  class Host extends Element { replaceChildren(...n) { this.children = n; } }
+  const hostEl=new Host("div");
+  const rs={id:"abcdef123456",pages:[{no:1,sha:"a".repeat(64),width:860,height:609,boxes:[[0,0,100,100],[100,0,300,200],[300,300,400,400]]}]};
+  context.suggestionCards(rs,{suggestions:[{key:"P1.u1",page:1,question:"q",can_answer:true,answer:"It reads 22",measurement:"22",view:"P1.v2",basis:"label"},
+                                           {key:"P1.u2",page:1,question:"q2",can_answer:false,answer:"",measurement:null,view:null,basis:"too small"}]},hostEl);
+  assert.equal(all(hostEl,(e) => e.attrs["aria-label"]==="Accept P1.u1")[0].checked,false,"nothing is pre-accepted");
+  assert.equal(all(hostEl,(e) => e.attrs["aria-label"]==="Also set the reading for P1.u1")[0].checked,false,"adding a reading is opt-in");
+  assert.equal(all(hostEl,(e) => e.attrs["aria-label"]==="Accept P1.u2").length,0,"an unanswerable question has nothing to accept");
+  assert.ok(hostEl.textContent.includes("Is this OK?") && hostEl.textContent.includes("Nothing is saved yet"),"the reviewer is asked before anything is saved");
+  assert.ok(hostEl.textContent.includes("Check this reading against the view"),"a proposed reading carries a caution");
+  assert.equal(all(hostEl,(e) => e.attrs.class==="ai-crop").length,1,"a draft shows the view it refers to");
+  assert.equal(all(hostEl,(e) => e.tagName==="button" && e.textContent==="Confirm and save the accepted answers").length,1);
   const showBody=html.slice(html.indexOf("function show(r)"),html.indexOf("function updateExtractionProgress"));
   assert.ok(!showBody.includes("assemblyCard(r)") && !showBody.includes("featureCard(r)") && !showBody.includes("assessmentCard(r)"),"review page omits the removed inspector sections");
   console.log("Drawing review UI smoke test passed");

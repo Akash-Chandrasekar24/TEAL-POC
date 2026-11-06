@@ -21,7 +21,7 @@ from app.llm.base import LLMError
 
 
 ACTIONS = {
-    "extraction": frozenset({"read_page", "read_hybrid", "interpret", "read_bom", "read_list", "assess_page"}),
+    "extraction": frozenset({"read_page", "read_hybrid", "interpret", "read_bom", "read_list", "assess_page", "suggest_clarifications"}),
     "solidworks": frozenset({"plan", "repair", "build_part", "build_assembly", "build_sheet"}),
 }
 
