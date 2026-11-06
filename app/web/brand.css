@@ -158,3 +158,10 @@ h2,h3{font-weight:600}
 .m-link:hover{background:var(--brand-soft)}
 .m-group{flex:none}
 .m-row{flex:none}
+
+.m-save-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.m-save-row .btn{margin:0}
+.m-done{margin-top:14px;padding:16px;border:1px solid #cfe6d8;background:#f2faf5;border-radius:14px}
+.m-done h3{margin:0 0 6px;color:#2e7d50}
+.m-done-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.m-done-actions .btn{margin:0;width:auto;text-decoration:none}

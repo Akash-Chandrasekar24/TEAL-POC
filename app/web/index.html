@@ -483,6 +483,7 @@ function designCard(r) {
     const correction = el("input", {type:"text",value:d.corrected_text || "",placeholder:"Correct value",maxlength:200,"aria-label":`Correct ${d.id}`,class:"m-input"});
     const item = {d,checked,correction,approved,forced:false,group:viewGroup(r, d)};
     const shown = () => correction.value.trim() || d.corrected_text || d.text;
+    item.shown = shown; item.score = score;
     const stateOf = () => checked.checked ? "verified" : item.approved ? "ai" : "open";
     item.state = stateOf;
     const icon = (glyph, label, onclick, extra = "") => { const b = el("button", {type:"button",class:`m-btn ${extra}`,title:label,"aria-label":`${label} ${d.id}`,text:glyph}); b.addEventListener("click", (e) => { if (e && e.stopPropagation) e.stopPropagation(); onclick(); }); return b; };
@@ -595,16 +596,31 @@ function designCard(r) {
   const clarifications = [];
   const note = {value:model.resolutions.note || ""};
   const btn = el("button", { class: "btn", type: "button", text: "Review measurements and continue" });
+  const finishBtn = el("button", { class: "btn secondary", type: "button", text: "Save and finish (no 3D build)" });
   if (isAssembly(r)) {
     btn.textContent = "Save reviewed measurements";
     status.textContent = "Review measurements here. Component or geometry questions appear in agent chat.";
   }
-  controls.append(review, el("p", {class:"confidence-note",text:"Score = five agent ratings, weighted 30 / 25 / 20 / 15 / 10. Above 80% can be AI approved; conflicts and weak evidence require review. These scores are not calibrated accuracy."}), btn);
+  const finishedPanel = () => {
+    const rows = measurementRows(inputs);
+    const link = (name, type, text, label) => typeof Blob === "undefined" ? null :
+      el("a", { class: "btn secondary", download: name, href: URL.createObjectURL(new Blob([text], { type })), text: label });
+    return el("div", { class: "m-done" }, el("h3", { text: "Reviewed measurements saved" }),
+      el("p", { class: "hint", text: `${rows.length} measurements: ${count("verified")} verified by you, ${count("ai")} AI verified, ${count("open")} still to verify. Reopen this result any time at #${r.id}.` }),
+      el("div", { class: "m-done-actions" }, link("reviewed-measurements.csv", "text/csv;charset=utf-8", measurementsCsv(rows), "Download CSV"),
+        link("reviewed-measurements.json", "application/json", JSON.stringify(rows, null, 2), "Download JSON")),
+      el("p", { class: "hint", text: "Building in SolidWorks is optional and is a separate step (Continue to 3D build)." }));
+  };
+  controls.append(review, el("p", {class:"confidence-note",text:"Score = five agent ratings, weighted 30 / 25 / 20 / 15 / 10. Above 80% can be AI approved; conflicts and weak evidence require review. These scores are not calibrated accuracy."}), el("div", {class:"m-save-row"}, btn, finishBtn));
   const issues = (questions) => el("ul", {}, questions.map((q) => el("li", { text: q })));
   const renderPlan = (artifact) => {
     const p = artifact.plan;
-    output.replaceChildren(el("h3", { text: p.status === "ready_for_approval" ? "Draft ready for your approval" : "More information needed" }));
-    if (p.questions.length) output.append(issues(p.questions));
+    const ready = p.status === "ready_for_approval";
+    output.replaceChildren(el("h3", { text: ready ? "Draft ready for your approval" : "Not ready to build yet" }));
+    if (!ready) output.append(el("p", { class: "hint", text: isAssembly(r)
+      ? "This sheet is an assembly drawing. The part builder makes one part at a time (today: plates with holes and round bosses), so it cannot build the whole sheet from here. Your reviewed measurements are saved. You can finish on the Review step, or use the assembly planner for the parts."
+      : "Something is missing, or the sheet has geometry the part builder cannot make yet. Your reviewed measurements are saved; building is optional." }));
+    if (p.questions.length) output.append(p.questions.length > 4 ? el("details", {}, el("summary", { text: `${p.questions.length} things to resolve before a build` }), issues(p.questions)) : issues(p.questions));
     if (p.draft) {
       output.append(el("p", { class: "hint", text: "This is a proposal. Review the geometry, feature order, derived calculations and omitted details against the drawing." }),
         el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, ["Item", "Feature", "Printed sources", "Parameters"].map((text) => el("th", { text })))),
@@ -637,21 +653,21 @@ function designCard(r) {
   };
   controls.addEventListener("input", edited);
   controls.addEventListener("change", edited);
-  btn.addEventListener("click", async () => {
+  const save = async (finish) => {
     if (clarifications.some((q) => q.text.value.trim() && !q.answer.value.trim())) {
       status.textContent = "Explain the corrected source callout before applying its measurement.";
       return;
     }
     controls.disabled = true;
     output.replaceChildren();
-    status.textContent = "Interpreting geometry and planning… One visual call per page, then one reconciliation call; cached repeats reuse replies.";
+    status.textContent = finish ? "Saving your reviewed measurements…" : "Interpreting geometry and planning… One visual call per page, then one reconciliation call; cached repeats reuse replies.";
     const resolutions = { dimensions: inputs.filter((i) => i.checked.checked || i.forced).map(({ d, correction, checked }) => ({
       id: d.id, confirmed: checked.checked, text: checked.checked ? correction.value.trim() || null : null })), note: note.value,
       clarifications: model.resolutions.clarifications || [] };
     if (unit.value !== "unknown") resolutions.unit = unit.value;
     if (projection.value !== "unknown") resolutions.projection = projection.value;
     try {
-      const response = await fetch(isAssembly(r) || r.extraction_strategy ? "/api/review" : "/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      const response = await fetch(finish || isAssembly(r) || r.extraction_strategy ? "/api/review" : "/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
         result_id: r.id, source_hash: model.source_hash, resolutions, llm: $("#llm").value || r.llm }) });
       const artifact = await response.json();
       if (!response.ok) {
@@ -665,6 +681,12 @@ function designCard(r) {
       r.review_hash = artifact.review_hash;
       r.reviewDirty = false;
       if (r.workflowJob) { r.workflowJob.stale = true; if ($("#workflow-job")) replaceWorkflow(r); }
+      if (finish) {                                   // measurements only: no model call, no build step
+        status.textContent = "Reviewed measurements saved. Reopening this result restores them.";
+        output.replaceChildren(finishedPanel());
+        renderAgentChat(r);
+        return;
+      }
       status.textContent = "Review and planning attempt saved. Reopening this result restores it.";
       renderPlan(artifact);
       renderAgentChat(r);
@@ -672,12 +694,14 @@ function designCard(r) {
       if (state.result === r) show(r);
       if (!isAssembly(r) && !r.extraction_strategy && typeof window !== "undefined") window.studioNavigate?.(3);
     } catch (error) {
-      status.textContent = `Planning failed: ${error.message}`;
+      status.textContent = `${finish ? "Saving failed" : "Planning failed"}: ${error.message}`;
       if (error.runId) status.append(inlineArtifact("Planning process log", `/api/run/${error.runId}/log`));
     } finally {
       controls.disabled = false;
     }
-  });
+  };
+  btn.addEventListener("click", () => save(false));
+  finishBtn.addEventListener("click", () => save(true));
   return el("section", { class: "card pad", id: "design" }, el("div",{class:"review-title"},el("span",{class:"eyebrow",text:"EXTRACTION REVIEW"}),el("h2", { text: "Measurements, made clear." })),
     el("p", { class: "hint", text: "The agent handles confident readings. You resolve the rest." }), controls, status, output);
 }
@@ -1124,6 +1148,18 @@ function viewGroup(r, d) {
   const scale = (/\s+SCALE\s+[\d:.,]+\s*$/i.exec(raw) || [""])[0].trim();
   return { key: `${page}.${no}`, title: raw.replace(/\s+SCALE\s+[\d:.,]+\s*$/i, "") || `View ${no}`, scale: scale ? scale.toLowerCase().replace(/^scale/, "scale") : "",
            kind: v ? VIEW_KINDS[v.type] || "" : "", order: page * 1000 + no, page, no };
+}
+
+// The reviewed measurements as rows (for the CSV / JSON download).
+function measurementRows(items) {
+  const label = { open: "To verify", ai: "AI verified", verified: "Verified by you" };
+  return items.map((i) => ({ view: i.group.title + (i.group.scale ? ` (${i.group.scale})` : ""), id: i.d.id, value: i.shown(), original: i.d.text,
+    status: label[i.state()] || i.state(), confidence_percent: typeof i.score === "number" ? i.score : "", page: i.d.page }));
+}
+function measurementsCsv(rows) {
+  const cols = ["view", "id", "value", "original", "status", "confidence_percent", "page"];
+  const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  return "\ufeff" + [cols.join(","), ...rows.map((row) => cols.map((c) => cell(row[c])).join(","))].join("\r\n");
 }
 
 // The reader records each callout box NORMALIZED to 0..1000 of the original page (its view boxes are already pixels): convert to page pixels.

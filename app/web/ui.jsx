@@ -104,7 +104,7 @@ function App() {
         <div className="stage-grid review-stage"><div id="extract-slot" className="stage-slot" ref={extract}/><aside className="stage-slot" ref={reviewChat}/></div>
         {phaseError && step === 2 && <div className="msg err" role="alert">{phaseError}</div>}
         <div hidden ref={statistics}/>
-        <div className="step-footer"><span className="step-footnote">Save your measurement corrections before continuing.</span><div className="actions"><button className="btn secondary" type="button" onClick={() => move(1)}>Back</button><button className="btn" type="button" disabled={!hasResult} onClick={() => move(3)}>Continue to build <span aria-hidden="true">→</span></button></div></div>
+        <div className="step-footer"><span className="step-footnote">Reviewed measurements are saved with your result. Use “Save and finish” if you do not need a 3D build.</span><div className="actions"><button className="btn secondary" type="button" onClick={() => move(1)}>Back</button><button className="btn" type="button" disabled={!hasResult} onClick={() => move(3)}>Continue to 3D build (optional) <span aria-hidden="true">→</span></button></div></div>
       </section>
 
       <section className={`studio-page${step === 3 ? " active" : ""}`} aria-label="SolidWorks build">
