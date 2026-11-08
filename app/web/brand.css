@@ -202,3 +202,68 @@ body.chat-wide .stage-grid{grid-template-columns:minmax(0,1fr) 680px}
 
 .ai-warn{margin:0 0 8px;padding:6px 10px;border-radius:8px;background:#fff4df;color:#9d701f;font-size:11px;font-weight:500}
 .ai-crop{display:block;width:100%;max-height:240px;margin:0 0 8px;border:1px solid var(--line);border-radius:10px;background:#fff}
+
+/* ---- Review step layout: left = your drawing (first, highlighted) with the assistant under it, both kept in view;
+        right = measurements and open questions. No empty columns. ---- */
+.stage-grid.review-stage{grid-template-columns:minmax(0,1fr)}
+.review-stage>aside:empty{display:none}
+.review-stage .extraction-comparison{grid-template-columns:minmax(0,1.15fr) minmax(460px,1fr);gap:22px;align-items:start}
+.review-left{position:sticky;top:12px;display:flex;flex-direction:column;gap:12px;height:calc(100vh - 24px);min-height:0;min-width:0;overflow:hidden}
+.review-left .source-review{position:static;flex:none;min-width:0}
+.review-left .source-review>.card{border:1.5px solid var(--brand);box-shadow:0 12px 32px #6f2b8b1f}
+.review-left .source-selector{color:var(--brand);font-weight:600}
+.review-left .source-review .figure img{max-height:max(280px,calc(100vh - 540px));width:auto;margin:auto;display:block}
+.review-left .source-review .figure{display:flex;justify-content:center}
+.review-left .source-review .tb{font-size:11px;padding:8px 16px}
+.review-left .source-review .page-head{padding:10px 16px}
+.review-left #review-conversation-slot{flex:1 1 0;min-height:220px;display:flex;min-width:0}
+.review-left #agent-chat{height:auto!important;min-height:0!important;max-height:none!important;flex:1 1 auto;position:static;width:100%}
+/* the assistant's ⤢ button: open it as a tall panel over the right column */
+body.chat-wide .review-left #review-conversation-slot{position:fixed;right:24px;top:72px;bottom:16px;width:min(620px,46vw);z-index:60;box-shadow:0 24px 80px #0f172a40;border-radius:22px}
+@media(max-width:1000px){
+  .review-stage .extraction-comparison{grid-template-columns:1fr}
+  .review-left{position:static;height:auto;min-height:0}
+  .review-left #review-conversation-slot{min-height:560px}
+}
+
+/* the plan / open questions now live in the Review card (an older rule hid them there) */
+#design>.design-output{display:block;margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
+#design>.design-output:empty{display:none}
+#design>.design-output>h3{margin:0 0 6px;font-size:16px}
+
+/* left-column assistant: messages above the composer (an older rule only did this in the right column) */
+.review-left #chat-body,.review-left #chat-body>div{display:flex!important;flex-direction:column!important;flex:1 1 auto;min-height:0}
+.review-left #chat-messages{flex:1 1 auto;min-height:0;overflow:auto}
+.review-left .chat-composer{flex:none}
+.review-left .chat-composer textarea{min-height:44px!important;max-height:90px}
+/* compact drawing card so the drawing and the assistant both fit the screen */
+.review-left .source-review .figure{padding:8px 12px!important}
+.review-left .source-review .tb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.review-left .source-review .tb span{margin-right:14px}
+.review-left .source-views>summary{padding:6px 16px;font-size:12px}
+
+/* shorter screens: the drawing gets the height; the assistant is a compact ask box whose header / ⤢ opens the full conversation as a side panel */
+@media(max-height:1150px) and (min-width:1001px){
+  .review-left .source-review .figure img{max-height:max(280px,calc(100vh - 430px))}
+  .review-left #review-conversation-slot{flex:none;min-height:0}
+  .review-left #chat-messages,.review-left .chat-scope{display:none!important}
+  .review-left .chat-heading{cursor:pointer}
+  .review-left .chat-heading::after{content:"Open conversation";margin-left:8px;font-size:11px;font-weight:600;color:var(--brand)}
+  body.chat-wide .review-left #chat-messages{display:flex!important}
+  body.chat-wide .review-left .chat-scope{display:block!important}
+  body.chat-wide .review-left .chat-heading::after{content:""}
+}
+body.chat-wide .review-left #review-conversation-slot #agent-chat{height:100%!important}
+
+/* the wide-assistant toggle widens the Build page's column; on Review it opens the side panel instead, so the page behind keeps its layout */
+body.chat-wide .stage-grid.review-stage{grid-template-columns:minmax(0,1fr)}
+/* restored after the layout rewrite: no inner scrollbar on the measurement list, questions chip, one-row unit / projection */
+.m-list{max-height:none!important;overflow:visible!important}
+.design-controls .meta{display:flex;flex-wrap:wrap;gap:10px 28px;align-items:center}
+.m-qlink{color:#9d701f!important;background:#fff4df;border-radius:999px;padding:6px 12px}
+.m-qlink:hover{background:#ffe9c2}
+/* the opened conversation panel is opaque */
+#agent-chat{background:#fff}
+#agent-chat .chat-messages{background:#fbfbfd}
+/* the pinned left column is its own layer: lift it so the opened conversation panel sits above the right column */
+body.chat-wide .review-left{z-index:70}

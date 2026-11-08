@@ -67,6 +67,18 @@ def test_a_measurement_without_a_real_view_or_with_several_numbers_is_dropped_bu
     assert out["P1.u2"]["answer"] == "Both numbers." and out["P1.u2"]["measurement"] is None
 
 
+def test_every_question_is_asked_even_when_there_are_more_than_one_batch():
+    questions = [{"key": f"P1.u{i}", "question": f"q{i}"} for i in range(1, 46)]
+    class Echo(Scripted):
+        def generate_json(self, system, parts):
+            asked = json.loads(parts[1])["questions"]
+            self.data = {"suggestions": [{"key": q["key"], "can_answer": True, "answer": "ok", "measurement": None, "view": None, "basis": "b"} for q in asked]}
+            return super().generate_json(system, parts)
+    llm = Echo({})
+    out = suggest(llm, 1, b"png", questions, VIEWS, [])
+    assert len(llm.calls) == 3 and [s["key"] for s in out] == [q["key"] for q in questions] and all(s["can_answer"] for s in out)    # 20 + 20 + 5
+
+
 def test_a_title_or_label_is_never_proposed_as_a_measurement():
     from app.drawing.clarify import looks_like_dimension
     assert looks_like_dimension("22") and looks_like_dimension("Ø10 - 8 hole") and looks_like_dimension("2X45°") and looks_like_dimension("R27")

@@ -197,8 +197,9 @@ function show(r) {
   const main = $("#main");
   main.dataset.resultId = r.id;
   const conversation = el("div", {id:"review-conversation-slot"}, $("#agent-chat"));
-  const side = el("div", {class:"review-side"}, reads.length && r.drawing_model ? designCard(r) : dimsCard(r), conversation);
-  const comparison = el("div", {class:"extraction-comparison"}, drawingReviewCard(r), side);
+  const side = el("div", {class:"review-side"}, reads.length && r.drawing_model ? designCard(r) : dimsCard(r));
+  const left = el("div", {class:"review-left"}, drawingReviewCard(r), conversation);     // the drawing first, the assistant under it
+  const comparison = el("div", {class:"extraction-comparison"}, left, side);
   main.replaceChildren(comparison, el("div", {id:"extraction-progress", class:"hint", "aria-live":"polite"}), el("div", {id:"workflow-job"}, workflowCard(r)));
   renderAgentChat(r);
   updateExtractionProgress(r);
@@ -223,7 +224,7 @@ function updateExtractionProgress(r) {
   if (!host) return;
   host.replaceChildren();
   if (r.extraction_status === "processing") host.append(el("span", {class:"spinner"}), " Measurements are ready to review. Feature and component identification is continuing in the background.");
-  else if (r.extraction_status === "needs_attention") host.textContent = r.feature_extraction_error || "The extraction agent needs clarification. Review its questions in the conversation.";
+  else if (r.extraction_status === "needs_attention") host.textContent = r.feature_extraction_error || "Some questions need your answer. They are listed under the measurements, where the AI can also draft answers for you to confirm.";
   else if (r.extraction_status === "complete") host.textContent = r.reviewDirty ? "Feature results are ready. Save your current measurement edits to refresh the remaining review sections." : "Feature and component extraction complete.";
 }
 
@@ -584,7 +585,9 @@ function designCard(r) {
     expandAll.textContent = view.allOpen ? "Collapse all" : "Expand all";
     redraw();
   });
-  const review = el("div", {class:"m-panel"}, el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, expandAll), list);
+  const qBtn = el("button", {type:"button",class:"m-link m-qlink",hidden:true});
+  qBtn.addEventListener("click", () => { if (output.scrollIntoView) output.scrollIntoView({ behavior: "smooth", block: "start" }); });
+  const review = el("div", {class:"m-panel"}, el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, qBtn, expandAll), list);
   redraw();
   // From the drawing: hovering a callout highlights its row; clicking it jumps to the row.
   globalThis.__measureFocus = (id, on) => { const row = inputs.find((i) => i.d.id === id)?.row; if (row && row.classList) row.classList.toggle("m-hover", on); };
@@ -599,7 +602,7 @@ function designCard(r) {
   const finishBtn = el("button", { class: "btn secondary", type: "button", text: "Save and finish (no 3D build)" });
   if (isAssembly(r)) {
     btn.textContent = "Save reviewed measurements";
-    status.textContent = "Review measurements here. Component or geometry questions appear in agent chat.";
+    status.textContent = "Review measurements here. Open questions are listed below them.";
   }
   const finishedPanel = () => {
     const rows = measurementRows(inputs);
@@ -616,9 +619,10 @@ function designCard(r) {
   const renderPlan = (artifact) => {
     const p = artifact.plan;
     const ready = p.status === "ready_for_approval";
-    output.replaceChildren(el("h3", { text: ready ? "Draft ready for your approval" : "Not ready to build yet" }));
+    qBtn.hidden = !p.questions.length; qBtn.textContent = `Open questions (${p.questions.length}) ↓`;
+    output.replaceChildren(el("h3", { text: ready ? "Draft ready for your approval" : "Open questions before a 3D build" }));
     if (!ready) output.append(el("p", { class: "hint", text: isAssembly(r)
-      ? "This sheet is an assembly drawing. The part builder makes one part at a time (today: plates with holes and round bosses), so it cannot build the whole sheet from here. Your reviewed measurements are saved. You can finish on the Review step, or use the assembly planner for the parts."
+      ? "This sheet is an assembly drawing. The part builder makes one part at a time (today: plates with holes and round bosses), so it cannot build the whole sheet from here. Your reviewed measurements are saved. You can finish here, or use the assembly planner for the parts."
       : "Something is missing, or the sheet has geometry the part builder cannot make yet. Your reviewed measurements are saved; building is optional." }));
     if (p.questions.length) {
       const sp = suggestPanel(r, p.questions), list = questionList(r, p.questions);
@@ -639,7 +643,7 @@ function designCard(r) {
       build.disabled = Boolean(r.workflowBusy) || (r.workflowJob && ["building","resuming","exporting"].includes(r.workflowJob.phase));
       build.addEventListener("click", async () => {
         build.disabled = true;
-        try { await startBuild(r, artifact.id); }
+        try { await startBuild(r, artifact.id); if (typeof window !== "undefined") window.studioNavigate?.(3); }
         catch (error) { status.textContent = error.message; build.disabled = false; }
       });
       output.append(el("p", {text:"Confirm these features, dimensions and derived values against your drawing before starting SolidWorks."}), build);
@@ -696,7 +700,6 @@ function designCard(r) {
       renderAgentChat(r);
       if (r.extractionRefreshPending) { r.extractionRefreshPending = false; show(r); }
       if (state.result === r) show(r);
-      if (!isAssembly(r) && !r.extraction_strategy && typeof window !== "undefined") window.studioNavigate?.(3);
     } catch (error) {
       status.textContent = `${finish ? "Saving failed" : "Planning failed"}: ${error.message}`;
       if (error.runId) status.append(inlineArtifact("Planning process log", `/api/run/${error.runId}/log`));
@@ -788,7 +791,7 @@ function pollJob(r) {
 function workflowCard(r) {
   const job = r.workflowJob;
   const card = el("section", {class:"card pad", "aria-live":"polite"}, el("h2", {text:"SolidWorks and final review"}));
-  if (!job) { card.append(el("p", {text:"Review the extraction and approve the feature plan to start SolidWorks."})); return card; }
+  if (!job) { card.append(el("p", {text:"Nothing is building yet. Resolve the open questions and approve the feature plan on the Review step to start SolidWorks."})); return card; }
   const labels = {awaiting_approval:"Ready for your approval", building:"Building in SolidWorks…", resuming:"Continuing…", exporting:"Preparing confirmed exports…",
     awaiting_fix_approval:"SolidWorks needs your confirmation", awaiting_review:"Compare your drawing with the 3D model", accepted:"Model confirmed — ready to export", exported:"Exports ready", needs_human:"Paused for your input", changes_requested:"Corrections requested", llm_failed:"Model call paused", aborted:"Job stopped"};
   card.append(el("p", {class:"workflow-status", text:labels[job.phase] || job.phase}));
@@ -1208,12 +1211,23 @@ function viewCrop(r, viewId) {
   return svg;
 }
 
+// "13 drafts are ticked for you. 1 proposes a corrected reading and is left unticked for your own check. The AI could not tell 2 questions."
+function summaryText(cards, items) {
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const ticked = cards.filter((c) => c.accept.checked).length, risky = cards.filter((c) => c.sg.can_answer && c.sg.measurement).length, unsure = items.filter((x) => !x.can_answer).length;
+  return [`${plural(ticked, "draft is", "drafts are")} ticked for you.`,
+    risky ? `${plural(risky, "draft proposes", "drafts propose")} a corrected reading and ${risky === 1 ? "is" : "are"} left unticked for your own check.` : "",
+    unsure ? `The AI could not tell ${plural(unsure, "question", "questions")}.` : "",
+    "Nothing is saved until you confirm. Edit or untick anything first."].filter(Boolean).join(" ");
+}
+
 function suggestionCards(r, res, host) {
   const items = res.suggestions || [];
   const cards = items.map((sg) => {
     const answer = el("textarea", { class: "q-input", rows: "2", maxlength: 4000, "aria-label": `AI answer ${sg.key}` });
     answer.value = sg.answer || "";
     const accept = el("input", { type: "checkbox", "aria-label": `Accept ${sg.key}` });
+    accept.checked = Boolean(sg.can_answer && !sg.measurement);      // ticked for you unless it proposes changing a reading, which needs your own look
     const withReading = el("input", { type: "checkbox", "aria-label": `Also set the reading for ${sg.key}` });
     withReading.checked = false;                       // adding a reading changes the measurements: only if the reviewer opts in
     const reading = sg.measurement ? el("label", { class: "ai-reading" }, withReading, ` Also add the corrected reading "${sg.measurement}" (${sg.view})`) : null;
@@ -1229,8 +1243,12 @@ function suggestionCards(r, res, host) {
   });
   const status = el("p", { class: "hint", "aria-live": "polite" });
   const confirm = el("button", { type: "button", class: "btn", text: "Confirm and save the accepted answers" });
+  const ticked = () => cards.filter((c) => c.accept.checked && c.answer.value.trim()).length;
+  const label = () => { confirm.textContent = ticked() ? `Confirm and save ${ticked()} answer${ticked() === 1 ? "" : "s"}` : "Confirm and save the accepted answers"; };
+  cards.forEach((c) => { c.accept.addEventListener("change", label); c.answer.addEventListener("input", label); });
+  label();
   const all = el("button", { type: "button", class: "m-link", text: "Tick all drafts" });
-  all.addEventListener("click", () => cards.forEach((c) => { if (c.sg.can_answer) c.accept.checked = true; }));
+  all.addEventListener("click", () => { cards.forEach((c) => { if (c.sg.can_answer) c.accept.checked = true; }); label(); });
   const cancel = el("button", { type: "button", class: "m-link", text: "Discard drafts" });
   cancel.addEventListener("click", () => { if (state.result === r) show(r); });
   confirm.addEventListener("click", async () => {
@@ -1248,8 +1266,8 @@ function suggestionCards(r, res, host) {
     finally { if (saved && state.result === r) show(r); }
   });
   host.replaceChildren(
-    el("h4", { text: `AI drafted ${items.filter((x) => x.can_answer).length} of ${items.length} answers. Is this OK?` }),
-    el("p", { class: "hint", text: "Nothing is saved yet. Read each draft, edit it if needed, tick the ones you accept, then confirm." }),
+    el("h4", { text: `AI answered ${items.filter((x) => x.can_answer).length} of ${items.length} questions. Is this OK?` }),
+    el("p", { class: "hint", text: summaryText(cards, items) }),
     el("ul", { class: "q-list" }, cards.map((c) => c.node)), el("div", { class: "q-actions" }, confirm, all, cancel), status);
 }
 
@@ -1407,7 +1425,7 @@ drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.ad
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
 drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); addFiles([...e.dataTransfer.files]); });
 $("#run").addEventListener("click", run);
-document.addEventListener("click", (e) => { const b = e.target && e.target.closest ? e.target.closest(".chat-expand") : null; if (b) { document.body.classList.toggle("chat-wide"); b.setAttribute("aria-pressed", String(document.body.classList.contains("chat-wide"))); } });
+document.addEventListener("click", (e) => { const b = e.target && e.target.closest ? (e.target.closest(".chat-expand") || (e.target.closest(".review-left .chat-heading") && !e.target.closest("button,select,a"))) : null; if (b) { document.body.classList.toggle("chat-wide"); b.setAttribute("aria-pressed", String(document.body.classList.contains("chat-wide"))); } });
 window.addEventListener("hashchange", openFromHash);
 renderAgentChat(null);
 loadConfig().catch((error) => { $("#status").textContent = error.message; });

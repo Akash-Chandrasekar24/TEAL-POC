@@ -12,7 +12,7 @@ import re
 from app.llm.base import FilePart
 from app.perception.dims import dim_tokens
 
-MAX_QUESTIONS_PER_CALL = 20
+QUESTIONS_PER_CALL = 20          # a page with more open questions is asked in batches: every question is put to the model
 MAX_ANSWER = 600
 
 PROMPT = '''You help a human reviewer resolve open questions about ONE engineering drawing page. Look at the picture and the questions below.
@@ -65,8 +65,15 @@ def _clean(raw, asked: dict[str, str], views: set[str]) -> dict | None:
 
 
 def suggest(llm, page_no: int, png: bytes, questions: list[dict], views: list[dict], dimensions: list[str]) -> list[dict]:
-    """One model call for one page. Returns cleaned proposals for the asked keys only (each key once)."""
-    asked = {q["key"]: q["question"] for q in questions[:MAX_QUESTIONS_PER_CALL]}
+    """Proposals for every question on one page (one model call per batch of 20). Each asked key appears once."""
+    out = []
+    for start in range(0, len(questions), QUESTIONS_PER_CALL):
+        out.extend(_suggest_batch(llm, page_no, png, questions[start:start + QUESTIONS_PER_CALL], views, dimensions))
+    return out
+
+
+def _suggest_batch(llm, page_no: int, png: bytes, questions: list[dict], views: list[dict], dimensions: list[str]) -> list[dict]:
+    asked = {q["key"]: q["question"] for q in questions}
     context = {"page": page_no, "views": [{"id": v["id"], "label": v.get("label", ""), "type": v.get("type", "")} for v in views],
                "extracted_dimension_texts": dimensions[:200],
                "questions": [{"key": k, "question": q} for k, q in asked.items()]}

@@ -24,7 +24,6 @@ function App() {
     move(document.querySelector("#upload-panel"), upload.current);
     move(document.querySelector("#main"), extract.current);
     move(document.querySelector("#summary"), statistics.current);
-    move(document.querySelector("#build-plan"), buildPlan.current);
     const chatHost = step === 3 ? buildChat.current : document.querySelector("#review-conversation-slot") || reviewChat.current;
     move(document.querySelector("#agent-chat"), chatHost);
     const job = document.querySelector("#workflow-job");
@@ -78,7 +77,7 @@ function App() {
   const titles = {
     1: ["From drawing to dimension.", "Start with your drawing. Shape what comes next."],
     2: ["Your drawing. Understood.", "Confident readings move forward. Review the exceptions and talk through the details with your agent."],
-    3: ["Bring your drawing to life.", "Approve the reviewed plan. Your SolidWorks agent will pause whenever it needs your input."],
+    3: ["Bring your drawing to life.", "Your SolidWorks agent builds the approved plan and pauses whenever it needs your input."],
     4: ["See it. Check it. Confirm it.", "Compare the 3D model with your drawing before approving the result."],
     5: ["Ready for what’s next.", "Export your confirmed model in the format you need."]
   };
@@ -104,11 +103,11 @@ function App() {
         <div className="stage-grid review-stage"><div id="extract-slot" className="stage-slot" ref={extract}/><aside className="stage-slot" ref={reviewChat}/></div>
         {phaseError && step === 2 && <div className="msg err" role="alert">{phaseError}</div>}
         <div hidden ref={statistics}/>
-        <div className="step-footer"><span className="step-footnote">Reviewed measurements are saved with your result. Use “Save and finish” if you do not need a 3D build.</span><div className="actions"><button className="btn secondary" type="button" onClick={() => move(1)}>Back</button><button className="btn" type="button" disabled={!hasResult} onClick={() => move(3)}>Continue to 3D build (optional) <span aria-hidden="true">→</span></button></div></div>
+        <div className="step-footer"><span className="step-footnote">Everything to review, including open questions, is on this page. Use “Save and finish” if you do not need a 3D build.</span><div className="actions"><button className="btn secondary" type="button" onClick={() => move(1)}>Back</button><button className="btn" type="button" disabled={!hasResult} onClick={() => move(3)}>Continue to 3D build (optional) <span aria-hidden="true">→</span></button></div></div>
       </section>
 
       <section className={`studio-page${step === 3 ? " active" : ""}`} aria-label="SolidWorks build">
-        <div className="stage-grid"><div className="stage-slot"><div className="build-plan-slot" ref={buildPlan}/><div className="workflow-slot" ref={build}/></div><aside className="stage-slot" ref={buildChat}/></div>
+        <div className="stage-grid"><div className="stage-slot"><div className="workflow-slot" ref={build}/></div><aside className="stage-slot" ref={buildChat}/></div>
         {phaseError && step === 3 && <div className="msg err" role="alert">{phaseError}</div>}
         <div className="step-footer"><button className="btn secondary" type="button" onClick={() => move(2)}>Back to extraction review</button><span className="step-footnote">The build starts only after the reviewed plan is approved.</span></div>
       </section>
