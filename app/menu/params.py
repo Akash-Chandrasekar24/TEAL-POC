@@ -354,4 +354,7 @@ class EdgeParams(Strict):
     radius: float | None = Field(None, gt=0, description="only arcs / circles of this radius")
     length: float | None = Field(None, gt=0, description="only lines of this length")
     tol: float = Field(0.01, gt=0, description="tolerance of radius / length / region")
+    along: Literal["x", "y", "z"] | None = Field(None, description="only straight edges running along this direction (x right, y up as drawn in the front view, "
+                                                                   "z through the thickness toward the viewer): e.g. face top + along z = the two top corner edges "
+                                                                   "through the plate; face front + along x = the top and bottom edges of the front face")
     expect_count: int | None = Field(None, ge=1, description="the number of edges this must select; a different count stops the build")

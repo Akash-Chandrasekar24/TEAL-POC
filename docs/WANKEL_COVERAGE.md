@@ -30,6 +30,6 @@ are listed as an `unsupported` gap that a human must accept.
 
 ## Next capabilities this sheet needs
 1. ~~Features after a turned base~~ done: `turned_axial` (boss/cut along the axis, eccentric) and `cross_hole`. Revolve on other axes remains.
-2. Rotated slots / grooves (seal grooves, angled spark-plug boss) and datum planes.
+2. ~~Rotated slots / grooves~~ done (turned rectangles in cuts and outlines). Angled datum planes (spark-plug boss) remain.
 3. A cavity/shell feature (water jacket) through our own C# extension.
-4. General edge fillets/chamfers.
+4. ~~General edge fillets/chamfers~~ partly done: any face of the base, with an `along` direction filter (e.g. corner edges through the thickness). Edges on later features' faces and chamfers with two distances remain.

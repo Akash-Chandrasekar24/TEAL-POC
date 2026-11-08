@@ -223,6 +223,7 @@ class EdgeSelector:
     radius: float | None = None
     length: float | None = None
     tol: float = 0.01
+    along: int | None = None                     # only straight edges running along this WORLD axis (0 x right, 1 y up, 2 z toward the viewer)
 
 
 @dataclass
@@ -296,6 +297,11 @@ class FilletChamferEdges:
         def passes(info: EdgeInfo) -> bool:
             if info.kind not in s.kinds or not inside(info):
                 return False
+            if s.along is not None:
+                if info.kind != "line" or info.length_m <= 0:
+                    return False
+                if abs(abs(info.end[s.along] - info.start[s.along]) / info.length_m - 1) > 1e-6:
+                    return False
             if s.radius is not None and (info.radius_m is None or abs(info.radius_m / f - s.radius) > s.tol):
                 return False
             return s.length is None or (info.kind == "line" and abs(info.length_m / f - s.length) <= s.tol)

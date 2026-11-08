@@ -472,7 +472,8 @@ def build_edges(p: P.EdgeParams, ctx: BuildContext, label: str) -> FilletChamfer
         else:                                    # measured from the face's lower-left corner in its datum sketch frame
             dx, dy = (-v for v in w.view.to_datum_frame_shift())
         region = (p.region[0] - dx, p.region[1] - dx, p.region[2] - dy, p.region[3] - dy)
-    selector = EdgeSelector(w.plane, w.offset, region=region, kinds=tuple(p.kinds), radius=p.radius, length=p.length, tol=p.tol)
+    selector = EdgeSelector(w.plane, w.offset, region=region, kinds=tuple(p.kinds), radius=p.radius, length=p.length, tol=p.tol,
+                            along=None if p.along is None else "xyz".index(p.along))
     return FilletChamferEdges(ctx.unit, p.kind, p.size, selector, expect_count=p.expect_count, label=label)
 
 
@@ -564,7 +565,9 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
         "Selects the edges that lie in the plane of the front or back face, optionally only inside `region` or only lines / arcs / circles of a given "
         "radius or length. SolidWorks rounds a whole chain of tangent edges together, so the whole chain is included. Give `expect_count` so a "
         "wrong selection stops the build.",
-        ("chamfers are equal on both faces (two distances are not built)", "the edges must lie in the plane of the base's front or back face"),
+        ("chamfers are equal on both faces (two distances are not built)",
+         "the edges must lie in the plane of one face of the base (front, back, top, bottom, left, right; `offset` for a flat face beyond it); use `along` to keep "
+         "only the straight edges running one way, e.g. the corner edges through the thickness"),
         {"kind": "fillet", "size": 2, "face": "front", "kinds": ["line", "arc"], "expect_count": 4},
         build_edges, _COMMON | {"distance2", "max_edges", "selector"}),
     MenuEntry(
