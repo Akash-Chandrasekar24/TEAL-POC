@@ -2,7 +2,9 @@ import React, { useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./studio.css";
 
-const FLOW = ["Upload", "Review", "Build", "Verify", "Export"];
+// Build and Verify are one step: the build card (progress, fix approvals, retries) and the model check share a page,
+// which opens only once SolidWorks has something to show. The four human pauses are unchanged; only where they appear moved.
+const FLOW = ["Upload", "Review", "Build & Verify", "Export"];
 
 function App() {
   const [step, setStep] = useState(location.hash ? 2 : 1);
@@ -12,12 +14,10 @@ function App() {
   const [phaseError, setPhaseError] = useState("");
   const [, refreshLayout] = useState(0);
   const statistics = useRef(null);
-  const buildPlan = useRef(null);
-  const upload = useRef(null), extract = useRef(null), reviewChat = useRef(null), build = useRef(null), buildChat = useRef(null), verify = useRef(null), exportSlot = useRef(null);
+  const upload = useRef(null), extract = useRef(null), reviewChat = useRef(null), verify = useRef(null), exportSlot = useRef(null);
 
-  const previewReady = ["awaiting_review", "accepted", "exported"].includes(phase);
+  const building = Boolean(phase);                                   // a SolidWorks job exists (building, paused, preview, accepted ...)
   const exportReady = ["accepted", "exported"].includes(phase);
-  const targetStep = step >= 3 ? step : exportReady ? 5 : previewReady ? 4 : 3;
 
   function placeLegacyNodes() {
     const move = (node, host) => { if (node && host && node.parentNode !== host) host.appendChild(node); };
@@ -25,10 +25,9 @@ function App() {
     move(document.querySelector("#upload-panel"), upload.current);
     move(document.querySelector("#main"), extract.current);
     move(document.querySelector("#summary"), statistics.current);
-    const chatHost = step === 3 ? buildChat.current : document.querySelector("#review-conversation-slot") || reviewChat.current;
-    move(document.querySelector("#agent-chat"), chatHost);
+    move(document.querySelector("#agent-chat"), document.querySelector("#review-conversation-slot") || reviewChat.current);
     const job = document.querySelector("#workflow-job");
-    if (job) move(job, targetStep === 5 ? exportSlot.current : targetStep === 4 ? verify.current : build.current);
+    if (job) move(job, step === 4 || (step < 3 && exportReady) ? exportSlot.current : verify.current);
   }
 
   useLayoutEffect(() => { placeLegacyNodes(); });
@@ -37,8 +36,7 @@ function App() {
     const onResult = (event) => {
       setHasResult(true);
       const job = event.detail?.job;
-      if (job?.phase) setPhase(job.phase);
-      else if (event.detail?.phase) setPhase(event.detail.phase);
+      setPhase(job?.phase || event.detail?.phase || "");             // a newly opened drawing must not inherit another one's build state
       setPhaseError("");
       setStep((current) => current === 1 ? 2 : current);
       refreshLayout((value) => value + 1);
@@ -48,7 +46,8 @@ function App() {
       if (job.phase) {
         setPhase(job.phase);
         setPhaseError("");
-        if (["awaiting_review", "accepted", "exported"].includes(job.phase)) setStep(job.phase === "awaiting_review" ? 4 : 5);
+        if (["accepted", "exported"].includes(job.phase)) setStep(4);
+        else if (job.phase === "awaiting_review") setStep(3);
       }
     };
     const onProcessing = (event) => setBusy(event.detail?.busy ? event.detail : null);
@@ -74,13 +73,12 @@ function App() {
     };
   }, []);
 
-  const canVisit = (index) => index === 1 || (index === 2 && hasResult) || (index === 3 && hasResult) || (index === 4 && hasResult && previewReady) || (index === 5 && hasResult && exportReady);
+  const canVisit = (index) => index === 1 || (index === 2 && hasResult) || (index === 3 && hasResult && building) || (index === 4 && hasResult && exportReady);
   const titles = {
     1: ["From drawing to dimension.", "Start with your drawing. Shape what comes next."],
     2: ["Your drawing. Understood.", "Confident readings move forward. Review the exceptions and talk through the details with your agent."],
-    3: ["Bring your drawing to life.", "Your SolidWorks agent builds the approved plan and pauses whenever it needs your input."],
-    4: ["See it. Check it. Confirm it.", "Compare the 3D model with your drawing before approving the result."],
-    5: ["Ready for what’s next.", "Export your confirmed model in the format you need."]
+    3: ["Build it. Check it. Confirm it.", "Your SolidWorks agent builds the approved plan, pauses whenever it needs your input, then shows the model beside your drawing."],
+    4: ["Ready for what’s next.", "Export your confirmed model in the format you need."]
   };
   const move = (value) => setStep(value);
 
@@ -91,10 +89,10 @@ function App() {
     </header>
     <div className="studio-frame">
       <nav aria-label="Drawing workflow"><ol className="stepper">{FLOW.map((label, i) => {
-        const page = i + 1, available = canVisit(page), active = page === step, done = (page === 1 && hasResult) || (page === 2 && hasResult && step > 2) || (page === 3 && previewReady) || (page === 4 && exportReady) || (page === 5 && phase === "exported");
+        const page = i + 1, available = canVisit(page), active = page === step, done = (page === 1 && hasResult) || (page === 2 && hasResult && step > 2) || (page === 3 && exportReady) || (page === 4 && phase === "exported");
         return <li key={label}><button type="button" className={`stepper-item${active ? " active" : ""}${done ? " done" : ""}${available ? " available" : ""}`} aria-current={active ? "step" : undefined} aria-disabled={!available} onClick={() => available && move(page)}><span className="step-dot">{done ? "✓" : page}</span><span>{label}</span></button></li>;
       })}</ol></nav>
-      <div className={`studio-intro${step === 1 ? " welcome" : ""}`}><span className="eyebrow">{step === 1 ? "YOUR NEXT CREATION" : `STEP ${step} OF 5 · ${FLOW[step-1]}`}</span><h2>{titles[step][0]}</h2><p>{titles[step][1]}</p></div>
+      <div className={`studio-intro${step === 1 ? " welcome" : ""}`}><span className="eyebrow">{step === 1 ? "YOUR NEXT CREATION" : `STEP ${step} OF ${FLOW.length} · ${FLOW[step-1]}`}</span><h2>{titles[step][0]}</h2><p>{titles[step][1]}</p></div>
 
       <section className={`studio-page${step === 1 ? " active" : ""}`} aria-label="Upload drawing">
         <div className="upload-layout"><div id="upload-slot" ref={upload}/><p className="upload-assurance">Review the measurements. Approve the build. Confirm before export.</p></div>
@@ -104,25 +102,19 @@ function App() {
         <div className="stage-grid review-stage"><div id="extract-slot" className="stage-slot" ref={extract}/><aside className="stage-slot" ref={reviewChat}/></div>
         {phaseError && step === 2 && <div className="msg err" role="alert">{phaseError}</div>}
         <div hidden ref={statistics}/>
-        <div className="step-footer"><span className="step-footnote">Everything to review, including open questions, is on this page. Use “Save and finish” if you do not need a 3D build.</span><div className="actions"><button className="btn secondary" type="button" onClick={() => move(1)}>Back</button><button className="btn" type="button" disabled={!hasResult} onClick={() => move(3)}>Continue to 3D build (optional) <span aria-hidden="true">→</span></button></div></div>
+        <div className="step-footer"><span className="step-footnote">Everything to review, including open questions, is on this page. A 3D build starts from “Approve features and build” once the plan is ready; “Finish without a 3D build” keeps just the measurements.</span><div className="actions"><button className="btn secondary" type="button" onClick={() => move(1)}>Back</button>{building && <button className="btn" type="button" onClick={() => move(3)}>Go to build & verify <span aria-hidden="true">→</span></button>}</div></div>
       </section>
 
-      <section className={`studio-page${step === 3 ? " active" : ""}`} aria-label="SolidWorks build">
-        <div className="stage-grid"><div className="stage-slot"><div className="workflow-slot" ref={build}/></div><aside className="stage-slot" ref={buildChat}/></div>
-        {phaseError && step === 3 && <div className="msg err" role="alert">{phaseError}</div>}
-        <div className="step-footer"><button className="btn secondary" type="button" onClick={() => move(2)}>Back to extraction review</button><span className="step-footnote">The build starts only after the reviewed plan is approved.</span></div>
-      </section>
-
-      <section className={`studio-page${step === 4 ? " active" : ""}`} aria-label="2D and 3D verification">
+      <section className={`studio-page${step === 3 ? " active" : ""}`} aria-label="SolidWorks build and verification">
         <div className="workflow-slot" ref={verify}/>
-        {phaseError && step === 4 && <div className="msg err" role="alert">{phaseError}</div>}
-        <div className="step-footer"><button className="btn secondary" type="button" onClick={() => move(3)}>Back to SolidWorks status</button><span className="step-footnote">Accept the model inside the review card to unlock export.</span></div>
+        {phaseError && step === 3 && <div className="msg err" role="alert">{phaseError}</div>}
+        <div className="step-footer"><button className="btn secondary" type="button" onClick={() => move(2)}>Back to review</button><span className="step-footnote">Approve any fix the agent proposes here; accept the model to unlock export.</span></div>
       </section>
 
-      <section className={`studio-page${step === 5 ? " active" : ""}`} aria-label="Export confirmed model">
+      <section className={`studio-page${step === 4 ? " active" : ""}`} aria-label="Export confirmed model">
         <div className="workflow-slot" ref={exportSlot}/>
-        {phaseError && step === 5 && <div className="msg err" role="alert">{phaseError}</div>}
-        <div className="step-footer"><button className="btn secondary" type="button" onClick={() => move(4)}>Back to 3D verification</button><span className="step-footnote">Downloads are available after you confirm the comparison.</span></div>
+        {phaseError && step === 4 && <div className="msg err" role="alert">{phaseError}</div>}
+        <div className="step-footer"><button className="btn secondary" type="button" onClick={() => move(3)}>Back to build & verify</button><span className="step-footnote">Downloads are available after you confirm the comparison.</span></div>
       </section>
     </div>
     {busy && <div className="processing-overlay" role="status" aria-live="polite"><div className={`processing-card${busy.pages?.length ? " with-pages" : ""}`}><div className="processing-spinner" aria-hidden="true"/><h2>{busy.title || "Processing drawing"}</h2><p>{busy.message || "The agents are working through this step."}</p>
