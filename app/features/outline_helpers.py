@@ -149,12 +149,21 @@ def round_polygon_corners(points: Sequence[Point], radius: float | Sequence[floa
     return out
 
 
-def rounded_rectangle(cx: float, cy: float, width: float, height: float, radius: float) -> list[Segment]:
-    """Rectangle centred on (cx, cy), counter-clockwise, all four corners rounded with `radius`."""
+def rounded_rectangle(cx: float, cy: float, width: float, height: float, radius: float, angle_deg: float = 0.0) -> list[Segment]:
+    """Rectangle centred on (cx, cy), counter-clockwise, all four corners rounded with `radius`, turned `angle_deg` counter-clockwise about its centre
+    (`width` runs along the turned x direction)."""
     if width <= 0 or height <= 0:
         raise FeatureRequestError("width and height must be positive")
-    x0, x1, y0, y1 = cx - width / 2, cx + width / 2, cy - height / 2, cy + height / 2
-    return round_polygon_corners([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], radius)
+    a = math.radians(angle_deg)
+    c, s = math.cos(a), math.sin(a)
+    corners = [(-width / 2, -height / 2), (width / 2, -height / 2), (width / 2, height / 2), (-width / 2, height / 2)]
+    return round_polygon_corners([(cx + x * c - y * s, cy + x * s + y * c) for x, y in corners], radius)
+
+
+def rotated_half_extents(width: float, height: float, angle_deg: float) -> tuple[float, float]:
+    """Half the axis-aligned box of a width x height rectangle turned by angle_deg."""
+    a = math.radians(angle_deg)
+    return (abs(math.cos(a)) * width + abs(math.sin(a)) * height) / 2, (abs(math.sin(a)) * width + abs(math.cos(a)) * height) / 2
 
 
 # ------------------------------------------------------------------ tangent lines

@@ -44,8 +44,6 @@ class CutShape:
         for n in need[self.kind]:
             if not getattr(self, n) or getattr(self, n) <= 0:
                 raise FeatureRequestError(f"{self.kind} needs a positive {n}")
-        if self.kind == "rectangle" and abs(self.angle_deg) > 1e-9:
-            raise FeatureRequestError("rotated rectangles are not supported yet (angle_deg must be 0)")
 
     def area(self) -> float:
         self.validate()
@@ -60,7 +58,8 @@ class CutShape:
         if self.kind == "circle":
             return self.diameter / 2, self.diameter / 2
         if self.kind == "rectangle":
-            return self.width / 2, self.height / 2
+            from .outline_helpers import rotated_half_extents
+            return rotated_half_extents(self.width, self.height, self.angle_deg)
         a = math.radians(self.angle_deg)
         # exact box of a stadium: half the centre line's projection + the end radius, in both axes
         hx = abs(math.cos(a)) * self.centre_distance / 2 + self.width / 2
@@ -87,9 +86,13 @@ def slot_segments(c: tuple[float, float], length: float, width: float, angle_deg
     ]
 
 
-def rectangle_segments(c: tuple[float, float], w: float, h: float) -> list[dict]:
-    x0, x1, y0, y1 = c[0] - w / 2, c[0] + w / 2, c[1] - h / 2, c[1] + h / 2
-    pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+def rectangle_segments(c: tuple[float, float], w: float, h: float, angle_deg: float = 0.0) -> list[dict]:
+    """Rectangle centred on c, `w` along the direction angle_deg (counter-clockwise from +x), `h` across it."""
+    a = math.radians(angle_deg)
+    co, si = math.cos(a), math.sin(a)
+    corners = [(-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2)]
+    pts = [(c[0] + x * co - y * si, c[1] + x * si + y * co) for x, y in corners]
+    pts.append(pts[0])
     return [{"kind": "line", "x1": pts[i][0], "y1": pts[i][1], "x2": pts[i + 1][0], "y2": pts[i + 1][1]} for i in range(4)]
 
 
@@ -170,7 +173,7 @@ class CutFeature:
             if s.kind == "circle":
                 out.append([{"kind": "circle", "diameter": s.diameter * f, "cx": cx, "cy": cy}])
             elif s.kind == "rectangle":
-                out.append(rectangle_segments((cx, cy), s.width * f, s.height * f))
+                out.append(rectangle_segments((cx, cy), s.width * f, s.height * f, s.angle_deg))
             else:
                 out.append(slot_segments((cx, cy), s.centre_distance * f, s.width * f, s.angle_deg))
         return out

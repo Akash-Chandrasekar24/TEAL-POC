@@ -78,6 +78,7 @@ class Rectangle(Strict):
     height: float = Field(gt=0, description="along y")
     corner_radius: float = Field(0, ge=0, description="all four corners; 0 = sharp")
     position: Pos | None = Field(None, description="the rectangle's centre; omit for the base outline itself (centred)")
+    angle_deg: float = Field(0, description="turns the rectangle about its centre, counter-clockwise from +x (width runs along this direction); 0 = axis-aligned")
 
 
 class Polygon(Strict):
@@ -172,7 +173,8 @@ class CutShapeParams(Strict):
     centre_distance: float | None = Field(None, gt=0, description="slot: distance between the two end-arc centres")
     width: float | None = Field(None, gt=0, description="slot: width; rectangle: along x")
     height: float | None = Field(None, gt=0, description="rectangle: along y")
-    angle_deg: float = Field(0, description="slot only")
+    angle_deg: float = Field(0, description="slot: direction of its centre line; rectangle: turns it about its centre (width runs along this direction); "
+                                            "counter-clockwise from +x in the view, e.g. a groove drawn at an apex 120 degrees round")
     pattern: Pattern | None = Field(None, description=PATTERN_DOC)
 
     @model_validator(mode="after")

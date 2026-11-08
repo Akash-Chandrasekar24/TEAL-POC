@@ -146,6 +146,8 @@ def _face_outline(p: Any, w: Where) -> list[dict]:
         return _ring_circles(cx, cy, p)
     if isinstance(p, P.Rectangle):
         cx, cy = w.view.centre() if p.position is None else w.view.to_sketch(_position(p.position))
+        if abs(p.angle_deg) > 1e-9:
+            raise FeatureRequestError("a turned rectangle is drawn on the front or back face only")
         return rounded_rectangle(cx, cy, p.width, p.height, p.corner_radius)
     if isinstance(p, TangentChain):
         raise FeatureRequestError("a tangent_chain outline is built on the front or back face only (use explicit segments on the other faces)")
@@ -205,7 +207,7 @@ def _raw_outline(p: Any, ctx: BuildContext) -> tuple[list[dict], bool]:
         if p.position is not None:
             f = factor(ctx.unit)
             cx, cy = (v / f for v in _position(p.position).to_sketch_m(ctx.unit, ctx.outline_wh))
-        return rounded_rectangle(cx, cy, p.width, p.height, p.corner_radius), True
+        return rounded_rectangle(cx, cy, p.width, p.height, p.corner_radius, p.angle_deg), True
     if isinstance(p, P.Polygon):
         return round_polygon_corners([tuple(pt) for pt in p.points], p.corner_radius), p.frame == "centre"
     if isinstance(p, TangentChain):
@@ -236,6 +238,8 @@ def _half_section(p: Any) -> list[dict]:
     if isinstance(p, P.Rectangle):
         if p.position is not None:
             raise FeatureRequestError("a half-section rectangle has no position: its corner is at u = 0, r = 0")
+        if abs(p.angle_deg) > 1e-9:
+            raise FeatureRequestError("a half-section rectangle cannot be turned")
         return rounded_rectangle(p.width / 2, p.height / 2, p.width, p.height, p.corner_radius)
     if p.frame != "base_lower_left":
         raise FeatureRequestError("a half-section is written with frame base_lower_left: u from the end of the part, r from the axis")
@@ -342,7 +346,8 @@ def _shape_half_extents(s: CutShape) -> tuple[float, float]:
     if s.kind == "circle":
         return s.diameter / 2, s.diameter / 2
     if s.kind == "rectangle":
-        return s.width / 2, s.height / 2
+        from app.features.outline_helpers import rotated_half_extents
+        return rotated_half_extents(s.width, s.height, s.angle_deg)
     a = math.radians(s.angle_deg)                                # a slot (stadium) along `angle_deg`
     return s.centre_distance / 2 * abs(math.cos(a)) + s.width / 2, s.centre_distance / 2 * abs(math.sin(a)) + s.width / 2
 
@@ -509,7 +514,7 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
         "Cut circles, slots or rectangles into a face: through or blind pockets.",
         "Removes material under each shape, starting from the front or back face of the base, or from a face placed with `on` (a flat face made by an earlier item). `depth` is a number (blind) or 'through'. "
         "A through cut needs `material_length`, the thickness it crosses.",
-        ("shapes must not overlap each other", "rotated rectangles are not supported", "a counterbore or countersink is a `hole`, not a cut",
+        ("shapes must not overlap each other", "a counterbore or countersink is a `hole`, not a cut",
          "a shape's `pattern` works on the front and back faces and on a face placed with `on`; on the other faces of the base list every position; a circular pattern takes no `position`"),
         {"shapes": [{"kind": "rectangle", "position": {"x": 0, "y": 0}, "width": 30, "height": 20}], "face": "front", "depth": 5},
         build_cut, _COMMON | {"end", "target", "into", "face_index", "floor_open", "bound_only"}),
