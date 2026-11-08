@@ -309,6 +309,27 @@ class RevolveBaseParams(Strict):
     axis: Literal["horizontal", "vertical"] = Field(description="the axis of the part as drawn in the plate view (u runs along it)")
 
 
+STATION_DOC = ("a station along the turned part's axis, measured like its half-section: from the end where u = 0 (the left end for a "
+               "horizontal axis, the bottom end for a vertical one), in the drawing unit")
+
+
+class TurnedAxialParams(Strict):
+    operation: Literal["boss", "cut"] = Field(description="boss = add a round section (e.g. an eccentric lobe or a collar); cut = remove one (e.g. an end-face bore)")
+    diameter: float = Field(gt=0, description="diameter of the round section, as printed")
+    from_u: float = Field(description=STATION_DOC + ": where the section starts")
+    to_u: float = Field(description=STATION_DOC + ": where it ends")
+    offset_in_view: float = Field(0, description="distance of its centre from the part axis, in the drawing plane: + up for a horizontal axis, + right for a vertical one (e.g. 'e = 15.00' drawn upward)")
+    offset_toward_viewer: float = Field(0, description="distance of its centre from the axis toward the viewer; 0 unless printed")
+
+
+class CrossHoleParams(Strict):
+    diameter: float = Field(gt=0, description="hole diameter (a threaded hole: the nominal size)")
+    at_u: float = Field(description=STATION_DOC + ": the hole's centre")
+    direction: Literal["toward_viewer", "in_view"] = Field("toward_viewer", description="toward_viewer = the hole is seen as a circle in the view; in_view = it runs across the "
+                                                                                      "part within the drawing plane (seen as two parallel hidden lines)")
+    thread_note: str | None = Field(None, description="e.g. 'M8'. Informational: no thread is modelled")
+
+
 class RibParams(Strict):
     axis: Pos = Field(description="the axis of the round boss the rib leans on, as a position on the plate")
     boss_diameter: float = Field(gt=0, description="outer diameter of that boss")

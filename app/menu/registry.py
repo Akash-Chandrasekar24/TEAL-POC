@@ -28,6 +28,7 @@ from app.features.hole import Hole
 from app.features.rib import Rib
 from app.features.revolve_base import RevolveBase, turned_base_info
 from app.features.revolve_on_face import RevolveOnFace
+from app.features.turned_ops import CrossHole, TurnedAxial
 from app.features.outline_helpers import round_polygon_corners, rounded_rectangle
 from app.geometry import profile_bounds
 
@@ -47,6 +48,8 @@ class BuildContext:
     outline_wh: tuple[float, float] | None = None        # base outline size (W, H)
     frame_shift: tuple[float, float] | None = None       # base-frame point that becomes the datum origin: (x0 + W/2, y0 + H/2)
     turned: bool = False                                 # the base is a revolve_base: its front / back / top / bottom are not flat faces
+    turned_profile: list | None = None                   # that base's half-section (u, r) and axis: what turned_axial / cross_hole build on
+    turned_axis: str | None = None
     anchors: dict = field(default_factory=dict)          # name -> Anchor: the flat faces earlier items created ("F6.top", "F5.end"); filled by the runner's prepare()
 
     @property
@@ -431,6 +434,22 @@ def build_revolve_on_face(p: P.RevolveOnFaceParams, ctx: BuildContext, label: st
     return RevolveOnFace(ctx.unit, w.offset, 1 if p.face == "front" else -1, section, axis_x, p.angle_deg, ctx.outline_wh, label=label)
 
 
+def _need_turned(ctx: BuildContext, what: str) -> None:
+    if not ctx.turned or ctx.turned_profile is None:
+        raise FeatureRequestError(f"{what} is built on a turned part: the first item must be a revolve_base")
+
+
+def build_turned_axial(p: P.TurnedAxialParams, ctx: BuildContext, label: str) -> TurnedAxial:
+    _need_turned(ctx, "a turned_axial item")
+    return TurnedAxial(ctx.unit, ctx.turned_axis, ctx.turned_profile, p.operation, p.diameter, p.from_u, p.to_u,
+                       p.offset_in_view, p.offset_toward_viewer, label=label)
+
+
+def build_cross_hole(p: P.CrossHoleParams, ctx: BuildContext, label: str) -> CrossHole:
+    _need_turned(ctx, "a cross hole")
+    return CrossHole(ctx.unit, ctx.turned_axis, ctx.turned_profile, p.diameter, p.at_u, p.direction, p.thread_note, label=label)
+
+
 def build_rib(p: P.RibParams, ctx: BuildContext, label: str) -> Rib:
     if ctx.turned:
         raise FeatureRequestError("a rib after a turned base (revolve_base) is not built: needs_human")
@@ -468,7 +487,7 @@ class MenuEntry:
     def feature_class(self) -> type:
         return {"extrude_profile_boss": ExtrudeProfileBoss, "cut": CutFeature, "hole": Hole, "circle_boss": ExtrudeCircleBoss,
                 "profile_cut": ExtrudeProfileCut, "rib": Rib, "fillet_chamfer_edges": FilletChamferEdges,
-                "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace}[self.name]
+                "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole}[self.name]
 
 
 _COMMON = frozenset({"unit", "plane", "label", "regression_delta_mm3", "outline_wh"})
@@ -566,4 +585,21 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
          "the far end of a bend (for example a second flange) is a separate feature on another face and is not built by this one"),
         {"section": {"shape": "circle", "diameter": 20, "bore_diameter": 12, "position": {"x": -20, "y": 0}}, "axis": {"x": 10}, "face": "front", "angle_deg": 90},
         build_revolve_on_face, _COMMON | {"plane_height", "sweep", "axis_x", "expect_bodies"}),
+    MenuEntry(
+        "turned_axial", P.TurnedAxialParams,
+        "After a turned base: a round section along the shaft axis, added (boss) or removed (cut), optionally offset from the axis (an eccentric lobe).",
+        "Give the section's diameter and the two stations along the axis where it starts and ends (measured like the half-section, from u = 0). An eccentric "
+        "lobe is a boss with `offset_in_view` = the printed eccentricity. An end-face bore or counterbore is a cut. A coaxial step belongs in the half-section, not here.",
+        ("only after a revolve_base", "round sections only, parallel to the part axis", "a boss must touch the turned part (one body)"),
+        {"operation": "boss", "diameter": 40, "from_u": 10, "to_u": 30, "offset_in_view": 10},
+        build_turned_axial, _COMMON | {"axis", "profile"}),
+    MenuEntry(
+        "cross_hole", P.CrossHoleParams,
+        "After a turned base: a through hole across the shaft, perpendicular to its axis and through it (a pin bore, an oil or lock-pin hole).",
+        "Give the diameter and the station along the axis of the hole's centre. `toward_viewer` when the hole is drawn as a circle on the part; `in_view` when "
+        "it runs across the part in the drawing plane. A thread is a note only.",
+        ("only after a revolve_base", "through holes only, crossing the axis at 90 degrees (no offset, no angle, no blind cross hole)",
+         "the hole must stay between the ends of the part"),
+        {"diameter": 8, "at_u": 20, "direction": "toward_viewer"},
+        build_cross_hole, _COMMON | {"axis", "profile"}),
 ]}

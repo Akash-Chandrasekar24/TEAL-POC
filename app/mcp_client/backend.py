@@ -158,11 +158,13 @@ def custom_graph_checks() -> dict:
     from app.menu.buildlist import BASE_FEATURES
     from app.runner import prepare
     base = {"id": "F1", "feature": "extrude_profile_boss", "params": copy.deepcopy(MENU["extrude_profile_boss"].example)}
+    turned_base = {"id": "F1", "feature": "revolve_base", "params": copy.deepcopy(MENU["revolve_base"].example)}
     cases = []
     for name, entry in MENU.items():
         is_base = name in BASE_FEATURES
         item = {"id": "F1" if is_base else "F2", "feature": name, "params": copy.deepcopy(entry.example)}
-        data = {"list_version": "1", "unit": "mm", "projection": "third", "items": [item] if is_base else [base, item]}
+        first = turned_base if name in ("turned_axial", "cross_hole") else base
+        data = {"list_version": "1", "unit": "mm", "projection": "third", "items": [item] if is_base else [first, item]}
         feature = prepare(parse_reply(data))[-1].feature
         method = getattr(feature, "graph", None)
         if not callable(method):

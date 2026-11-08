@@ -1,0 +1,170 @@
+{
+ "list_version": "1",
+ "part_name": "Wankel 03 ECCENTRIC SHAFT",
+ "unit": "mm",
+ "projection": "third",
+ "seen_dimensions": [
+  "284.00",
+  "28.00",
+  "36.00",
+  "52.00",
+  "40.00",
+  "56.00",
+  "36.00",
+  "28.00",
+  "8.00",
+  "Ø30.00",
+  "Ø40.00",
+  "Ø64.00",
+  "Ø40.00",
+  "Ø36.00",
+  "Ø30.00",
+  "M24x1.5 (LH)",
+  "M24x1.5 (RH)",
+  "2x45°",
+  "e = 15.00",
+  "R6.0",
+  "R20.0"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "284.00 overall; 28 / 36 / 52 / 40 / 56 / 36 / 28 / 8; Ø30, Ø40, Ø40, Ø36, Ø30; M24x1.5 both ends; 2x45°",
+   "derived": true,
+   "derived_from": "stations are running sums of the printed lengths (28, 64, 116, 156, 212, 248, 276, 284); radii are half the printed diameters (M24 -> 12); 2x45° chamfers -> 10 / 2 / 282; under the lobe (116..156) a construction core of radius 10 joins the two halves: it lies wholly inside the Ø64 lobe (64/2 - 15 = 17 > 10), so its size does not change the finished part",
+   "note": "Threads M24x1.5 LH/RH are modelled at the major diameter Ø24 and carried as notes.",
+   "params": {
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       10
+      ],
+      [
+       2,
+       12
+      ],
+      [
+       28,
+       12
+      ],
+      [
+       28,
+       15
+      ],
+      [
+       64,
+       15
+      ],
+      [
+       64,
+       20
+      ],
+      [
+       116,
+       20
+      ],
+      [
+       116,
+       10
+      ],
+      [
+       156,
+       10
+      ],
+      [
+       156,
+       20
+      ],
+      [
+       212,
+       20
+      ],
+      [
+       212,
+       18
+      ],
+      [
+       248,
+       18
+      ],
+      [
+       248,
+       15
+      ],
+      [
+       276,
+       15
+      ],
+      [
+       276,
+       12
+      ],
+      [
+       282,
+       12
+      ],
+      [
+       284,
+       10
+      ],
+      [
+       284,
+       0
+      ]
+     ]
+    },
+    "axis": "horizontal"
+   }
+  },
+  {
+   "id": "I2",
+   "feature": "turned_axial",
+   "printed": "Ø64.00 eccentric lobe, 40.00 long, e = 15.00",
+   "derived": true,
+   "derived_from": "the lobe spans stations 116 = 28+36+52 to 156 = 116+40",
+   "note": "Eccentricity drawn upward in the front view (check the direction against the drawing).",
+   "params": {
+    "operation": "boss",
+    "diameter": 64,
+    "from_u": 116,
+    "to_u": 156,
+    "offset_in_view": 15
+   }
+  }
+ ],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "R6.0 fillets where the lobe meets the journals and the R20.0 transitions are not modelled (they join a non-coaxial lobe)."
+  },
+  {
+   "id": "U2",
+   "text": "M24x1.5 LH / RH threads: not modelled (note only)."
+  }
+ ],
+ "needs_human": [],
+ "accepted_gaps": [],
+ "expected_final": {
+  "bbox_mm": [
+   [
+    -142,
+    -20,
+    -12
+   ],
+   [
+    142,
+    47,
+    52
+   ]
+  ],
+  "bodies": 1,
+  "tol_mm": 0.05
+ }
+}

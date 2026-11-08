@@ -35,6 +35,8 @@ No reviewed requirements yet; a ranked feature backlog would be speculative.
 - **fillet_chamfer_edges**: chamfers are equal on both faces (two distances are not built); the edges must lie in the plane of the base's front or back face
 - **revolve_base**: it can only be the FIRST item; after it NO other item can be built yet (cross holes, flats and end-face features are `unsupported`); full 360 degrees only; a groove or bore is drawn into the half-section, never cut afterwards; the part spans z = 0 .. 2 x the largest radius (the pipeline's back face is z = 0)
 - **revolve_on_face**: the axis is vertical and lies in the plane of the face; an axis perpendicular to the face, a horizontal axis and a revolve CUT are `unsupported`; only 45, 90, 135 and 180 degrees are built; the section must lie clear of the axis (not touching it) and inside the base outline; the far end of a bend (for example a second flange) is a separate feature on another face and is not built by this one
+- **turned_axial**: only after a revolve_base; round sections only, parallel to the part axis; a boss must touch the turned part (one body)
+- **cross_hole**: only after a revolve_base; through holes only, crossing the axis at 90 degrees (no offset, no angle, no blind cross hole); the hole must stay between the ends of the part
 
 ## Execution prerequisites
 
