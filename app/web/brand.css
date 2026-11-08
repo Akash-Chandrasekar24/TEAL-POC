@@ -267,3 +267,31 @@ body.chat-wide .stage-grid.review-stage{grid-template-columns:minmax(0,1fr)}
 #agent-chat .chat-messages{background:#fbfbfd}
 /* the pinned left column is its own layer: lift it so the opened conversation panel sits above the right column */
 body.chat-wide .review-left{z-index:70}
+
+/* ---- approve all, questions after approval ---- */
+.m-approve-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:2px 0 6px}
+.m-approve-row .btn{width:auto;margin:0;padding:10px 20px}
+.m-approve-row .hint{font-size:11px;margin:0}
+.m-gate{margin:18px 0 0;padding:12px 14px;border-radius:12px;background:#fff4df;color:#9d701f;font-size:12px}
+.m-gate[hidden],#design>.design-output[hidden]{display:none!important}
+
+/* ---- Review step: the assistant is a floating window opened from a side button; the drawing gets the whole left column ---- */
+.ai-fab{display:none;position:fixed;right:24px;bottom:24px;z-index:80;align-items:center;gap:8px;border:0;border-radius:999px;padding:13px 20px;
+  background:var(--brand);color:#fff;font:600 14px var(--font);box-shadow:0 12px 32px #6f2b8b59;cursor:pointer}
+.ai-fab:hover{background:var(--brand-hover)}
+.ai-fab span{color:var(--orange)}
+body[data-step="2"] .ai-fab{display:inline-flex}
+body[data-step="2"].chat-wide .ai-fab{display:none}
+.chat-close{display:none;border:0;background:transparent;border-radius:8px;width:28px;height:28px;font-size:14px;color:var(--muted)}
+.chat-close:hover{background:var(--brand-soft);color:var(--brand)}
+body[data-step="2"] .chat-expand{display:none}
+body[data-step="2"] .chat-close{display:inline-flex;align-items:center;justify-content:center}
+body[data-step="2"] .review-left #review-conversation-slot{display:none}
+body[data-step="2"].chat-wide .review-left #review-conversation-slot{display:flex;position:fixed;right:24px;top:72px;bottom:24px;width:min(560px,46vw);z-index:90;
+  box-shadow:0 24px 80px #0f172a40;border-radius:22px}
+body[data-step="2"].chat-wide .review-left{z-index:90}
+body[data-step="2"] .review-left #chat-messages,body[data-step="2"] .review-left .chat-scope{display:flex!important}
+body[data-step="2"] .review-left .chat-scope{display:block!important}
+body[data-step="2"] .review-left .chat-heading::after{content:""!important}
+body[data-step="2"] .review-left .chat-heading{cursor:default}
+body[data-step="2"] .review-left .source-review .figure img{max-height:max(320px,calc(100vh - 250px))!important}

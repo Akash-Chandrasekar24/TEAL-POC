@@ -9,6 +9,7 @@
 </head>
 <body>
 <div id="studio-root"></div>
+<button type="button" class="ai-fab" aria-label="Open the AI assistant"><span aria-hidden="true">✦</span> AI assistant</button>
 <div id="legacy-workspace">
 <header>
   <h1>Drawing Studio</h1>
@@ -43,7 +44,7 @@
       <span class="hint">You’ll review the extracted features and measurements, answer any questions, and compare the finished 3D model with your drawing before exporting.</span></div>
   </main>
   <aside class="card agent-chat" id="agent-chat" aria-label="Agent chat">
-    <div class="chat-heading"><span class="chat-agent-dot" aria-hidden="true"></span><div><h2>Your drawing assistant</h2><p class="hint">Measurements, sections and clarity.</p></div><span class="chat-scope-badge">Drawing only</span><button type="button" class="chat-expand" aria-label="Make the assistant wider" title="Wider / narrower">⤢</button></div>
+    <div class="chat-heading"><span class="chat-agent-dot" aria-hidden="true"></span><div><h2>Your drawing assistant</h2><p class="hint">Measurements, sections and clarity.</p></div><span class="chat-scope-badge">Drawing only</span><button type="button" class="chat-expand" aria-label="Make the assistant wider" title="Wider / narrower">⤢</button><button type="button" class="chat-close" aria-label="Close the assistant" title="Close">✕</button></div>
     <div id="chat-body"></div>
   </aside>
 </div>
@@ -541,6 +542,13 @@ function designCard(r) {
   const tabButtons = TABS.map(([key]) => el("button", {type:"button",class:"m-tab","data-tab":key,"aria-pressed":"false"}));
   const search = el("input", {type:"search",class:"m-search",placeholder:"Search value or ID","aria-label":"Search measurements"});
   const list = el("div", {class:"m-list"});
+  const approveAll = el("button", {type:"button",class:"btn m-approve"});
+  approveAll.addEventListener("click", () => {
+    inputs.forEach((i) => { i.checked.checked = true; i.forced = false; });
+    redraw();
+    save("approve");
+  });
+  let gate = () => {};
   const redraw = () => {
     if (view.tab === null) view.tab = count("open") ? "open" : "all";
     TABS.forEach(([key, label], n) => {
@@ -549,6 +557,10 @@ function designCard(r) {
       tabButtons[n].setAttribute("aria-pressed", String(view.tab === key));
       tabButtons[n].className = view.tab === key ? "m-tab on" : "m-tab";
     });
+    const pending = inputs.filter((i) => i.state() !== "verified").length;
+    approveAll.hidden = pending === 0;
+    approveAll.textContent = `Approve all measurements (${pending})`;
+    gate();
     const q = view.query.trim().toLowerCase();
     const rows = inputs.filter((i) => (view.tab === "all" || i.state() === view.tab) && (!q || `${i.d.id} ${i.d.text} ${i.correction.value}`.toLowerCase().includes(q)));
     if (!rows.length) { list.replaceChildren(el("p", {class:"lane-empty",text: q ? "No measurement matches your search." : view.tab === "open" ? "Nothing left to verify." : "Nothing here yet."})); return; }
@@ -587,7 +599,9 @@ function designCard(r) {
   });
   const qBtn = el("button", {type:"button",class:"m-link m-qlink",hidden:true});
   qBtn.addEventListener("click", () => { if (output.scrollIntoView) output.scrollIntoView({ behavior: "smooth", block: "start" }); });
-  const review = el("div", {class:"m-panel"}, el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, qBtn, expandAll), list);
+  const review = el("div", {class:"m-panel"},
+    el("div", {class:"m-approve-row"}, approveAll, el("span", {class:"hint", text:"Marks every reading as checked by you and saves. You can still send any reading back with ⚑."})),
+    el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, qBtn, expandAll), list);
   redraw();
   // From the drawing: hovering a callout highlights its row; clicking it jumps to the row.
   globalThis.__measureFocus = (id, on) => { const row = inputs.find((i) => i.d.id === id)?.row; if (row && row.classList) row.classList.toggle("m-hover", on); };
@@ -620,6 +634,7 @@ function designCard(r) {
     const p = artifact.plan;
     const ready = p.status === "ready_for_approval";
     qBtn.hidden = !p.questions.length; qBtn.textContent = `Open questions (${p.questions.length}) ↓`;
+    gate();
     output.replaceChildren(el("h3", { text: ready ? "Draft ready for your approval" : "Open questions before a 3D build" }));
     if (!ready) output.append(el("p", { class: "hint", text: isAssembly(r)
       ? "This sheet is an assembly drawing. The part builder makes one part at a time (today: plates with holes and round bosses), so it cannot build the whole sheet from here. Your reviewed measurements are saved. You can finish here, or use the assembly planner for the parts."
@@ -651,8 +666,18 @@ function designCard(r) {
     output.append(el("p", { class: "hint" }, `${p.calls} planning call(s) · ${artifact.seconds} s · `,
       inlineArtifact("Planning process log", `/api/run/${artifact.id}/log`)));
   };
+  // Open questions come after the measurements: they stay hidden while any reading is still to verify.
+  const gateNote = el("p", {class:"m-gate"});
+  gate = () => {
+    const open = count("open"), pass = open === 0;
+    output.hidden = !pass; gateNote.hidden = pass;
+    gateNote.textContent = `Open questions appear here once every measurement is approved (${open} still to verify). Use “Approve all measurements” or verify them one by one.`;
+    if (!pass) qBtn.hidden = true;
+  };
+  if (r.approvalNote) { status.textContent = r.approvalNote; r.approvalNote = ""; }
   if (r.design) renderPlan(r.design);
   else if (r.extraction_strategy) output.append(el("p",{class:"hint",text:"Extraction review preview. Native building remains paused until engineering acceptance."}));
+  gate();
   const edited = () => {
     r.reviewDirty = true;
     output.replaceChildren(el("p", {class:"hint", text:"Measurements changed. Continue to update the plan before building or exporting."}));
@@ -661,21 +686,22 @@ function designCard(r) {
   };
   controls.addEventListener("input", edited);
   controls.addEventListener("change", edited);
-  const save = async (finish) => {
+  const save = async (mode) => {
+    const finish = mode === true, approving = mode === "approve";
     if (clarifications.some((q) => q.text.value.trim() && !q.answer.value.trim())) {
       status.textContent = "Explain the corrected source callout before applying its measurement.";
       return;
     }
     controls.disabled = true;
     output.replaceChildren();
-    status.textContent = finish ? "Saving your reviewed measurements…" : "Interpreting geometry and planning… One visual call per page, then one reconciliation call; cached repeats reuse replies.";
+    status.textContent = approving ? "Saving your approval…" : finish ? "Saving your reviewed measurements…" : "Interpreting geometry and planning… One visual call per page, then one reconciliation call; cached repeats reuse replies.";
     const resolutions = { dimensions: inputs.filter((i) => i.checked.checked || i.forced).map(({ d, correction, checked }) => ({
       id: d.id, confirmed: checked.checked, text: checked.checked ? correction.value.trim() || null : null })), note: note.value,
       clarifications: model.resolutions.clarifications || [] };
     if (unit.value !== "unknown") resolutions.unit = unit.value;
     if (projection.value !== "unknown") resolutions.projection = projection.value;
     try {
-      const response = await fetch(finish || isAssembly(r) || r.extraction_strategy ? "/api/review" : "/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      const response = await fetch(finish || approving || isAssembly(r) || r.extraction_strategy ? "/api/review" : "/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
         result_id: r.id, source_hash: model.source_hash, resolutions, llm: $("#llm").value || r.llm }) });
       const artifact = await response.json();
       if (!response.ok) {
@@ -689,6 +715,12 @@ function designCard(r) {
       r.review_hash = artifact.review_hash;
       r.reviewDirty = false;
       if (r.workflowJob) { r.workflowJob.stale = true; if ($("#workflow-job")) replaceWorkflow(r); }
+      if (approving) {                                // every reading approved: saved without a model call; the open questions come next
+        r.approvalNote = `All ${inputs.length} measurements approved and saved. The open questions are below.`;
+        if (state.result === r) show(r); else { status.textContent = r.approvalNote; renderPlan(artifact); }
+        renderAgentChat(r);
+        return;
+      }
       if (finish) {                                   // measurements only: no model call, no build step
         status.textContent = "Reviewed measurements saved. Reopening this result restores them.";
         output.replaceChildren(finishedPanel());
@@ -701,7 +733,7 @@ function designCard(r) {
       if (r.extractionRefreshPending) { r.extractionRefreshPending = false; show(r); }
       if (state.result === r) show(r);
     } catch (error) {
-      status.textContent = `${finish ? "Saving failed" : "Planning failed"}: ${error.message}`;
+      status.textContent = `${finish || approving ? "Saving failed" : "Planning failed"}: ${error.message}`;
       if (error.runId) status.append(inlineArtifact("Planning process log", `/api/run/${error.runId}/log`));
     } finally {
       controls.disabled = false;
@@ -710,7 +742,7 @@ function designCard(r) {
   btn.addEventListener("click", () => save(false));
   finishBtn.addEventListener("click", () => save(true));
   return el("section", { class: "card pad", id: "design" }, el("div",{class:"review-title"},el("span",{class:"eyebrow",text:"EXTRACTION REVIEW"}),el("h2", { text: "Measurements, made clear." })),
-    el("p", { class: "hint", text: "The agent handles confident readings. You resolve the rest." }), controls, status, output);
+    el("p", { class: "hint", text: "The agent handles confident readings. You resolve the rest." }), controls, status, gateNote, output);
 }
 
 async function workflowRequest(path, body) {
@@ -1425,7 +1457,14 @@ drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.ad
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
 drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); addFiles([...e.dataTransfer.files]); });
 $("#run").addEventListener("click", run);
-document.addEventListener("click", (e) => { const b = e.target && e.target.closest ? (e.target.closest(".chat-expand") || (e.target.closest(".review-left .chat-heading") && !e.target.closest("button,select,a"))) : null; if (b) { document.body.classList.toggle("chat-wide"); b.setAttribute("aria-pressed", String(document.body.classList.contains("chat-wide"))); } });
+document.addEventListener("click", (e) => {
+  const t = e.target && e.target.closest ? e.target : null;
+  if (!t) return;
+  if (t.closest(".ai-fab")) { document.body.classList.add("chat-wide"); setTimeout(() => $("#chat-reply")?.focus(), 50); return; }
+  if (t.closest(".chat-close")) { document.body.classList.remove("chat-wide"); return; }
+  if (t.closest(".chat-expand")) document.body.classList.toggle("chat-wide");
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.body.classList.contains("chat-wide") && document.body.dataset.step === "2") document.body.classList.remove("chat-wide"); });
 window.addEventListener("hashchange", openFromHash);
 renderAgentChat(null);
 loadConfig().catch((error) => { $("#status").textContent = error.message; });

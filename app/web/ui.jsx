@@ -21,6 +21,7 @@ function App() {
 
   function placeLegacyNodes() {
     const move = (node, host) => { if (node && host && node.parentNode !== host) host.appendChild(node); };
+    document.body.dataset.step = String(step);
     move(document.querySelector("#upload-panel"), upload.current);
     move(document.querySelector("#main"), extract.current);
     move(document.querySelector("#summary"), statistics.current);

@@ -195,6 +195,11 @@ async function main() {
   assert.equal(all(hostEl,(e) => e.tagName==="button" && e.textContent==="Confirm and save the accepted answers").length,1);
   const sum=context.summaryText([{accept:{checked:true},sg:{can_answer:true,measurement:null}},{accept:{checked:false},sg:{can_answer:true,measurement:"22"}}],[{can_answer:true},{can_answer:true},{can_answer:false}]);
   assert.equal(sum,"1 draft is ticked for you. 1 draft proposes a corrected reading and is left unticked for your own check. The AI could not tell 1 question. Nothing is saved until you confirm. Edit or untick anything first.","the summary reads correctly");
+  const gated=context.designCard(confidenceResult);
+  assert.ok(all(gated,(e) => e.tagName==="button" && /^Approve all measurements \(\d+\)$/.test(e.textContent)).length===1,"one button approves every reading");
+  assert.ok(gated.textContent.includes("Open questions appear here once every measurement is approved"),"questions wait for the measurements");
+  assert.equal(all(gated,(e) => e.attrs.id==="build-plan")[0].hidden,true,"the questions block is hidden until approval");
+  assert.ok(html.includes('class="ai-fab"') && html.includes('class="chat-close"'),"the assistant opens from a floating button and closes from its window");
   const showBody=html.slice(html.indexOf("function show(r)"),html.indexOf("function updateExtractionProgress"));
   assert.ok(!showBody.includes("assemblyCard(r)") && !showBody.includes("featureCard(r)") && !showBody.includes("assessmentCard(r)"),"review page omits the removed inspector sections");
   console.log("Drawing review UI smoke test passed");
