@@ -106,7 +106,45 @@ class Ring(Strict):
         return self
 
 
-Profile = Annotated[Union[Rectangle, Polygon, Segments, TangentChain, Ring], Field(discriminator="shape")]
+CURVE_TOL_DOC = "largest chord deviation from the exact curve, in the drawing unit (default 0.005 = 5 micrometres in mm)"
+
+
+class SpurGear(Strict):
+    """An involute spur gear outline from its printed gear data (z, m, alpha). External = the gear body; internal = the toothed hole of a ring gear."""
+    shape: Literal["spur_gear"]
+    teeth: int = Field(ge=6, le=400, description="number of teeth, as printed (z)")
+    module: float = Field(gt=0, description="module, as printed (m)")
+    pressure_angle_deg: float = Field(20, ge=10, le=35, description="pressure angle, as printed (alpha)")
+    internal: bool = Field(False, description="true for an internal (ring) gear: the outline is the toothed HOLE, teeth pointing inward; cut it from a disc")
+    position: Pos | None = Field(None, description="the gear centre; omit for the centre of the base outline / face")
+    rotation_deg: float = Field(0, description="turns the teeth about the centre (0 = a tooth, or for an internal gear a space, on +x)")
+    chord_tolerance: float = Field(0.005, gt=0, le=0.1, description=CURVE_TOL_DOC)
+
+
+class Epitrochoid(Strict):
+    """The bore of a Wankel rotor housing: the two-lobe epitrochoid x = R cos t + e cos 3t, y = R sin t + e sin 3t."""
+    shape: Literal["epitrochoid"]
+    generating_radius: float = Field(gt=0, description="R, the rotor's generating radius as printed (e.g. 'R65.000 (TROCHOID)')")
+    eccentricity: float = Field(gt=0, description="e, the eccentric shaft offset as printed (e.g. 'e = 15.00')")
+    clearance: float = Field(0, ge=0, description="enlarge the bore by this apex clearance, only if printed")
+    position: Pos | None = None
+    rotation_deg: float = Field(0, description="0 = major axis along x; 90 = major axis vertical")
+    chord_tolerance: float = Field(0.005, gt=0, le=0.1, description=CURVE_TOL_DOC)
+
+
+class RotorFlank(Strict):
+    """The three-flank Wankel rotor: the inner envelope of the housing epitrochoid with the same R and e."""
+    shape: Literal["rotor_flank"]
+    generating_radius: float = Field(gt=0, description="R of the housing trochoid the rotor runs in")
+    eccentricity: float = Field(gt=0, description="e, the eccentric shaft offset")
+    clearance: float = Field(0, ge=0, description="reduce the rotor by this running clearance, only if printed")
+    position: Pos | None = None
+    rotation_deg: float = Field(0, description="0 = one apex on +x")
+    chord_tolerance: float = Field(0.005, gt=0, le=0.1, description=CURVE_TOL_DOC)
+
+
+CURVE_SHAPES = (SpurGear, Epitrochoid, RotorFlank)
+Profile = Annotated[Union[Rectangle, Polygon, Segments, TangentChain, Ring, SpurGear, Epitrochoid, RotorFlank], Field(discriminator="shape")]
 
 
 # ------------------------------------------------------------------ features

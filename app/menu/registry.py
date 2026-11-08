@@ -146,6 +146,8 @@ def _face_outline(p: Any, w: Where) -> list[dict]:
         return rounded_rectangle(cx, cy, p.width, p.height, p.corner_radius)
     if isinstance(p, TangentChain):
         raise FeatureRequestError("a tangent_chain outline is built on the front or back face only (use explicit segments on the other faces)")
+    if isinstance(p, P.CURVE_SHAPES):
+        raise FeatureRequestError(f"a {p.shape} outline is built on the front or back face only")
     segs = round_polygon_corners([tuple(pt) for pt in p.points], p.corner_radius) if isinstance(p, P.Polygon) else [s.model_dump() for s in p.segments]
     return w.view.map_segments(segs, p.frame)
 
@@ -166,8 +168,29 @@ def _ring_circles(cx: float, cy: float, p: Any) -> list[dict]:
     return [{"kind": "circle", "diameter": p.outer_diameter, "cx": cx, "cy": cy}, {"kind": "circle", "diameter": p.inner_diameter, "cx": cx, "cy": cy}]
 
 
+def curve_outline(p: Any, cx: float = 0.0, cy: float = 0.0) -> list[dict]:
+    """A formula-defined outline (gear, trochoid, rotor) as lines and arcs, centred at (cx, cy) in the drawing unit."""
+    from app import curves
+    try:
+        if isinstance(p, P.SpurGear):
+            out = curves.spur_gear(p.teeth, p.module, p.pressure_angle_deg, p.internal, tol=p.chord_tolerance, x=cx, y=cy, rotation_deg=p.rotation_deg)
+        elif isinstance(p, P.Epitrochoid):
+            out = curves.epitrochoid(p.generating_radius, p.eccentricity, clearance=p.clearance, tol=p.chord_tolerance, x=cx, y=cy, rotation_deg=p.rotation_deg)
+        else:
+            out = curves.rotor_flank(p.generating_radius, p.eccentricity, clearance=p.clearance, tol=p.chord_tolerance, x=cx, y=cy, rotation_deg=p.rotation_deg)
+    except curves.CurveError as ex:
+        raise FeatureRequestError(str(ex)) from ex
+    return out.segments
+
+
 def _raw_outline(p: Any, ctx: BuildContext) -> tuple[list[dict], bool]:
     """(segments, already in the datum's centred frame?)"""
+    if isinstance(p, P.CURVE_SHAPES):
+        cx = cy = 0.0
+        if p.position is not None:
+            f = factor(ctx.unit)
+            cx, cy = (v / f for v in _position(p.position).to_sketch_m(ctx.unit, ctx.outline_wh))
+        return curve_outline(p, cx, cy), True
     if isinstance(p, P.Ring):
         cx = cy = 0.0
         if p.position is not None:
@@ -205,6 +228,8 @@ def _half_section(p: Any) -> list[dict]:
     """The (u, r) half-section of a revolve_base: x = u along the axis, y = r from the axis (frame base_lower_left only: the axis is y = 0)."""
     if isinstance(p, P.Ring):
         raise FeatureRequestError("a half-section cannot be a ring: write the half-section outline (a bore is part of it)")
+    if isinstance(p, P.CURVE_SHAPES):
+        raise FeatureRequestError(f"a half-section cannot be a {p.shape}: write the half-section outline")
     if isinstance(p, P.Rectangle):
         if p.position is not None:
             raise FeatureRequestError("a half-section rectangle has no position: its corner is at u = 0, r = 0")

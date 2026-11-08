@@ -1,0 +1,130 @@
+{
+ "list_version": "1",
+ "part_name": "Wankel 05 INTERNAL GEAR / ROTOR GEAR (RING GEAR)",
+ "unit": "mm",
+ "projection": "third",
+ "seen_dimensions": [
+  "z = 84",
+  "m = 2.00",
+  "α = 20°",
+  "Ø198.00",
+  "Ø168.00",
+  "26.00",
+  "Ø8.00 (6x60°)",
+  "PCD Ø186.00"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "Ø198.00 outside, 26.00 face width",
+   "params": {
+    "profile": {
+     "shape": "segments",
+     "frame": "centre",
+     "segments": [
+      {
+       "kind": "arc",
+       "cx": 0,
+       "cy": 0,
+       "x1": 99.0,
+       "y1": 0.0,
+       "x2": -49.49999999999998,
+       "y2": 85.73651497465943,
+       "dir": 1
+      },
+      {
+       "kind": "arc",
+       "cx": 0,
+       "cy": 0,
+       "x1": -49.49999999999998,
+       "y1": 85.73651497465943,
+       "x2": -49.50000000000004,
+       "y2": -85.73651497465941,
+       "dir": 1
+      },
+      {
+       "kind": "arc",
+       "cx": 0,
+       "cy": 0,
+       "x1": -49.50000000000004,
+       "y1": -85.73651497465941,
+       "x2": 99.0,
+       "y2": 0.0,
+       "dir": 1
+      }
+     ]
+    },
+    "depth": 26
+   },
+   "derived": true,
+   "derived_from": "Ø198.00 outside: radius 99, written as three arcs between points at 0°, 120° and 240°"
+  },
+  {
+   "id": "I2",
+   "feature": "profile_cut",
+   "printed": "z = 84, m = 2.00, α = 20° (INTERNAL), Ø168.00 pitch",
+   "note": "Internal involute teeth generated from the printed gear data (pitch Ø168 = m z; tip Ø164, root Ø173 by the standard 1.0 m / 1.25 m proportions).",
+   "params": {
+    "profile": {
+     "shape": "spur_gear",
+     "teeth": 84,
+     "module": 2,
+     "pressure_angle_deg": 20,
+     "internal": true
+    },
+    "face": "front",
+    "depth": "through",
+    "material_length": 26
+   }
+  },
+  {
+   "id": "I3",
+   "feature": "hole",
+   "printed": "Ø8.00 (6x60°) on PCD Ø186.00",
+   "note": "First hole at the top (90°) as seen in the front view.",
+   "params": {
+    "pattern": {
+     "kind": "circular",
+     "centre": {
+      "x": 0,
+      "y": 0,
+      "x_from": "centre",
+      "y_from": "centre"
+     },
+     "pitch_diameter": 186,
+     "count": 6,
+     "start_angle_deg": 90
+    },
+    "diameter": 8,
+    "face": "front",
+    "depth": "through",
+    "material_length": 26
+   }
+  }
+ ],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "Gear root fillets R0.40 (detail 06) are not modelled."
+  }
+ ],
+ "needs_human": [],
+ "accepted_gaps": [],
+ "expected_final": {
+  "bbox_mm": [
+   [
+    -99,
+    -99,
+    0
+   ],
+   [
+    99,
+    99,
+    26
+   ]
+  ],
+  "bodies": 1,
+  "tol_mm": 0.05
+ }
+}

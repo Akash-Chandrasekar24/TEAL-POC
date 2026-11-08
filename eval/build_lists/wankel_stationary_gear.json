@@ -1,0 +1,103 @@
+{
+ "list_version": "1",
+ "part_name": "Wankel 04 STATIONARY GEAR (FIXED GEAR)",
+ "unit": "mm",
+ "projection": "third",
+ "seen_dimensions": [
+  "z = 42",
+  "m = 2.00",
+  "α = 20°",
+  "Ø88.00",
+  "18.00",
+  "Ø30.00 H7",
+  "Ø8.00 (3x120°)",
+  "PCD Ø64.00",
+  "Ø30.00",
+  "Ø88.00"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "z = 42, m = 2.00, α = 20°, Ø88.00 (tip), 18.00 face width",
+   "note": "Involute teeth generated from the printed gear data (tip Ø88 = m(z+2)). Root fillets (R0.40, detail 06) are not modelled.",
+   "params": {
+    "profile": {
+     "shape": "spur_gear",
+     "teeth": 42,
+     "module": 2,
+     "pressure_angle_deg": 20
+    },
+    "depth": 18
+   }
+  },
+  {
+   "id": "I2",
+   "feature": "hole",
+   "printed": "Ø30.00 H7",
+   "note": "H7 fit is a manufacturing note; the nominal bore is modelled.",
+   "params": {
+    "positions": [
+     {
+      "x": 0,
+      "y": 0,
+      "x_from": "centre",
+      "y_from": "centre"
+     }
+    ],
+    "diameter": 30,
+    "face": "front",
+    "depth": "through",
+    "material_length": 18
+   }
+  },
+  {
+   "id": "I3",
+   "feature": "hole",
+   "printed": "Ø8.00 (3x120°) on PCD Ø64.00",
+   "note": "First hole at the top (90°) as seen in the front view.",
+   "params": {
+    "pattern": {
+     "kind": "circular",
+     "centre": {
+      "x": 0,
+      "y": 0,
+      "x_from": "centre",
+      "y_from": "centre"
+     },
+     "pitch_diameter": 64,
+     "count": 3,
+     "start_angle_deg": 90
+    },
+    "diameter": 8,
+    "face": "front",
+    "depth": "through",
+    "material_length": 18
+   }
+  }
+ ],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "Gear root fillets R0.40 (detail 06) are not modelled; the involute meets the root circle with a sharp corner."
+  }
+ ],
+ "needs_human": [],
+ "accepted_gaps": [],
+ "expected_final": {
+  "bbox_mm": [
+   [
+    -44,
+    -44,
+    0
+   ],
+   [
+    44,
+    44,
+    18
+   ]
+  ],
+  "bodies": 1,
+  "tol_mm": 0.05
+ }
+}
