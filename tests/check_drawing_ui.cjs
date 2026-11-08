@@ -158,7 +158,7 @@ async function main() {
   assert.equal(JSON.parse(JSON.stringify(context.viewGroup({pages:[]},{views:[]}))).key,"none","a reading without a view gets its own group");
   const sec=context.viewGroup({pages:[{no:1,read:{views:[{no:2,type:"section",label:"SECTION A-A SCALE 1:1,5"}]}}]},{views:["P1.v2"]});
   assert.deepEqual(JSON.parse(JSON.stringify([sec.title,sec.scale,sec.kind,sec.key])),["SECTION A-A","scale 1:1,5","Section","1.2"],"sheet name, scale and kind are split out");
-  assert.equal(all(card,(e) => e.tagName==="button" && e.textContent==="Save and finish (no 3D build)").length,1,"measurements can be saved without going on to a 3D build");
+  assert.equal(all(card,(e) => e.tagName==="button" && e.textContent==="Finish without a 3D build").length,1,"measurements can be saved without going on to a 3D build");
   const csv=context.measurementsCsv(context.measurementRows([
     {group:{title:"SECTION A-A",scale:"scale 1:1,5"},d:{id:"P1.d1",text:"Ø79",page:1},shown:() => 'Ø79 "x"',state:() => "ai",score:87},
     {group:{title:"01. PISTON",scale:""},d:{id:"P1.d2",text:"5",page:1},shown:() => "5",state:() => "open",score:null}]));

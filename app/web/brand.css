@@ -295,3 +295,79 @@ body[data-step="2"] .review-left .chat-scope{display:block!important}
 body[data-step="2"] .review-left .chat-heading::after{content:""!important}
 body[data-step="2"] .review-left .chat-heading{cursor:default}
 body[data-step="2"] .review-left .source-review .figure img{max-height:max(320px,calc(100vh - 250px))!important}
+
+/* ===================== Apple-style depth and flow =====================
+   glass surfaces, large calm type, soft layered shadows, content that rises into place as it scrolls in,
+   steps that glide in, and a gentle 3D lean on the drawing. Everything stops for prefers-reduced-motion. */
+:root{--glass:rgba(255,255,255,.72);--lift:0 1px 2px #0f17290a,0 8px 24px #0f17290f,0 24px 60px #6f2b8b0d;--ease:cubic-bezier(.2,.8,.2,1)}
+body{background:
+  radial-gradient(1200px 600px at 10% -10%,#efe4f6 0%,transparent 60%),
+  radial-gradient(900px 500px at 110% 10%,#fde9da 0%,transparent 55%),
+  radial-gradient(900px 700px at 50% 120%,#e3ecfa 0%,transparent 60%),var(--bg);background-attachment:fixed}
+.studio-header{position:sticky;top:0;z-index:50;background:var(--glass)!important;backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid #0f17290d}
+.header-actions{display:flex;align-items:center;gap:16px}
+.history-btn{border:1px solid #0f17291a;background:#ffffffb3;border-radius:999px;padding:7px 14px;font:500 12.5px var(--font);color:var(--ink);transition:transform .25s var(--ease),box-shadow .25s var(--ease)}
+.history-btn:hover{transform:translateY(-1px);box-shadow:var(--lift)}
+.studio-intro h2{font-size:clamp(34px,4.6vw,64px)!important;letter-spacing:-.045em!important;line-height:1.02;
+  background:linear-gradient(100deg,var(--ink) 0%,var(--ink) 45%,var(--brand) 80%,var(--orange) 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.stepper{background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:999px;box-shadow:var(--lift);padding:4px}
+.card,#design,.source-review>.card,.m-group,.q-card,.ai-suggest,.processing-card,#agent-chat{box-shadow:var(--lift)}
+.card,#design{border-radius:24px!important}
+.btn{transition:transform .25s var(--ease),box-shadow .25s var(--ease),background .2s}
+.btn:not(:disabled):hover{transform:translateY(-1px)}
+.btn:not(:disabled):active{transform:translateY(0) scale(.99)}
+
+/* steps glide in with a little depth */
+.studio-page.active{animation:page-in .7s var(--ease) both;transform-origin:50% 0}
+@keyframes page-in{from{opacity:0;transform:perspective(1400px) translateY(28px) rotateX(6deg) scale(.985)}to{opacity:1;transform:none}}
+
+/* content rises into place as it scrolls into view (scroll-driven, no script) */
+@supports (animation-timeline: view()){
+  .m-group,.q-card,.ai-suggest,.tech-details,.m-done,.page-thumb{animation:rise linear both;animation-timeline:view();animation-range:entry 0% entry 55%}
+}
+@keyframes rise{from{opacity:0;transform:perspective(1000px) translateY(36px) rotateX(10deg) scale(.97)}to{opacity:1;transform:none}}
+
+/* the drawing: a framed print that leans toward the pointer */
+.source-review .stage{transition:transform .5s var(--ease);will-change:transform}
+.source-review .figure{perspective:1600px}
+.source-review .figure.tilt .stage{transform:rotateX(var(--rx,0)) rotateY(var(--ry,0)) translateZ(0)}
+.source-review>.card{background:linear-gradient(180deg,#fff,#fbf9fd)}
+
+/* page thumbnails */
+.page-thumbs{display:flex;gap:10px;margin:8px 0 12px;overflow-x:auto;padding:4px 2px 8px}
+.page-thumb{flex:none;display:flex;flex-direction:column;align-items:center;gap:6px;border:1.5px solid transparent;background:#fff;border-radius:14px;padding:6px;
+  box-shadow:var(--lift);transition:transform .3s var(--ease),border-color .2s}
+.page-thumb img{display:block;width:120px;height:84px;object-fit:contain;border-radius:8px;background:#f6f6f2}
+.page-thumb span{font:600 11px var(--font);color:var(--muted)}
+.page-thumb:hover{transform:translateY(-3px) perspective(600px) rotateX(4deg)}
+.page-thumb.on{border-color:var(--brand)}.page-thumb.on span{color:var(--brand)}
+
+/* advanced options, technical details, finish link, assistant pointer */
+.advanced{margin:10px 0 0}.advanced>summary{cursor:pointer;font-size:12px;color:var(--muted);font-weight:500}
+.advanced[open]>summary{margin-bottom:8px}
+.tech-details{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
+.tech-details>summary{cursor:pointer;font-size:12px;color:var(--muted)}
+.finish-link{margin-left:4px}
+.chat-pointer{margin:4px 0;padding:10px 12px;border-radius:12px;background:var(--brand-soft);color:var(--brand);font-size:12px}
+
+/* recent drawings */
+#history-panel{width:min(640px,92vw);max-height:80vh;padding:0;border:0;border-radius:24px;box-shadow:0 30px 100px #0f172a55;overflow:hidden;
+  background:var(--glass);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
+#history-panel[open]{animation:page-in .45s var(--ease) both}
+#history-panel::backdrop{background:#0f172a66;backdrop-filter:blur(4px)}
+.history-head{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #0f17290f}
+.history-head h3{margin:0;font-size:18px;letter-spacing:-.02em}
+.history-head .chat-close{display:inline-flex;align-items:center;justify-content:center}
+.history-list{display:flex;flex-direction:column;padding:10px;max-height:calc(80vh - 70px);overflow:auto}
+.history-row{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:14px;color:var(--ink);text-decoration:none!important;transition:background .2s,transform .25s var(--ease)}
+.history-row:hover{background:#ffffffd9;transform:translateX(3px)}
+.history-row span{font-size:11.5px;color:var(--muted)}
+
+@media(prefers-reduced-motion:reduce){
+  .studio-page.active,.m-group,.q-card,.ai-suggest,.tech-details,.m-done,.page-thumb,#history-panel[open]{animation:none!important}
+  .source-review .figure.tilt .stage{transform:none!important}
+}
+details.advanced,details.tech-details{background:transparent;border:0;border-radius:0;padding:0;overflow:visible}
+details.advanced>summary,details.tech-details>summary{padding:4px 0}
+
+.m-approve-row [hidden],.m-save-row [hidden]{display:none!important}

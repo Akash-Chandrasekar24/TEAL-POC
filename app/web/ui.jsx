@@ -87,7 +87,7 @@ function App() {
   return <>
     <header className="studio-header">
       <div className="brand-lockup"><img className="brand-logo" src="/gwc-logo.svg" alt="GWC Data.Ai"/><h1>Drawing Studio</h1></div>
-      <div className="header-status">SolidWorks workspace</div>
+      <div className="header-actions"><button type="button" className="history-btn">Recent drawings</button><div className="header-status">SolidWorks workspace</div></div>
     </header>
     <div className="studio-frame">
       <nav aria-label="Drawing workflow"><ol className="stepper">{FLOW.map((label, i) => {

@@ -240,6 +240,24 @@ def _enrich_result(rid, provider, pending):
         write_json(ENRICHMENTS / f"{rid}.json", report)
 
 
+def recent_results(limit: int = 40) -> list[dict]:
+    """Saved drawing results, newest first: what the 'Recent drawings' panel lists."""
+    out = []
+    for path in sorted(RESULTS.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not _ID.fullmatch(str(data.get("id", ""))):
+            continue
+        pages = data.get("pages") or []
+        sources = sorted({str(p.get("source", "")) for p in pages if p.get("source")})      # already the uploaded file name
+        out.append({"id": data["id"], "name": ", ".join(sources) or data["id"], "pages": len(pages),
+                    "readings": sum(len((p.get("read") or {}).get("dims", [])) for p in pages),
+                    "saved": path.stat().st_mtime, "status": data.get("extraction_status") or "read"})
+    return out
+
+
 def result_with_design(rid: str) -> dict:
     if not _ID.fullmatch(rid):
         raise ValueError("invalid drawing result id")
@@ -256,6 +274,12 @@ def result_with_design(rid: str) -> dict:
     if latest.is_file():
         artifact = json.loads(latest.read_text(encoding="utf-8"))
         if artifact["model"]["source_hash"] == result["drawing_model"]["source_hash"]:
+            if artifact.get("plan", {}).get("status") == "needs_review" and not artifact["plan"].get("draft"):
+                # a saved REVIEW (no plan, nothing approved or built): recount its open questions with the current rules.
+                # Planned artifacts stay pinned: the build step checks their model hash.
+                fresh = reconcile(result, Resolutions.model_validate(artifact["model"]["resolutions"]))
+                artifact = {**artifact, "model": fresh.model_dump(), "review_hash": fresh.digest(),
+                            "plan": {**artifact["plan"], "questions": fresh.issues}}
             result["design"] = artifact
             result["drawing_model"] = artifact["model"]
     scope = READINESS / rid / "latest.json"
@@ -698,6 +722,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             return self._json(200, {"providers": providers(), "default": config.WORKER_LLM_PROVIDER, "max_files": MAX_FILES,
                                     "models": {"domo": config.DOMO_MODEL, "gemini": config.GEMINI_MODEL}})
+        if path == "/api/results":
+            return self._json(200, {"results": recent_results()})
         if path == "/api/harness":
             from app.agent.harness import capabilities
             return self._json(200, capabilities())

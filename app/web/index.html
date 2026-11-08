@@ -27,7 +27,7 @@
       <ul id="files" class="files"></ul>
       <input id="doRead" type="checkbox" checked hidden>
       <label class="row" for="llm"><span style="min-width:48px">Model</span> <select id="llm"></select></label>
-      <label class="row" for="extraction-strategy"><span>Extraction</span> <select id="extraction-strategy"><option value="legacy">Existing reviewed workflow</option><option value="r1">R1 · OCR + joint visual assessment (evaluation)</option><option value="r2">R2 · OCR + separate visual verification (evaluation)</option></select></label>
+      <details class="advanced"><summary>Advanced</summary><label class="row" for="extraction-strategy"><span>Extraction</span> <select id="extraction-strategy"><option value="legacy">Existing reviewed workflow</option><option value="r1">R1 · OCR + joint visual assessment (evaluation)</option><option value="r2">R2 · OCR + separate visual verification (evaluation)</option></select></label></details>
       <button id="run" class="btn" disabled>Extract features and measurements</button>
       <p class="hint">Upload views of one design together. Review its readings before SolidWorks starts.</p>
       <div id="status" class="hint" aria-live="polite"></div>
@@ -76,7 +76,7 @@ async function loadConfig() {
   const sel = $("#llm");
   for (const name of ["domo", "gemini"]) {
     const ok = cfg.providers[name];
-    sel.append(el("option", { value: name, disabled: !ok, text: `${name[0].toUpperCase() + name.slice(1)} · ${cfg.models?.[name] || name}${ok ? "" : " (unavailable)"}` }));
+    if (ok) sel.append(el("option", { value: name, text: `${name[0].toUpperCase() + name.slice(1)} · ${cfg.models?.[name] || name}` }));
   }
   const first = cfg.providers[cfg.default] ? cfg.default : ["domo", "gemini"].find((n) => cfg.providers[n]);
   if (first) sel.value = first; else { $("#doRead").checked = false; $("#status").textContent = "No model key in .env: only the view boxes can be shown."; }
@@ -294,8 +294,8 @@ function agentChatBody(r) {
       reply.addEventListener("click",() => {draft.mode="correct";draft.target=question.target;draft.context=question.target==="note" ? question.text : "";renderAgentChat(r);$("#chat-reply")?.focus();});
       bubble.append(reply);return bubble;
     };
-    messages.append(...questions.slice(0,2).map(questionBubble));
-    if(questions.length>2) messages.append(el("details",{class:"chat-open-questions"},el("summary",{text:`${questions.length-2} more open questions`}),questions.slice(2).map(questionBubble)));
+    if(questions.length) messages.append(el("p",{class:"chat-pointer",text:"Open questions are listed on the Review page, under the measurements. Answer them there, or ask me about any of them here."}));
+    void questionBubble;
     for(const entry of r.chatHistory || []) {
       messages.append(message("You",entry.reply,true));
       const bubble=message(entry.kind==="question" ? "Drawing assistant" : "Review saved",entry.acknowledgement);
@@ -544,9 +544,19 @@ function designCard(r) {
   const list = el("div", {class:"m-list"});
   const approveAll = el("button", {type:"button",class:"btn m-approve"});
   approveAll.addEventListener("click", () => {
+    r.approveUndo = inputs.filter((i) => i.checked.checked).map((i) => i.d.id);       // what was verified before: Undo restores exactly this
     inputs.forEach((i) => { i.checked.checked = true; i.forced = false; });
     redraw();
     save("approve");
+  });
+  const undoBtn = el("button", {type:"button", class:"m-link", text:"Undo approve all", hidden: !Array.isArray(r.approveUndo)});
+  undoBtn.addEventListener("click", () => {
+    if (!Array.isArray(r.approveUndo)) return;                      // nothing approved in this session: never wipe saved approvals
+    const keep = new Set(r.approveUndo);
+    inputs.forEach((i) => { i.checked.checked = keep.has(i.d.id); i.forced = false; });
+    r.approveUndo = null;
+    redraw();
+    save("undo");
   });
   let gate = () => {};
   const redraw = () => {
@@ -600,7 +610,7 @@ function designCard(r) {
   const qBtn = el("button", {type:"button",class:"m-link m-qlink",hidden:true});
   qBtn.addEventListener("click", () => { if (output.scrollIntoView) output.scrollIntoView({ behavior: "smooth", block: "start" }); });
   const review = el("div", {class:"m-panel"},
-    el("div", {class:"m-approve-row"}, approveAll, el("span", {class:"hint", text:"Marks every reading as checked by you and saves. You can still send any reading back with ⚑."})),
+    el("div", {class:"m-approve-row"}, approveAll, undoBtn, el("span", {class:"hint", text:"Marks every reading as checked by you and saves. You can still send any reading back with ⚑."})),
     el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, qBtn, expandAll), list);
   redraw();
   // From the drawing: hovering a callout highlights its row; clicking it jumps to the row.
@@ -613,7 +623,7 @@ function designCard(r) {
   const clarifications = [];
   const note = {value:model.resolutions.note || ""};
   const btn = el("button", { class: "btn", type: "button", text: "Review measurements and continue" });
-  const finishBtn = el("button", { class: "btn secondary", type: "button", text: "Save and finish (no 3D build)" });
+  const finishBtn = el("button", { class: "m-link finish-link", type: "button", text: "Finish without a 3D build" });
   if (isAssembly(r)) {
     btn.textContent = "Save reviewed measurements";
     status.textContent = "Review measurements here. Open questions are listed below them.";
@@ -628,7 +638,7 @@ function designCard(r) {
         link("reviewed-measurements.json", "application/json", JSON.stringify(rows, null, 2), "Download JSON")),
       el("p", { class: "hint", text: "Building in SolidWorks is optional and is a separate step (Continue to 3D build)." }));
   };
-  controls.append(review, el("p", {class:"confidence-note",text:"Score = five agent ratings, weighted 30 / 25 / 20 / 15 / 10. Above 80% can be AI approved; conflicts and weak evidence require review. These scores are not calibrated accuracy."}), el("div", {class:"m-save-row"}, btn, finishBtn));
+  controls.append(review, el("div", {class:"m-save-row"}, btn, finishBtn));
   const issues = (questions) => el("ul", {}, questions.map((q) => el("li", { text: q })));
   const renderPlan = (artifact) => {
     const p = artifact.plan;
@@ -651,8 +661,8 @@ function designCard(r) {
             el("td", { text: item.printed }), el("td", {}, el("pre", { text: JSON.stringify(item.params, null, 2) }))))))));
       if (p.draft.unsupported.length) output.append(el("h4", { text: "Unsupported geometry" }), issues(p.draft.unsupported.map((u) => u.text)));
     }
-    output.append(el("details", {}, el("summary", { text: "Dimension provenance and proposed relationships" }),
-      el("pre", { text: JSON.stringify({ parameters: p.provenance, relationships: p.proposal?.relationships || [] }, null, 2) })));
+    const tech = el("details", {class:"tech-details"}, el("summary", { text: "Technical details" }),
+      el("pre", { text: JSON.stringify({ parameters: p.provenance, relationships: p.proposal?.relationships || [] }, null, 2) }));
     if (p.status === "ready_for_approval") {
       const build = el("button", {class:"btn", type:"button", text:"Approve features and build in SolidWorks"});
       build.disabled = Boolean(r.workflowBusy) || (r.workflowJob && ["building","resuming","exporting"].includes(r.workflowJob.phase));
@@ -663,8 +673,8 @@ function designCard(r) {
       });
       output.append(el("p", {text:"Confirm these features, dimensions and derived values against your drawing before starting SolidWorks."}), build);
     }
-    output.append(el("p", { class: "hint" }, `${p.calls} planning call(s) · ${artifact.seconds} s · `,
-      inlineArtifact("Planning process log", `/api/run/${artifact.id}/log`)));
+    tech.append(el("p", { class: "hint" }, `${p.calls} planning call(s) · ${artifact.seconds} s · `, inlineArtifact("Planning process log", `/api/run/${artifact.id}/log`)));
+    output.append(tech);
   };
   // Open questions come after the measurements: they stay hidden while any reading is still to verify.
   const gateNote = el("p", {class:"m-gate"});
@@ -687,7 +697,7 @@ function designCard(r) {
   controls.addEventListener("input", edited);
   controls.addEventListener("change", edited);
   const save = async (mode) => {
-    const finish = mode === true, approving = mode === "approve";
+    const finish = mode === true, approving = mode === "approve" || mode === "undo";
     if (clarifications.some((q) => q.text.value.trim() && !q.answer.value.trim())) {
       status.textContent = "Explain the corrected source callout before applying its measurement.";
       return;
@@ -716,7 +726,7 @@ function designCard(r) {
       r.reviewDirty = false;
       if (r.workflowJob) { r.workflowJob.stale = true; if ($("#workflow-job")) replaceWorkflow(r); }
       if (approving) {                                // every reading approved: saved without a model call; the open questions come next
-        r.approvalNote = `All ${inputs.length} measurements approved and saved. The open questions are below.`;
+        r.approvalNote = mode === "undo" ? "Approval undone: the readings are back to how they were before." : `All ${inputs.length} measurements approved and saved. The open questions are below.`;
         if (state.result === r) show(r); else { status.textContent = r.approvalNote; renderPlan(artifact); }
         renderAgentChat(r);
         return;
@@ -1140,8 +1150,17 @@ function drawingReviewCard(r) {
     r.reviewPage = Number(select.value);
     content.replaceChildren(pageCard(r.pages.find((p) => p.no === r.reviewPage), true));
   });
+  const thumbs = r.pages.length > 1 ? el("div", {class:"page-thumbs", role:"group", "aria-label":"Drawing pages"}, r.pages.map((p) => {
+    const b = el("button", {type:"button", class:`page-thumb${p.no === active.no ? " on" : ""}`, "aria-label":`Show page ${p.no}`},
+      el("img", {src:`/api/page/${p.sha}`, alt:"", loading:"lazy"}), el("span", {text:`Page ${p.no}`}));
+    b.addEventListener("click", () => {
+      select.value = String(p.no); select.dispatchEvent(new Event("change"));
+      thumbs.querySelectorAll(".page-thumb").forEach((t) => t.className = t === b ? "page-thumb on" : "page-thumb");
+    });
+    return b;
+  })) : null;
   return el("section", {class:"source-review", "aria-label":"Original drawing"},
-    el("label", {class:"source-selector"}, "Source drawing", select), content);
+    el("label", {class:"source-selector"}, "Source drawing", select), thumbs, content);
 }
 
 // How well the sheet itself supports the unit / projection currently chosen. Evidence-based, never a made-up number:
@@ -1400,7 +1419,7 @@ function pageCard(p, focus = false) {
       v.dims.length ? el("div", { class: "chips" }, v.dims.map((d) => el("span", { class: "chip", text: d }))) : el("div", { class: "cap", text: "no dimensions" }));
     crops.append(card);
   }
-  const viewContent = focus ? el("details", {class:"source-views"}, el("summary", {text:"Detected views and source readings"}), crops) : crops;
+  const viewContent = focus ? null : crops;                          // the review page shows the same readings grouped by view
   const card = el("section", { class: "card" },
     el("div", { class: "page-head" }, el("b", { text: `Page ${p.no}` }), el("span", { text: `${p.source} · page ${p.source_page} · ${p.width}×${p.height}px` }),
       el("span", { text: `${p.boxes.length} ${p.region_source === "agent" ? "agent-detected views" : "view boxes"}` }), read ? el("span", { text: `${read.calls} model calls` }) : null),
@@ -1463,6 +1482,40 @@ document.addEventListener("click", (e) => {
   if (t.closest(".ai-fab")) { document.body.classList.add("chat-wide"); setTimeout(() => $("#chat-reply")?.focus(), 50); return; }
   if (t.closest(".chat-close")) { document.body.classList.remove("chat-wide"); return; }
   if (t.closest(".chat-expand")) document.body.classList.toggle("chat-wide");
+});
+// ---- Recent drawings: a floating list of saved results (newest first)
+async function openHistory() {
+  let panel = $("#history-panel");
+  if (!panel) {
+    panel = el("dialog", { id: "history-panel", "aria-label": "Recent drawings" });
+    panel.addEventListener("click", (e) => { if (e.target === panel) panel.close(); });
+    document.body.append(panel);
+  }
+  const list = el("div", { class: "history-list" }, el("p", { class: "hint", text: "Loading…" }));
+  panel.replaceChildren(el("div", { class: "history-head" }, el("h3", { text: "Recent drawings" }),
+    el("button", { type: "button", class: "chat-close", "aria-label": "Close", text: "✕", onclick: () => panel.close() })), list);
+  panel.showModal();
+  try {
+    const { results } = await (await fetch("/api/results")).json();
+    list.replaceChildren(...(results.length ? results.map((x) => el("a", { class: "history-row", href: `#${x.id}`, onclick: () => panel.close() },
+      el("b", { text: x.name }), el("span", { text: `${x.pages} page${x.pages === 1 ? "" : "s"} · ${x.readings} readings · ${new Date(x.saved * 1000).toLocaleString()}` }))) :
+      [el("p", { class: "hint", text: "No saved drawings yet." })]));
+  } catch (error) { list.replaceChildren(el("p", { class: "hint", text: `Could not load the list: ${error.message}` })); }
+}
+document.addEventListener("click", (e) => { if (e.target && e.target.closest && e.target.closest(".history-btn")) openHistory(); });
+
+// ---- the drawing leans gently toward the pointer (depth cue); off for reduced motion
+const _calm = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+document.addEventListener("pointermove", (e) => {
+  if (_calm || !e.target || !e.target.closest) return;
+  const fig = e.target.closest(".source-review .figure");
+  document.querySelectorAll(".source-review .figure.tilt").forEach((f) => { if (f !== fig) { f.classList.remove("tilt"); f.style.removeProperty("--rx"); f.style.removeProperty("--ry"); } });
+  if (!fig) return;
+  const r = fig.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5;
+  fig.classList.add("tilt");
+  fig.style.setProperty("--ry", `${(x * 3).toFixed(2)}deg`);
+  fig.style.setProperty("--rx", `${(-y * 3).toFixed(2)}deg`);
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.body.classList.contains("chat-wide") && document.body.dataset.step === "2") document.body.classList.remove("chat-wide"); });
 window.addEventListener("hashchange", openFromHash);
