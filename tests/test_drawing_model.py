@@ -94,3 +94,32 @@ def test_angle_readings_do_not_raise_a_length_blocker_but_unreadable_ones_still_
     assert angle_issues == []
     dims[3].update(text="smudge", token="")      # a genuinely unreadable reading must still block
     assert any("P1.d4" in q and "usable length" in q for q in reconcile(result).issues)
+
+
+def test_only_real_questions_reach_the_reviewer():
+    from app.drawing.model import is_question
+    cats = {"o1": "measurement", "o2": "note", "o3": "component"}
+    assert not is_question("o1: conflict: Ø10.5", cats)                                  # the measurement list already covers it
+    assert not is_question("o1: OCR text does not support the complete callout", cats)
+    assert not is_question("o2: conflict: SCALE 1:1,5", cats)                            # label / note OCR noise
+    assert not is_question("o3: conflict: 05. CONNECTING ROD CAP", cats)                 # a part title: OCR noise too (BOM rows are read separately)
+    assert is_question("o9: conflict: 22", {})                                          # no evidence about the callout: keep asking
+    assert not is_question("No tolerances are printed for most linear dimensions.", cats)
+    assert is_question("Does the 4.50 gear-tooth dimension mean whole depth?", cats)
+    assert is_question("View v10 overlaps v6; verify crop separation and shared callouts", cats)
+    result = drawing_result()
+    read = result["pages"][0]["read"]
+    read["evidence"] = {"extraction": {"callouts": [{"id": "o1", "category": "measurement"}, {"id": "o2", "category": "note"}]}}
+    read["issues"] = ["o1: conflict: 120", "o2: conflict: SCALE 1:2", "No GD&T frames are visible.", "Is the bore blind or through?"]
+    asked = [q for q in reconcile(result).issues if "unreadable source callout" in q]
+    assert asked == ["Page 1: unreadable source callout: Is the bore blind or through?"]
+
+
+def test_many_compound_callouts_become_one_item_that_still_blocks():
+    result = drawing_result()
+    dims = result["pages"][0]["read"]["dims"]
+    for d in dims[:4]:
+        d.update(text="12x Ø10.5 THRU PCD Ø190", token="")
+    issues = reconcile(result).issues
+    combined = [q for q in issues if "readings hold several values" in q]
+    assert len(combined) == 1 and combined[0].startswith("4 readings") and not any("specify exactly one nominal" in q for q in issues)

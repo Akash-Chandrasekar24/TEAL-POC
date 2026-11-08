@@ -138,6 +138,21 @@ def projection_reading(title_block: dict) -> str:
     return convention
 
 
+# Which extraction flags are NOT questions for the reviewer. The raw flags stay in the saved evidence; they just do not become open questions.
+#  - an OCR cross-check flag on a MEASUREMENT callout: the measurement list already routes that reading to review (its confidence is blocked)
+#  - an OCR cross-check flag on a NOTE, label, part title or symbol: low-resolution text recognition noise, not an engineering question
+#  - a plain statement such as "No tolerances are printed on this sheet." (no question asked)
+_OCR_FLAG = re.compile(r"^(o\d+): (?:conflict:|OCR text does not support the complete callout|claimed OCR agreement has no OCR evidence)")
+_STATEMENT = re.compile(r"^no\b[^?]*\b(?:printed|visible|visibly|shown)\b[^?]*$", re.I)
+
+
+def is_question(text: str, categories: dict) -> bool:
+    flag = _OCR_FLAG.match(text)
+    if flag and categories.get(flag.group(1)):        # any categorised callout: OCR could not confirm the text, which is not a question about it
+        return False
+    return not _STATEMENT.match(text.strip())
+
+
 def reconcile(result: dict, resolutions: Resolutions | None = None) -> DrawingModel:
     """No LLM and no inference of feature identity from matching numeric values."""
     resolutions = resolutions or Resolutions()
@@ -168,10 +183,12 @@ def reconcile(result: dict, resolutions: Resolutions | None = None) -> DrawingMo
                 raise ValueError(f"{view.id}: unknown same_as view")
         pages.append(Page(no=no, source=raw["source"], source_page=raw["source_page"], sha=raw["sha"], views=views,
                           title_block=read.get("title_block") or {}, notes=read.get("notes") or []))
+        categories = {c.get("id"): c.get("category") for c in ((read.get("evidence") or {}).get("extraction") or {}).get("callouts", []) if isinstance(c, dict)}
         for key, question in page_questions:
             clarification = clarifications.get(key)
             if clarification is None:
-                issues.append(f"Page {no}: unreadable source callout: {question}")
+                if is_question(question, categories):
+                    issues.append(f"Page {no}: unreadable source callout: {question}")
                 continue
             if not clarification.answer.strip() or not set(clarification.views) <= view_ids:
                 raise ValueError(f"{key}: give a source correction and valid view references")
@@ -229,6 +246,7 @@ def reconcile(result: dict, resolutions: Resolutions | None = None) -> DrawingMo
                           f"conflicting or unsupported readings {sorted(values)}" if values else "not identified in the drawing"))
     if not dimensions:
         issues.append("No dimension observations are available")
+    needs_value = []
     review_model=DrawingModel(result_id=result["id"],source_hash="",pages=pages,dimensions=dimensions,resolutions=resolutions)
     approvals=review_index(result,review_model)
     for d in dimensions:
@@ -243,7 +261,14 @@ def reconcile(result: dict, resolutions: Resolutions | None = None) -> DrawingMo
             try:
                 d.nominal()
             except ValueError as ex:
-                issues.append(str(ex))
+                needs_value.append((d, str(ex)))
+    # Compound callouts ("12x Ø10.5 (THRU) PCD Ø190") still block a 3D build until a value is chosen, but as ONE item, not one question each.
+    if len(needs_value) <= 2:
+        issues.extend(message for _, message in needs_value)
+    else:
+        examples = ", ".join(f"{d.id} \"{d.text}\"" for d, _ in needs_value[:3])
+        issues.append(f"{len(needs_value)} readings hold several values or none in one callout (e.g. {examples}). A 3D build needs a single value "
+                      "only for the readings a feature uses: correct those on the Review step.")
     return DrawingModel(result_id=result["id"], source_hash=fingerprint({"pages": result["pages"]}),
                         part_name=next((str(p.title_block["name"]) for p in pages if p.title_block.get("name")), ""),
                         pages=pages, dimensions=dimensions, resolutions=resolutions, issues=issues, **metadata)
