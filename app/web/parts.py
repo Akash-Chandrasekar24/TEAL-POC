@@ -115,7 +115,8 @@ def solidworks_status() -> dict:
             pythoncom.CoInitialize()
             try:
                 app = win32com.client.GetActiveObject("SldWorks.Application")
-                out.update(attachable=True, revision=str(app.RevisionNumber()))
+                rev = app.RevisionNumber                                     # late-bound COM: a value, or a method on some builds
+                out.update(attachable=True, revision=str(rev() if callable(rev) else rev))
             finally:
                 pythoncom.CoUninitialize()
         except Exception as ex:                                             # noqa: BLE001 - any COM failure means "not attachable"
