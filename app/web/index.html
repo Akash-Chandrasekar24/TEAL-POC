@@ -575,15 +575,16 @@ function designCard(r) {
     save("section", `${mine[0].group.title} (${mine.length} readings)`);
   };
   const pageNav = el("div", {class:"m-pages", role:"group", "aria-label":"Pages"});
-  const showPage = (pg) => { if (view.navPage === pg) return; view.navPage = pg; view.query = ""; search.value = ""; redraw(); };
+  const showPage = (pg) => { if (view.navPage === pg) return; view.navPage = pg; r.reviewNav = pg; view.query = ""; search.value = ""; redraw(); };
   globalThis.__measurePage = showPage;                             // the drawing's page buttons call this too
   const cleanTitle = (t) => String(t || "").replace(/[\s,;:]+$/, "");
   const drawNav = () => {
     const keys = groupKeys(), first = (k) => inputs.find((i) => i.group.key === k);
     const left = (k) => inputs.filter((i) => i.group.key === k && i.state() !== "verified").length;
     const pages = [...new Set(keys.map((k) => first(k).group.page || 0))];
-    if (view.navPage === undefined && pages.includes(r.reviewPage)) view.navPage = r.reviewPage;
-    if (!pages.includes(view.navPage)) {
+    if (view.navPage === undefined) view.navPage = r.reviewNav === "questions" && !count("open") ? "questions" : pages.includes(r.reviewPage) ? r.reviewPage : undefined;
+    if (view.navPage === "questions" && count("open")) view.navPage = undefined;      // questions open only once every reading is approved
+    if (view.navPage !== "questions" && !pages.includes(view.navPage)) {
       view.navPage = pages.find((pg) => keys.some((k) => (first(k).group.page || 0) === pg && left(k))) ?? pages[0];
       globalThis.__reviewShowPage?.(view.navPage);                  // start the drawing on the same page
       if (view.navPage) r.reviewPage = view.navPage;
@@ -595,6 +596,8 @@ function designCard(r) {
       b.addEventListener("click", () => { showPage(pg); globalThis.__reviewShowPage?.(pg); });
       return b;
     }), qBtn);
+    qBtn.className = `m-navbtn m-qnav m-qlink${view.navPage === "questions" ? " on" : ""}`;
+    qBtn.setAttribute("aria-pressed", String(view.navPage === "questions"));
     nav.replaceChildren(...keys.filter((k) => (first(k).group.page || 0) === view.navPage).map((k) => {
       const t = cleanTitle(first(k).group.title), n = left(k);
       const b = el("button", {type:"button", class:`m-navbtn${n ? "" : " done"}`, title: n ? `${t}: ${n} to approve` : `${t}: approved`},
@@ -606,6 +609,9 @@ function designCard(r) {
   const redraw = () => {
     if (view.tab === null) view.tab = count("open") ? "open" : "all";
     drawNav();
+    const asking = view.navPage === "questions";                       // the questions take the place of the measurement list
+    toolbar.hidden = asking; list.hidden = asking;
+    if (asking) { gate(); return; }
     const here = inputs.filter((i) => (i.group.page || 0) === view.navPage);          // the tab counts are for the page shown
     TABS.forEach(([key, label], n) => {
       const total = key === "all" ? here.length : here.filter((i) => i.state() === key).length;
@@ -662,12 +668,14 @@ function designCard(r) {
     redraw();
   });
   const qBtn = el("button", {type:"button",class:"m-navbtn m-qnav m-qlink",hidden:true});
-  qBtn.addEventListener("click", () => { if (output.scrollIntoView) output.scrollIntoView({ behavior: "smooth", block: "start" }); });
+  const toolbar = el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, expandAll);
+  let qPage = null;                                                 // the page of the first open question: the drawing shows it
+  qBtn.addEventListener("click", () => { view.navPage = "questions"; r.reviewNav = "questions"; redraw(); if (qPage) globalThis.__reviewShowPage?.(qPage); });
   const btn = el("button", { class: "btn secondary", type: "button", text: "Save reviewed measurements" });
   const review = el("div", {class:"m-panel"},
     el("div", {class:"m-approve-row"}, approveAll, btn, undoBtn, el("span", {class:"hint", text:"Approve a section with its own button, or everything at once. You can still send any reading back with ⚑."})),
     el("div", {class:"m-navwrap"}, pageNav, nav),
-    el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, expandAll), list);
+    toolbar, list);
   redraw();
   // From the drawing: hovering a callout highlights its row; clicking it jumps to the row.
   globalThis.__measureFocus = (id, on) => { const row = inputs.find((i) => i.d.id === id)?.row; if (row && row.classList) row.classList.toggle("m-hover", on); };
@@ -694,12 +702,14 @@ function designCard(r) {
       const sp = suggestPanel(r, asks), cards = questionCards(r, asks);
       const pageOf = (c) => c.key ? c.key.slice(1).split(".")[0] : "";
       const pages = [...new Set(cards.map(pageOf).filter(Boolean))].sort((a, b) => a - b);
+      qPage = pages.length ? Number(pages[0]) : null;
       const chips = [["", `All (${cards.length})`], ...pages.map((pg) => [pg, `Page ${pg} (${cards.filter((c) => pageOf(c) === pg).length})`])]
         .map(([pg, label]) => el("button", { type: "button", class: `m-navbtn${pg ? "" : " on"}`, "data-page": pg, text: label }));
       chips.forEach((b, i) => b.addEventListener("click", () => {
         const pg = i ? pages[i - 1] : "";
         chips.forEach((c, j) => { c.className = `m-navbtn${j === i ? " on" : ""}`; });
         cards.forEach((c) => { c.node.hidden = Boolean(pg) && pageOf(c) !== pg; });
+        if (pg) globalThis.__reviewShowPage?.(Number(pg));
       }));
       if (pages.length > 1) output.append(el("nav", { class: "m-nav q-nav", "aria-label": "Questions by page" }, chips));
       if (sp) output.append(sp);
@@ -728,7 +738,7 @@ function designCard(r) {
   gate = () => {
     const open = count("open"), pass = open === 0;
     done();
-    output.hidden = !pass; gateNote.hidden = pass;
+    output.hidden = !pass || (openAsk > 0 && view.navPage !== "questions"); gateNote.hidden = pass;   // questions show under their own tab
     gateNote.textContent = `Open questions appear here once every measurement is approved (${open} still to verify). Use “Approve all measurements” or verify them one by one.`;
     if (!pass) qBtn.hidden = true;
   };
@@ -776,7 +786,8 @@ function designCard(r) {
       if (approving) {                                // every reading approved: saved without a model call; the open questions come next
         r.approvalNote = mode === "undo" ? "Approval undone: the readings are back to how they were before."
           : mode === "section" ? `Approved and saved: ${what}.`
-          : `All ${inputs.length} measurements approved and saved. The open questions are below.`;
+          : `All ${inputs.length} measurements approved and saved. Now answer the open questions.`;
+        if (mode === "approve") r.reviewNav = "questions";
         if (state.result === r) show(r); else { status.textContent = r.approvalNote; renderPlan(artifact); }
         renderAgentChat(r);
         return;
