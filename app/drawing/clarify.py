@@ -28,13 +28,17 @@ Answer every key once; do not add keys that were not asked.'''
 
 
 def open_questions(result: dict, model) -> list[dict]:
-    """The unresolved clarification questions: {key, page, question}. Questions the reviewer already answered are not asked again."""
+    """The unresolved clarification questions: {key, page, question}: exactly the ones the review page lists (same filter as the drawing model),
+    so the AI is never asked about raw OCR flags or plain statements. Questions the reviewer already answered are not asked again."""
+    from .model import is_question
     answered = {c.id for c in model.resolutions.clarifications}
     out = []
     for page in result["pages"]:
-        for i, issue in enumerate((page.get("read") or {}).get("issues", []), 1):
+        read = page.get("read") or {}
+        categories = {c.get("id"): c.get("category") for c in ((read.get("evidence") or {}).get("extraction") or {}).get("callouts", []) if isinstance(c, dict)}
+        for i, issue in enumerate(read.get("issues", []), 1):
             key = f"P{page['no']}.u{i}"
-            if isinstance(issue, str) and key not in answered:
+            if isinstance(issue, str) and key not in answered and is_question(issue, categories):
                 out.append({"key": key, "page": page["no"], "question": issue})
     return out
 

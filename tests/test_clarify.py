@@ -110,3 +110,14 @@ def test_the_worker_action_is_allowed_and_server_returns_proposals_only():
     assert {s["key"] for s in out["suggestions"]} == {"P1.u1", "P1.u2", "P1.u3"} and all(s["page"] == 1 for s in out["suggestions"])
     assert "Nothing is saved" in out["note"]
     assert reconcile(result).resolutions.clarifications == []                        # the model's own state is untouched
+
+
+def test_the_ai_is_asked_only_the_questions_the_page_shows():
+    result = with_questions()
+    read = result["pages"][0]["read"]
+    read["evidence"] = {"extraction": {"callouts": [{"id": "o1", "category": "measurement"}]}}
+    read["issues"] = ["o1: conflict: 120", "No tolerances are printed on this sheet.", "Is the bore blind or through?"]
+    m = reconcile(result)
+    asked = open_questions(result, m)
+    shown = [q for q in m.issues if "unreadable source callout" in q]
+    assert [q["question"] for q in asked] == ["Is the bore blind or through?"] and len(asked) == len(shown) == 1
