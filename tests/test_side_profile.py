@@ -17,7 +17,8 @@ def test_the_side_outline_becomes_heights_above_the_back_face_and_the_volume_bou
     f = prepare(build(60, CLAMP))[1].feature
     spec = f.spec()
     zs = [e[k][2] for e in spec["entities"] for k in ("p1", "p2") if k in e]
-    assert spec["plane"] == {"datum": "top", "offset": -0.045} and spec["end"] == "through_all" and spec["direction"] == [0.0, 1.0, 0.0]
+    assert spec["plane"] == {"datum": "top", "offset": 0.0} and spec["end"] == "blind" and spec["direction"] == [0.0, 1.0, 0.0]
+    assert abs(spec["depth"] - 0.045) < 1e-12 and [s["direction"] for s in f.specs()] == [[0.0, 1.0, 0.0], [-0.0, -1.0, -0.0]]   # one cut each way
     assert abs(min(zs) + 0.005) < 1e-12 and abs(max(zs) - 0.065) < 1e-12                       # the box: 5 mm round the 0..60 side box
     side_area = 200 * 32 + (60 + 20) / 2 * 28                                                     # the 32 band + the raised middle (trapezoid)
     assert abs(f.removed_bound_mm3() - (200 * 60 - side_area) * 80) < 1e-6

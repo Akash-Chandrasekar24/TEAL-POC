@@ -180,7 +180,7 @@ class SweptPassage:
         return sum(self.piece_bounds_mm3())
 
     def expected(self) -> Expect:
-        return Expect(bound_mm3=self.bound_mm3(), bodies=1, expect_doc="at most section x centreline length: the passage may run partly outside material")
+        return Expect(bound_mm3=self.bound_mm3(), bodies=1)
 
     def expected_delta_mm3(self) -> float:
         return (-1 if self.operation == "cut" else 1) * self.bound_mm3()
@@ -191,7 +191,7 @@ class SweptPassage:
         for i, (spec, b) in enumerate(zip(specs, bounds)):
             label = self.label if len(specs) == 1 else f"{self.label} {i + 1}/{len(specs)}"
             v = await ctx.verifier.run_step(label, lambda spec=spec: ctx.sw.geometry("ext_sweep", spec),
-                                            Expect(bound_mm3=b, bodies=1, expect_doc="at most section x centreline length"))
+                                            Expect(bound_mm3=b, bodies=1))
             res.verdicts.append(v)
             if not v.ok:
                 break
@@ -409,7 +409,8 @@ class SideProfileCut:
         f = factor(self.unit)
         W, H, T = self.size
         m = self.MARGIN
-        y0 = -(H / 2 + m) * f                                                   # the Top datum moved just below the part: cut up through it
+        y0 = 0.0                                                                # the Top datum through the part, cut both ways (measured: a plane BELOW
+                                                                                # the part with through_all makes SolidWorks refuse the cut)
         box = [(-W / 2 - m, -m), (W / 2 + m, -m), (W / 2 + m, T + m), (-W / 2 - m, T + m)]
         loop = [{"kind": "line", "x1": a[0], "y1": a[1], "x2": b[0], "y2": b[1]} for a, b in zip(box, box[1:] + box[:1])]
         # the Top datum's sketch y runs along world -Z: heights z go in as -z, and an arc's turning sense flips with that mirror
@@ -417,17 +418,28 @@ class SideProfileCut:
                             **({"dir": -seg["dir"]} if "dir" in seg else {})}
         frame = PlaneFrame("top")
         ents = ext_entities([flip(seg) for seg in loop + list(self.outline)], frame, y0)
+        half = (H / 2 + m) * f
         return {"operation": "cut", "plane": {"datum": "top", "offset": y0}, "entities": ents, "direction": datum_normal(frame),
-                "end": "through_all", "depth": 0.0}
+                "end": "blind", "depth": half}
+
+    def specs(self) -> list[dict]:
+        """Two cuts from the mid plane, one each way: a cut's depth_back is not applied (measured: only half the width was cut)."""
+        one = self.spec()
+        return [one, {**one, "direction": [-v for v in one["direction"]]}]
 
     def expected(self) -> Expect:
-        return Expect(bound_mm3=self.removed_bound_mm3(), bodies=1, expect_doc="at most the base's side box minus the side outline, times its width")
+        return Expect(bound_mm3=self.removed_bound_mm3(), bodies=1)
 
     def expected_delta_mm3(self) -> float:
         return -self.removed_bound_mm3()
 
     async def apply(self, ctx: FeatureContext) -> FeatureResult:
-        spec = self.spec()
+        first, second = self.specs()
         res = FeatureResult(self.NAME)
-        res.verdicts.append(await ctx.verifier.run_step(self.label, lambda: ctx.sw.geometry("ext_sketch_extrude", spec), self.expected()))
+
+        async def both():
+            r = await ctx.sw.geometry("ext_sketch_extrude", first)
+            return r if not r.ok else await ctx.sw.geometry("ext_sketch_extrude", second)
+
+        res.verdicts.append(await ctx.verifier.run_step(self.label, both, self.expected()))
         return res
