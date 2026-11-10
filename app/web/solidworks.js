@@ -30,12 +30,13 @@ function doubtSection(r, blocked, post) {
 // ---- THE SolidWorks button: one uninterrupted flow (build lists -> AI decides any doubt -> every part built -> one assembly)
 const FLOW_ITEM = { to_prepare: "Waiting", preparing: "Writing its build list…", listed: "Build list ready", queued: "Waiting for SolidWorks", building: "Building in SolidWorks…",
   awaiting_review: "Built", accepted: "Built", exported: "Built", not_buildable: "Not built", list_failed: "Not built", build_failed: "Not built",
-  needs_human: "Not built", awaiting_fix_approval: "Not built", llm_failed: "Not built" };
+  needs_human: "Not built", awaiting_fix_approval: "Not built", llm_failed: "Not built", stopped: "Stopped (server restarted)" };
 
 function flowBox(r, data, reload, status) {
   const batch = data.batch, sw = data.solidworks || {};
   const running = batch && batch.flow === "one_button" && ["preparing", "resolving", "building", "assembling"].includes(batch.phase);
-  const start = el("button", { type: "button", class: "btn build-all", text: batch?.flow === "one_button" && batch.phase === "done" ? "Build in SolidWorks again" : "Build in SolidWorks",
+  const stopped = batch?.flow === "one_button" && batch.phase === "interrupted";
+  const start = el("button", { type: "button", class: "btn build-all", text: batch?.flow === "one_button" && batch.phase === "done" ? "Build in SolidWorks again" : stopped ? "Continue: build in SolidWorks" : "Build in SolidWorks",
     disabled: running || !sw.ready });
   start.addEventListener("click", async () => {
     start.disabled = true;
@@ -43,7 +44,7 @@ function flowBox(r, data, reload, status) {
     catch (error) { status.textContent = error.message; start.disabled = false; }
   });
   const items = (batch?.flow === "one_button" ? batch.items : []) || [];
-  const phaseOf = (it) => it.job?.phase || it.status;
+  const phaseOf = (it) => { const ph = it.job?.phase || it.status; return stopped && ["to_prepare", "preparing", "listed", "queued", "building"].includes(ph) ? "stopped" : ph; };
   const built = items.filter((it) => ["awaiting_review", "accepted", "exported"].includes(phaseOf(it)));
   const rows = items.map((it) => {
     const ph = phaseOf(it), ok = ["awaiting_review", "accepted", "exported"].includes(ph), bad = FLOW_ITEM[ph] === "Not built";
@@ -62,6 +63,7 @@ function flowBox(r, data, reload, status) {
       el("b", { text: batch.phase === "preparing" ? "Preparing every part" : batch.phase === "assembling" ? "Assembling" : `Building in SolidWorks: ${doneN} of ${items.length}` }))
     : el("p", { class: "hint", text: !sw.ready ? `SolidWorks is not ready: ${sw.detail || ""}` : batch?.flow === "one_button" && batch.phase === "done"
       ? `Done: ${built.length} of ${items.length} part${items.length === 1 ? "" : "s"} built.${batch.error ? " " + batch.error : ""}`
+      : stopped ? "The last run stopped because the server restarted. Press Continue: parts already built are kept, the rest are built now."
       : "One click builds the whole drawing: the build steps for every part, the parts in SolidWorks and, for several parts, one assembly. No further questions: the doubts were settled on the Review page." });
   const unanswered = r.openQuestions || 0;
   const warn = unanswered && !running ? el("p", { class: "flow-warn", text: `${unanswered} open question${unanswered === 1 ? " was" : "s were"} not answered on the Review page. ` +
@@ -399,7 +401,7 @@ function pollJob(r) {
 function workflowCard(r) {
   const job = r.workflowJob;
   const card = el("section", {class:"card pad", "aria-live":"polite"}, el("h2", {text:"SolidWorks and final review"}));
-  if (!job) { card.append(el("p", {text:"Nothing is building yet. Resolve the open questions and approve the feature plan on the Review step to start SolidWorks."})); return card; }
+  if (!job) { card.append(el("p", {text:"Nothing is building yet. Press Build in SolidWorks above to start."})); return card; }
   const labels = {awaiting_approval:"Ready for your approval", building:"Building in SolidWorks…", resuming:"Continuing…", exporting:"Preparing confirmed exports…",
     awaiting_fix_approval:"SolidWorks needs your confirmation", awaiting_review:"Compare your drawing with the 3D model", accepted:"Model confirmed — ready to export", exported:"Exports ready", needs_human:"Paused for your input", changes_requested:"Corrections requested", llm_failed:"Model call paused", aborted:"Job stopped"};
   card.append(el("p", {class:"workflow-status", text:labels[job.phase] || job.phase}));
