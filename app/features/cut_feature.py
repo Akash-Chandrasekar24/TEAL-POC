@@ -308,7 +308,13 @@ class CutFeature:
             return res
         res.notes.append(f"measured volume change {v.measured_delta_mm3:.2f} mm3"
                          + (f" (upper bound {-v.bound_mm3:.2f})" if v.bound_mm3 is not None else ""))
-        faces, edges = await read_geometry(ctx.sw)
+        if any(seg["kind"] == "line" for segs in self.shape_segments_m() for seg in segs):
+            faces, edges = await read_geometry(ctx.sw)
+        else:                                                                   # round holes only: their walls are faces, no edge list needed
+            fa = await ctx.sw.analyze_model("faces")                           # (an edge list took ~40 s on a 42-tooth gear)
+            if not fa.ok:
+                raise RuntimeError(f"cannot read geometry: {fa.text[:200]}")
+            faces, edges = fa.analysis_json()["faces"], []
         res.probes += self.probes(faces, edges, frame)
         return res
 
