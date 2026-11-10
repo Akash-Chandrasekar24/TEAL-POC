@@ -148,3 +148,14 @@ OCR evidence, exact-string scores and immutable S2 artifacts.
 Use `--transport anchored` or `--transport split` for the other explicit
 experiments. R2 retains its verbose baseline. Run benchmark jobs sequentially
 for a controlled provider-load comparison.
+
+## 2026-11-10: tiled reading tried and rejected (Domo queues parallel calls)
+
+Tried: each page as a layout call + a feature survey + one call per tile (6 tiles on an A3 page at
+300 DPI, so near full resolution), all at the same time, then merged. Water Pump PDF (3 pages, 24 calls):
+after 7 minutes it had not finished (the whole-page read takes about 3.5 minutes). Single small tile
+replies (about 2k output tokens) took 50 s when sent first and 200-310 s once many calls were in
+flight: Domo answers roughly one call every 15-30 s however many are sent, so what matters is the
+total tokens per page, and tiling added tokens (every tile spends about 2k tokens thinking).
+Removed. Two or three calls in flight (one per page) behaved normally in earlier runs.
+Also kept: PDF pages saved with PNG compress_level 6 instead of optimize (about 2.5 s a page faster).

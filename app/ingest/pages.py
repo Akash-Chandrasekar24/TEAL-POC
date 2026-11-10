@@ -15,7 +15,7 @@ from PIL import Image
 from app.cache import Cache, key, sha256
 from app.llm.base import FilePart, LLMError
 
-INGEST_V = 1                   # bump when the way a file becomes pages changes
+INGEST_V = 2                   # bump when the way a file becomes pages changes
 PDF_DPI = 300
 LAYER = "pages"
 _MODEL_MIMES = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}   # what every model client accepts as is
@@ -58,7 +58,7 @@ def _render_pdf(data: bytes, dpi: int) -> list[bytes]:
         for i in range(len(doc)):
             im = doc[i].render(scale=dpi / 72).to_pil()
             buf = io.BytesIO()
-            im.save(buf, "PNG", optimize=True)
+            im.save(buf, "PNG", compress_level=6)     # optimize=True took ~2.5 s a page for ~5% smaller files
             out.append(buf.getvalue())
     finally:
         doc.close()
