@@ -221,3 +221,29 @@ def test_a_part_with_no_view_is_read_from_the_assembly_views_and_the_designer_ca
             server.confirm_part_list("abcdef123456", "stator"); assert False
         except ValueError as ex:
             assert "no 3D steps" in str(ex)
+
+
+def test_let_ai_handle_every_doubt_confirms_at_once_or_rewrites_in_the_background_without_asking_again():
+    result = {"id": "abcdef123456", "pages": [page(1, ["01. GEAR", "02. SHAFT", "03. COVER"])], "drawing_model": {"issues": []}}
+    asked = {**good(), "needs_human": ["Gear width: assumed 20?"]}
+    asked["items"][0]["uncertain"] = True
+    calls = []
+    def fake_create(rid, part_id, llm_name=None, client=None, answers=None, work_it_out=False):
+        calls.append((part_id, answers, work_it_out))
+        return parts.save_part_list(server.PART_LISTS, rid, {"id": part_id, "name": part_id, "item": "", "quantity": 1},
+                                    {**good(), "needs_human": ["Still a doubt?"]}, "ai")          # the AI asks again: it is confirmed anyway
+    class Now:
+        def submit(self, fn, *a):
+            fn(*a)
+    with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), patch.object(server, "_BATCH_POOL", Now()), \
+         patch.object(server, "create_part_list", fake_create), patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)):
+        p = lambda pid: {"id": pid, "name": pid, "item": "", "quantity": 1}
+        parts.save_part_list(Path(d), "abcdef123456", p("gear"), asked, "ai")                     # only doubts: confirmed, no model call
+        parts.save_part_list(Path(d), "abcdef123456", p("shaft"), {"list_version": "1", "unit": "mm", "projection": "third", "items": [],
+                                                                    "needs_human": ["Shaft length?"]}, "ai")   # no steps: the AI rewrites it
+        server.resolve_with_ai("abcdef123456", ["gear", "shaft"])
+        lists = parts.latest_lists(Path(d), "abcdef123456")
+        assert [c[0] for c in calls] == ["shaft"] and calls[0][1] == [{"question": "Shaft length?", "answer": "AI decides"}] and calls[0][2] is True
+        assert lists["gear"]["source"] == "designer" and lists["gear"]["check"]["status"] == "ready"
+        assert lists["shaft"]["source"] == "designer" and lists["shaft"]["check"]["status"] == "ready"
+        assert server.load_batch("abcdef123456")["phase"] == "awaiting_approval"                 # still waits for the build approval

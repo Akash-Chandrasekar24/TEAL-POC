@@ -20,7 +20,7 @@ const BATCH_ITEM = { to_prepare: "Waiting for its build list", preparing: "Writi
 function doubtSection(r, blocked, post) {
   const panels = blocked.map((p) => ({ p, panel: resolvePanel(r, p, post) }));
   const all = el("button", { type: "button", class: "btn", text: `Let AI handle every doubt (${blocked.length} part${blocked.length === 1 ? "" : "s"})` });
-  all.addEventListener("click", async () => { all.disabled = true; for (const { panel } of panels) await panel.handleAll(); });
+  all.addEventListener("click", () => { all.disabled = true; post("/api/parts/ai-resolve", { part_ids: blocked.map((p) => p.id) }, "Handing every doubt to the AI"); });
   return el("div", { class: "doubt-section" },
     el("div", { class: "doubt-head" }, el("div", {}, el("b", { text: `${blocked.length} part${blocked.length === 1 ? "" : "s"} with doubts` }),
       el("small", { class: "hint", text: " Answer a doubt yourself, or let the AI decide. Every size the AI decides is marked ASSUMED, and nothing is built until you approve." })), all),
@@ -127,8 +127,7 @@ const AI_DECIDES = "AI decides";
 function applyDoubts(part, rows, post) {
   const mine = rows.filter((x) => x.mode === "human" && x.box.value.trim()).map((x) => ({ question: x.d.text, answer: x.box.value.trim() }));
   const ai = rows.filter((x) => x.mode === "ai").map((x) => ({ question: x.d.text, answer: AI_DECIDES }));
-  const onlyConfirm = !mine.length && rows.every((x) => x.d.kind === "question" || x.d.kind === "uncertain");
-  if (onlyConfirm) return post("/api/parts/confirm", { part_id: part.id, answers: ai }, `Confirming ${part.name}: the AI's sizes are kept`);
+  if (!mine.length) return post("/api/parts/ai-resolve", { part_ids: [part.id] }, `Handing ${part.name}'s doubts to the AI`);   // all to the AI: background
   return post("/api/parts/create", { part_id: part.id, answers: [...mine, ...ai], work_it_out: ai.length > 0 }, `Rewriting the build list for ${part.name}`);
 }
 
@@ -153,7 +152,6 @@ function resolvePanel(r, part, post) {
   });
   sync();
   const panel = el("div", { class: "resolve" }, el("ol", { class: "doubts" }, rows.map((x) => x.li)), el("div", { class: "part-actions" }, apply, progress));
-  panel.handleAll = () => { rows.forEach((x) => { x.mode = "ai"; x.box.hidden = true; }); return applyDoubts(part, rows, post); };
   return panel;
 }
 

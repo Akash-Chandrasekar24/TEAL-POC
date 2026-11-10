@@ -694,6 +694,55 @@ def start_batch(rid, llm_name=None):
     return batch
 
 
+_DOUBTS_ONLY = re.compile(r"^needs_human is not empty|^uncertain items")
+
+
+def _only_doubts(art) -> bool:
+    """The list has 3D steps and nothing blocks it but the AI's questions / assumed sizes: confirming it is enough."""
+    return bool(art and art["draft"].get("items")) and art["check"]["status"] == "needs_information" \
+        and all(_DOUBTS_ONLY.search(b) for b in art["check"]["blocking"])
+
+
+def _ai_decides(art) -> list[dict]:
+    return [{"question": q, "answer": "AI decides"} for q in (art or {}).get("draft", {}).get("needs_human", [])]
+
+
+def resolve_with_ai(rid, part_ids, llm_name=None):
+    """The designer handed every doubt of these parts to the AI. A list that only waits on its questions / assumed sizes is confirmed at once
+    (no model call); the others are rewritten by the AI in the background, side by side, and confirmed as written. The build still waits for
+    the designer's approval."""
+    from app.web.parts import detect_parts, latest_lists
+    result = result_with_design(rid)
+    lists = latest_lists(PART_LISTS, rid)
+    known = {p["id"]: p for p in detect_parts(result)}
+    wanted = [pid for pid in part_ids if pid in known]
+    if not wanted:
+        raise ValueError("None of those parts is on this drawing")
+    rewrite = []
+    for pid in wanted:
+        art = lists.get(pid)
+        if _only_doubts(art):
+            confirm_part_list(rid, pid, _ai_decides(art))
+        elif not (art and art["check"]["status"] == "ready"):
+            rewrite.append(pid)
+    with _BATCH_LOCK:
+        current = load_batch(rid)
+        if current and current.get("phase") in ("preparing", "building") and current["id"] in _ACTIVE:
+            raise ValueError("Build lists are being written already: wait for them to finish")
+        if not rewrite:
+            batch = {**(current or {"id": uuid.uuid4().hex[:12], "result_id": rid, "items": [], "llm": llm_name}), "phase": "awaiting_approval"}
+            batch["items"] = [{"part_id": p["id"], "name": p["name"], "status": "listed"} for p in known.values()]
+            _save_batch(rid, batch)
+            return batch
+        items = [{"part_id": p["id"], "name": p["name"], **({"status": "to_prepare", "ai_decides": True, "answers": _ai_decides(lists.get(p["id"]))}
+                                                             if p["id"] in rewrite else {"status": "listed"})} for p in known.values()]
+        batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name}
+        _save_batch(rid, batch)
+        _ACTIVE.add(batch["id"])
+    _BATCH_POOL.submit(_prepare_batch, rid, batch["id"], llm_name)
+    return batch
+
+
 def _prepare_batch(rid, bid, llm_name):
     batch = load_batch(rid)
 
@@ -702,7 +751,17 @@ def _prepare_batch(rid, bid, llm_name):
             item["status"] = "preparing"
             _save_batch(rid, batch)
         try:
-            create_part_list(rid, item["part_id"], llm_name)
+            if item.get("ai_decides"):                                           # the designer handed this part's doubts to the AI
+                art = create_part_list(rid, item["part_id"], llm_name, answers=item.get("answers"), work_it_out=True)
+                wrong = [b for b in art["check"]["blocking"] if not _DOUBTS_ONLY.search(b)]
+                if wrong or not art["draft"].get("items"):                       # the checker refused the geometry: one retry with its words
+                    fix = [{"question": "The offline checker refused your last build list. Fix exactly this and keep everything else",
+                            "answer": "; ".join(wrong) or "the list had no 3D steps"}]
+                    art = create_part_list(rid, item["part_id"], llm_name, answers=(item.get("answers") or []) + fix, work_it_out=True)
+                if _only_doubts(art):
+                    confirm_part_list(rid, item["part_id"], _ai_decides(art))
+            else:
+                create_part_list(rid, item["part_id"], llm_name)
             done = {"status": "listed"}
         except Exception as ex:                                                  # noqa: BLE001 - recorded per part; the batch goes on
             done = {"status": "list_failed", "detail": f"{type(ex).__name__}: {ex}"}
@@ -1025,7 +1084,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/parts/confirm", "/api/parts/build-all", "/api/parts/approve-all", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
+        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/parts/confirm", "/api/parts/ai-resolve", "/api/parts/build-all", "/api/parts/approve-all", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
             return self._json(404, {"error": "not found"})
         size = int(self.headers.get("Content-Length") or 0)
         if not 0 < size <= MAX_BODY:
@@ -1063,6 +1122,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, job)
                 decision = {key: body[key] for key in ("review_hash", "compared_drawing", "checked_measurements", "message", "params", "accepted_gaps") if key in body}
                 return self._json(200, WORKFLOW.action(str(body.get("job_id", "")), body.get("revision"), str(body.get("action", "")), **decision))
+            if self.path == "/api/parts/ai-resolve":
+                if not self._same_origin_json():
+                    return self._json(403, {"error": "Start this from the drawing workspace"})
+                ids = body.get("part_ids") if isinstance(body.get("part_ids"), list) else []
+                return self._json(200, resolve_with_ai(str(body.get("result_id", "")), [str(i) for i in ids], llm))
             if self.path in ("/api/parts/build-all", "/api/parts/approve-all"):
                 if not self._same_origin_json():
                     return self._json(403, {"error": "Start builds from this drawing workspace"})
