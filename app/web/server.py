@@ -15,6 +15,7 @@ import json
 import os
 import re
 import threading
+from datetime import datetime, timezone
 import time
 import uuid
 from functools import lru_cache
@@ -638,7 +639,119 @@ def parts_overview(rid: str) -> dict:
     lists = latest_lists(PART_LISTS, rid)
     parts = [{**{k: v for k, v in p.items() if k != "views"}, "views": [{"page": v["page"], "no": v["no"], "label": v["label"]} for v in p["views"]],
               "list": lists.get(p["id"])} for p in detect_parts(result)]
-    return {"result_id": rid, "parts": parts, "solidworks": solidworks_status()}
+    batch = load_batch(rid)
+    if batch:                                                                     # live status of every part job the batch started
+        for item in batch["items"]:
+            if item.get("job_id"):
+                try:
+                    item["job"] = WORKFLOW.status(item["job_id"])
+                except (OSError, ValueError):
+                    pass
+    return {"result_id": rid, "parts": parts, "solidworks": solidworks_status(), "batch": batch}
+
+
+# ---------------- "Build everything": prepare every build list, ONE human approval, then build part after part
+_BATCH_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cad-batch")       # one SolidWorks session: one build at a time
+_BATCH_LOCK = threading.Lock()
+
+
+def _batch_path(rid):
+    if not _ID.fullmatch(rid):
+        raise ValueError("invalid drawing result id")
+    return PART_LISTS / rid / "batch.json"
+
+
+def load_batch(rid):
+    path = _batch_path(rid)
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def _save_batch(rid, batch):
+    batch["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    write_json(_batch_path(rid), batch)
+
+
+def start_batch(rid, llm_name=None):
+    """Step 1 of "Build everything": write a build list for every part that has none (AI), then wait for the human's single approval."""
+    from app.web.parts import detect_parts, latest_lists
+    result = result_with_design(rid)
+    if any("human review required" in q or "confirm this" in q for q in result["drawing_model"].get("issues", [])):
+        raise ValueError("Approve the measurements on the Review step first")
+    with _BATCH_LOCK:
+        current = load_batch(rid)
+        if current and current.get("phase") in ("preparing", "building"):
+            return current
+        lists = latest_lists(PART_LISTS, rid)
+        items = [{"part_id": p["id"], "name": p["name"], "kind": p["kind"], "status": "bought" if p["kind"] == "buy" else
+                  ("listed" if lists.get(p["id"]) else "to_prepare" if p["views"] else "no_views")} for p in detect_parts(result)]
+        batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name}
+        _save_batch(rid, batch)
+    _BATCH_POOL.submit(_prepare_batch, rid, batch["id"], llm_name)
+    return batch
+
+
+def _prepare_batch(rid, bid, llm_name):
+    batch = load_batch(rid)
+    for item in batch["items"]:
+        if item["status"] != "to_prepare":
+            continue
+        item["status"] = "preparing"
+        _save_batch(rid, batch)
+        try:
+            create_part_list(rid, item["part_id"], llm_name)
+            item["status"] = "listed"
+        except Exception as ex:                                                  # noqa: BLE001 - recorded per part; the batch goes on
+            item.update(status="list_failed", detail=f"{type(ex).__name__}: {ex}")
+        _save_batch(rid, batch)
+    batch["phase"] = "awaiting_approval"
+    _save_batch(rid, batch)
+
+
+def approve_batch(rid, bid, accepted):
+    """Step 2: the human approved the summary (one click). Build every ready part, one after the other. accepted: {part_id: [gap ids]}."""
+    from app.web.parts import latest_lists, solidworks_status
+    with _BATCH_LOCK:
+        batch = load_batch(rid)
+        if not batch or batch["id"] != bid or batch["phase"] != "awaiting_approval":
+            raise ValueError("This build summary changed. Refresh it before approving.")
+        sw = solidworks_status()
+        if not sw["ready"]:
+            raise ValueError(f"SolidWorks is not ready: {sw['detail']}")
+        lists = latest_lists(PART_LISTS, rid)
+        for item in batch["items"]:
+            art = lists.get(item["part_id"])
+            if item["kind"] == "buy" or not art:
+                continue
+            if art["check"]["status"] != "ready":
+                item.update(status="not_buildable", detail="; ".join(art["check"]["blocking"]))
+                continue
+            gaps = [u["id"] for u in art["check"]["unsupported"]]
+            if set(gaps) - set((accepted or {}).get(item["part_id"], [])):
+                item.update(status="not_approved", detail="Its not-modelled items were not accepted")
+                continue
+            item.update(status="queued", list_id=art["id"], accepted_gaps=gaps)
+        batch["phase"] = "building"
+        _save_batch(rid, batch)
+    _BATCH_POOL.submit(_build_batch, rid, bid)
+    return batch
+
+
+def _build_batch(rid, bid):
+    batch = load_batch(rid)
+    for item in batch["items"]:
+        if item["status"] != "queued":
+            continue
+        item["status"] = "building"
+        _save_batch(rid, batch)
+        try:
+            job = WORKFLOW.create(rid, item["list_id"])
+            job = WORKFLOW.action(job["id"], job["revision"], "build", accepted_gaps=item["accepted_gaps"])
+            item.update(status=job["phase"], job_id=job["id"], detail=job.get("detail") or "")
+        except Exception as ex:                                                  # noqa: BLE001
+            item.update(status="build_failed", detail=f"{type(ex).__name__}: {ex}")
+        _save_batch(rid, batch)
+    batch["phase"] = "done"
+    _save_batch(rid, batch)
 
 
 def _part(result: dict, part_id: str) -> dict:
@@ -876,7 +989,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
+        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/parts/build-all", "/api/parts/approve-all", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
             return self._json(404, {"error": "not found"})
         size = int(self.headers.get("Content-Length") or 0)
         if not 0 < size <= MAX_BODY:
@@ -914,6 +1027,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, job)
                 decision = {key: body[key] for key in ("review_hash", "compared_drawing", "checked_measurements", "message", "params", "accepted_gaps") if key in body}
                 return self._json(200, WORKFLOW.action(str(body.get("job_id", "")), body.get("revision"), str(body.get("action", "")), **decision))
+            if self.path in ("/api/parts/build-all", "/api/parts/approve-all"):
+                if not self._same_origin_json():
+                    return self._json(403, {"error": "Start builds from this drawing workspace"})
+                rid = str(body.get("result_id", ""))
+                if self.path.endswith("/build-all"):
+                    return self._json(200, start_batch(rid, llm))
+                accepted = body.get("accepted_gaps") if isinstance(body.get("accepted_gaps"), dict) else {}
+                return self._json(200, approve_batch(rid, str(body.get("batch_id", "")), accepted))
             if self.path in ("/api/parts/create", "/api/parts/upload"):
                 if not self._same_origin_json():
                     return self._json(403, {"error": "Create build lists from this drawing workspace"})

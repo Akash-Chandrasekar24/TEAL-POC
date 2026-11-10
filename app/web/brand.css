@@ -436,3 +436,19 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 .part-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:8px}
 .part-actions .btn{width:auto;margin:0}
 .part-why{color:var(--muted);font-size:11px}
+
+/* ---- build everything ---- */
+.batch-box{margin:0 0 14px;padding:14px 16px;border-radius:16px;background:linear-gradient(135deg,#f6f0fa,#fff6ee);border:1px solid #e3d5ec}
+.batch-box .hint{margin:0 0 10px}
+.btn.build-all{width:auto;margin:0;padding:12px 22px;font-size:14px}
+.batch-box h4{margin:0 0 6px;font-size:15px}
+.batch-progress{display:flex;align-items:center;gap:8px;font-size:13px}
+.batch-list{margin:10px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.batch-item{line-height:1.5}.batch-item span{margin-left:8px;color:var(--muted)}
+.batch-item small{display:block;color:#8a4a12}
+.batch-item.awaiting_review span,.batch-item.accepted span,.batch-item.exported span,.batch-item.listed span{color:#2e7d50;font-weight:600}
+.batch-item.building span,.batch-item.preparing span{color:var(--brand);font-weight:600}
+.batch-item .m-link{margin-left:6px}
+.batch-ready{margin:6px 0;padding-left:18px;font-size:12.5px}
+.batch-box .part-gaps ul{margin:4px 0 6px;padding-left:18px}
+.batch-box .part-gaps label{font-weight:600;color:var(--brand)}

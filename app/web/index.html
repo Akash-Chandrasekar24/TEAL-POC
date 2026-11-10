@@ -1414,14 +1414,88 @@ function suggestPanel(r, questions) {
   return host;
 }
 
+// ---- "Build everything in SolidWorks": one button -> build lists for every part -> ONE approval -> every part built in turn
+const BATCH_ITEM = { to_prepare: "Waiting for its build list", preparing: "Writing its build list…", listed: "Build list ready", list_failed: "Build list failed",
+  no_views: "No views on the sheet", bought: "Bought part", queued: "Queued", building: "Building in SolidWorks…", awaiting_review: "Built: compare it with the drawing",
+  accepted: "Accepted", exported: "Exported", awaiting_fix_approval: "Needs your OK for a fix", awaiting_approval: "Stopped before SolidWorks", needs_human: "Needs your attention",
+  llm_failed: "Model unavailable: retry", build_failed: "Build failed", not_buildable: "Not buildable yet", not_approved: "Not approved" };
+
+function batchBox(r, data, reload, status) {
+  const batch = data.batch, sw = data.solidworks || {};
+  const post = async (path, body) => {
+    try { await workflowRequest(path, { result_id: r.id, llm: ($("#llm") && $("#llm").value) || r.llm, ...body }); await reload(); }
+    catch (error) { status.textContent = error.message; }
+  };
+  const start = el("button", { type: "button", class: "btn build-all", text: "Build everything in SolidWorks",
+    onclick: () => { start.disabled = true; post("/api/parts/build-all", {}); } });
+  const items = (batch?.items || []).map((it) => {
+    const phase = it.job?.phase || it.status;
+    const row = el("li", { class: `batch-item ${phase}` }, el("b", { text: it.name }), el("span", { text: BATCH_ITEM[phase] || phase }));
+    if (it.detail && !["listed", "queued"].includes(phase)) row.append(el("small", { text: it.detail }));
+    if (it.job) row.append(el("button", { type: "button", class: "m-link", text: phase === "awaiting_review" ? "Compare and accept" : "Open",
+      onclick: () => { r.workflowJob = it.job; window.dispatchEvent(new CustomEvent("studio:job", { detail: { job: it.job } })); show(r); window.studioNavigate?.(3); pollJob(r); } }));
+    return row;
+  });
+  const list = items.length ? el("ol", { class: "batch-list" }, items) : null;
+  if (!batch || batch.phase === "done") {
+    const done = batch?.phase === "done";
+    return el("div", { class: "batch-box" },
+      el("p", { class: "hint", text: done ? "Last run finished. Open each built part to compare it with the drawing; start again after changing build lists." :
+        "One button: the AI writes a build list for every part that has none, you approve all of them once, then SolidWorks builds the parts one after another." }),
+      el("div", { class: "part-actions" }, start), list);
+  }
+  if (batch.phase === "preparing" || batch.phase === "building") {
+    const total = batch.items.filter((it) => batch.phase === "preparing" ? ["to_prepare", "preparing", "listed", "list_failed"].includes(it.status) && it.kind !== "buy"
+                                                                          : it.list_id).length;
+    const now = batch.items.find((it) => ["preparing", "building"].includes(it.status));
+    const doneN = batch.items.filter((it) => batch.phase === "preparing" ? ["listed", "list_failed"].includes(it.status) && it.kind !== "buy" : it.list_id && it.status !== "queued" && it.status !== "building").length;
+    return el("div", { class: "batch-box running" }, el("div", { class: "batch-progress" }, el("span", { class: "spinner", "aria-hidden": "true" }),
+      el("b", { text: batch.phase === "preparing" ? `Writing build lists: ${doneN} of ${total}` : `Building in SolidWorks: ${doneN} of ${total}` }),
+      now ? el("span", { text: ` · ${now.name}` }) : null), list);
+  }
+  // awaiting_approval: the single human approval for the whole sheet
+  const ready = (data.parts || []).filter((p) => p.kind !== "buy" && p.list?.check?.status === "ready");
+  const blocked = (data.parts || []).filter((p) => p.kind !== "buy" && !(p.list?.check?.status === "ready"));
+  const gaps = ready.flatMap((p) => (p.list.check.unsupported || []).map((u) => ({ part: p, u })));
+  const accept = el("input", { type: "checkbox", "aria-label": "Accept every not-modelled item" });
+  const approve = el("button", { type: "button", class: "btn", text: `Approve all and build in SolidWorks (${ready.length} part${ready.length === 1 ? "" : "s"})` });
+  const why = el("small", { class: "part-why" });
+  const sync = () => {
+    approve.disabled = !ready.length || !sw.ready || (gaps.length && !accept.checked);
+    why.textContent = !ready.length ? "No part has a buildable list yet." : !sw.ready ? `SolidWorks is not ready: ${sw.detail || ""}` : gaps.length && !accept.checked ? "Tick the box to accept the not-modelled items above." : "";
+  };
+  accept.addEventListener("change", sync); sync();
+  approve.addEventListener("click", () => {
+    approve.disabled = true;
+    const accepted = Object.fromEntries(ready.map((p) => [p.id, (p.list.check.unsupported || []).map((u) => u.id)]));
+    post("/api/parts/approve-all", { batch_id: batch.id, accepted_gaps: accepted });
+  });
+  return el("div", { class: "batch-box approve" },
+    el("h4", { text: "Approve the build" }),
+    el("p", { class: "hint", text: `${ready.length} part${ready.length === 1 ? "" : "s"} will be built in SolidWorks, one after another. You compare each finished model with the drawing in Build & Verify.` }),
+    el("ul", { class: "batch-ready" }, ready.map((p) => el("li", {}, el("b", { text: p.name }), ` · ${(p.list.draft.items || []).length} features`))),
+    gaps.length ? el("div", { class: "part-gaps" }, el("b", { text: `Not modelled (${gaps.length})` }), el("ul", {}, gaps.map(({ part, u }) => el("li", { text: `${part.name}: ${u.text}` }))),
+      el("label", {}, accept, " I accept every not-modelled item listed above")) : null,
+    blocked.length ? el("details", { class: "part-features" }, el("summary", { text: `${blocked.length} part${blocked.length === 1 ? "" : "s"} will not be built yet` }),
+      el("ul", {}, blocked.map((p) => el("li", { text: `${p.name}: ${p.list ? (p.list.check.blocking || []).join("; ") || p.list.check.status : p.views.length ? "no build list" : "no views on the sheet"}` })))) : null,
+    el("div", { class: "part-actions" }, approve, why),
+    el("div", { class: "part-actions" }, el("button", { type: "button", class: "m-link", text: "Start again", onclick: () => post("/api/parts/build-all", {}) })));
+}
+
 // ---- Parts on this sheet: a build list per part, then the existing approval / build / review / export path
 const PART_STATUS = { ready: ["ok", "Build list ready"], needs_information: ["warn", "Needs information"], invalid: ["warn", "Build list not valid"], stopped: ["warn", "Not buildable yet"] };
 
 function partsPanel(r) {
   const host = el("section", { class: "parts-panel", "aria-label": "Parts on this sheet" });
-  const load = async () => {
-    host.replaceChildren(el("p", { class: "hint", text: "Finding the parts on this sheet…" }));
-    try { render(await (await fetch(`/api/parts/${r.id}`)).json()); }
+  let timer = null;
+  const load = async (quiet) => {
+    if (!quiet) host.replaceChildren(el("p", { class: "hint", text: "Finding the parts on this sheet…" }));
+    try {
+      const data = await (await fetch(`/api/parts/${r.id}`)).json();
+      render(data);
+      clearTimeout(timer);
+      if (["preparing", "building"].includes(data.batch?.phase) && state.result === r) timer = setTimeout(() => load(true), 2500);   // live progress
+    }
     catch (error) { host.replaceChildren(el("p", { class: "hint", text: `Could not list the parts: ${error.message}` })); }
   };
   const busy = (title, message) => window.dispatchEvent(new CustomEvent("studio:processing", { detail: { busy: Boolean(title), title, message } }));
@@ -1494,7 +1568,7 @@ function partsPanel(r) {
     });
     host.replaceChildren(el("div", { class: "parts-head" }, el("h3", { text: "Parts on this sheet" }),
       el("p", { class: "hint", text: "Each part gets its own build list. Approve one and SolidWorks builds it; you check the model in Build & Verify, then export." })),
-      swLine, el("div", { class: "part-list" }, rows), status);
+      batchBox(r, data, () => load(true), status), swLine, el("div", { class: "part-list" }, rows), status);
   };
   host.load = load;
   return host;

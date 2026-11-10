@@ -120,3 +120,61 @@ def test_ai_build_list_sees_only_the_part_and_the_reviewed_values():
             assert False
         except ValueError as ex:
             assert "Approve the measurements" in str(ex)
+
+
+def test_build_everything_prepares_lists_waits_for_one_approval_then_builds_each_part():
+    result = {"id": "abcdef123456", "pages": [page(1, ["01. GEAR", "02. SHAFT", "03. HEX BOLT"])], "drawing_model": {"issues": []}}
+    built = []
+    class FakeWorkflow:
+        def create(self, rid, attempt):
+            return {"id": "j" + attempt[:5], "revision": 1}
+        def action(self, jid, rev, action, **d):
+            built.append((jid, d["accepted_gaps"]))
+            return {"id": jid, "phase": "awaiting_review"}
+        def status(self, jid):
+            return {"id": jid, "phase": "awaiting_review"}
+    def fake_create(rid, part_id, llm_name=None, client=None):
+        draft = {**good(), "unsupported": [{"id": "U1", "text": "chamfers"}]} if part_id == "gear" else {"items": []}
+        return parts.save_part_list(server.PART_LISTS, rid, {"id": part_id, "name": part_id, "item": "", "quantity": 1, "kind": "make"}, draft, "ai")
+    class Now:                                                                     # run the background jobs inline
+        def submit(self, fn, *a):
+            fn(*a)
+    ready = {"ready": True, "detail": "Ready to build."}
+    with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), patch.object(server, "WORKFLOW", FakeWorkflow()), \
+         patch.object(server, "_BATCH_POOL", Now()), patch.object(server, "create_part_list", fake_create), \
+         patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)):
+        batch = server.start_batch("abcdef123456")
+        batch = server.load_batch("abcdef123456")
+        assert batch["phase"] == "awaiting_approval" and not built                   # nothing built before the human approves
+        assert {i["part_id"]: i["status"] for i in batch["items"]} == {"gear": "listed", "shaft": "listed", "hex-bolt": "bought"}
+        with patch.object(parts, "solidworks_status", lambda: {"ready": False, "detail": "not running"}):
+            try:
+                server.approve_batch("abcdef123456", batch["id"], {"gear": ["U1"]}); assert False
+            except ValueError as ex:
+                assert "not ready" in str(ex)
+        with patch.object(parts, "solidworks_status", lambda: ready):
+            try:
+                server.approve_batch("abcdef123456", "000000000000", {}); assert False
+            except ValueError as ex:
+                assert "changed" in str(ex)
+            server.approve_batch("abcdef123456", batch["id"], {"gear": ["U1"]})
+        done = server.load_batch("abcdef123456")
+        items = {i["part_id"]: i for i in done["items"]}
+        assert done["phase"] == "done" and len(built) == 1 and built[0][1] == ["U1"]
+        assert items["gear"]["status"] == "awaiting_review" and items["shaft"]["status"] == "not_buildable"
+        with patch.object(parts, "solidworks_status", lambda: ready):
+            assert server.parts_overview("abcdef123456")["batch"]["items"][0]["job"]["phase"] == "awaiting_review"
+
+
+def test_approve_all_refuses_a_part_whose_gaps_were_not_accepted():
+    result = {"id": "abcdef123456", "pages": [page(1, ["01. GEAR"])], "drawing_model": {"issues": []}}
+    with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), \
+         patch.object(server, "_BATCH_POOL", type("N", (), {"submit": lambda self, fn, *a: None})()), \
+         patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)), \
+         patch.object(parts, "solidworks_status", lambda: {"ready": True, "detail": ""}):
+        parts.save_part_list(Path(d), "abcdef123456", {"id": "gear", "name": "Gear", "item": "", "quantity": 1, "kind": "make"},
+                             {**good(), "unsupported": [{"id": "U1", "text": "chamfers"}]}, "file")
+        batch = server.start_batch("abcdef123456")
+        server._save_batch("abcdef123456", {**batch, "phase": "awaiting_approval"})
+        out = server.approve_batch("abcdef123456", batch["id"], {})
+        assert out["items"][0]["status"] == "not_approved"
