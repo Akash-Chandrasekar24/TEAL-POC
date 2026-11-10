@@ -1,0 +1,36 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "needs_human": [],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "The key's ends are drawn slightly rounded but no radius is printed: modelled square."
+  }
+ ],
+ "part_name": "Water pump 06 SHAFT KEY (sheet 2)",
+ "seen_dimensions": [
+  "40.00",
+  "10.00",
+  "4.50",
+  "KEYWAY 10x4.5",
+  "Ø50 (SHAFT)"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "40.00 x 10.00 x 4.50",
+   "params": {
+    "profile": {
+     "shape": "rectangle",
+     "width": 40,
+     "height": 10
+    },
+    "depth": 4.5
+   }
+  }
+ ]
+}

@@ -1,0 +1,74 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "needs_human": [],
+ "accepted_gaps": [],
+ "unsupported": [],
+ "part_name": "Water pump 04 DISCHARGE FLANGE DETAIL (sheet 1)",
+ "seen_dimensions": [
+  "Ø110",
+  "Ø40",
+  "16",
+  "4x Ø10.5 (THRU) PCD Ø80",
+  "2x45°"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "Ø110 outside, Ø40 bore, 16 thick",
+   "params": {
+    "profile": {
+     "shape": "ring",
+     "outer_diameter": 110,
+     "inner_diameter": 40
+    },
+    "depth": 16
+   }
+  },
+  {
+   "id": "I2",
+   "feature": "hole",
+   "printed": "4x Ø10.5 (THRU) on PCD Ø80",
+   "note": "Holes at 45° (between the axes), as drawn.",
+   "params": {
+    "pattern": {
+     "kind": "circular",
+     "centre": {
+      "x": 0,
+      "y": 0,
+      "x_from": "centre",
+      "y_from": "centre"
+     },
+     "pitch_diameter": 80,
+     "count": 4,
+     "start_angle_deg": 45
+    },
+    "diameter": 10.5,
+    "face": "front",
+    "depth": "through",
+    "material_length": 16
+   }
+  },
+  {
+   "id": "I3",
+   "feature": "fillet_chamfer_edges",
+   "printed": "2x45°",
+   "uncertain": true,
+   "note": "The 2x45° leader points at the outer rim; the list chamfers the outer edge on the front face only. Confirm which edges.",
+   "derived": true,
+   "derived_from": "radius 55 = half the printed Ø110 (selects the outer rim)",
+   "params": {
+    "kind": "chamfer",
+    "size": 2,
+    "face": "front",
+    "kinds": [
+     "circle"
+    ],
+    "radius": 55,
+    "expect_count": 1
+   }
+  }
+ ]
+}

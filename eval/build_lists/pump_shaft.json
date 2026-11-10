@@ -1,0 +1,167 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "needs_human": [
+  "The lengths in the callouts disagree with the dimension chain: SEAL SEAT Ø35 h6 (L = 30) sits on a 42-long step, BEARING SEAT Ø30 h6 (L = 42) on a 30-long step, BEARING SEAT Ø25 h6 (L = 30) on a 40-long step. The list uses the chain (sum 280). Confirm, or give the correct lengths."
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "KEYWAY 10x4.5 in the Ø50 impeller seat: no keyway feature on a turned part yet (its length is not clear either: 50 is printed under the 38-long seat)."
+  },
+  {
+   "id": "U2",
+   "text": "M24x1.5 LH and M20x1.5 RH threads: modelled at the major diameter, thread is a note only."
+  }
+ ],
+ "part_name": "Water pump 02 PUMP SHAFT (sheet 2)",
+ "seen_dimensions": [
+  "280",
+  "28",
+  "42",
+  "30",
+  "38",
+  "42",
+  "30",
+  "40",
+  "30",
+  "M24x1.5 (LH)",
+  "M20x1.5 (RH)",
+  "Ø30 h6",
+  "Ø35 h6",
+  "Ø50",
+  "Ø35 h6",
+  "Ø30 h6",
+  "Ø25 h6",
+  "2x45°",
+  "R2.0",
+  "KEYWAY 10x4.5",
+  "50",
+  "IMPELLER MOUNTING (L = 38)",
+  "SEAL SEAT Ø35 h6 (L = 30)",
+  "BEARING SEAT Ø30 h6 (L = 42)",
+  "BEARING SEAT Ø25 h6 (L = 30)"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "280 overall = 28 + 42 + 30 + 38 + 42 + 30 + 40 + 30; M24x1.5, Ø30 h6, Ø35 h6, Ø50, Ø35 h6, Ø30 h6, Ø25 h6, M20x1.5; 2x45° both ends; R2.0 at the Ø50 collar",
+   "derived": true,
+   "derived_from": "stations are running sums of the printed chain (0, 28, 70, 100, 138, 180, 210, 250, 280); radii are half the printed diameters; threads at their major diameters (M24 -> 12, M20 -> 10); 2x45° -> 2 mm chamfers at both ends",
+   "note": "h6 fits are manufacturing notes: nominal sizes are modelled. Lengths follow the dimension chain above the shaft (it sums to 280).",
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       10
+      ],
+      [
+       2,
+       12
+      ],
+      [
+       28,
+       12
+      ],
+      [
+       28,
+       15
+      ],
+      [
+       70,
+       15
+      ],
+      [
+       70,
+       17.5
+      ],
+      [
+       100,
+       17.5
+      ],
+      [
+       100,
+       25
+      ],
+      [
+       138,
+       25
+      ],
+      [
+       138,
+       17.5
+      ],
+      [
+       180,
+       17.5
+      ],
+      [
+       180,
+       15
+      ],
+      [
+       210,
+       15
+      ],
+      [
+       210,
+       12.5
+      ],
+      [
+       250,
+       12.5
+      ],
+      [
+       250,
+       10
+      ],
+      [
+       278,
+       10
+      ],
+      [
+       280,
+       8
+      ],
+      [
+       280,
+       0
+      ]
+     ],
+     "corner_radius": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ ]
+}

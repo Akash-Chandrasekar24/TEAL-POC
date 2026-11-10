@@ -1,0 +1,123 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "needs_human": [],
+ "accepted_gaps": [],
+ "unsupported": [],
+ "part_name": "Water pump 07 COUPLING HALF (sheet 2)",
+ "seen_dimensions": [
+  "Ø70",
+  "Ø46",
+  "Ø30 H7",
+  "40",
+  "28",
+  "12",
+  "4x Ø10.5 (THRU) PCD Ø54",
+  "2x45°",
+  "Ø30"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "Ø70 flange 12 wide, Ø46 hub 28 long, 40 overall, Ø30 H7 bore through, 2x45°",
+   "derived": true,
+   "derived_from": "radii are half the printed diameters (35, 23, 15); hub from 12 to 40 (12 + 28); 2x45° -> 2 mm chamfer on the flange rim",
+   "note": "H7 is a fit note; the nominal Ø30 bore is modelled.",
+   "uncertain": true,
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       15
+      ],
+      [
+       0,
+       33
+      ],
+      [
+       2,
+       35
+      ],
+      [
+       12,
+       35
+      ],
+      [
+       12,
+       23
+      ],
+      [
+       40,
+       23
+      ],
+      [
+       40,
+       15
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "I2",
+   "feature": "turned_axial",
+   "printed": "4x Ø10.5 (THRU) on PCD Ø54",
+   "derived": true,
+   "derived_from": "PCD Ø54 -> 27 from the axis; the holes go through the 12-wide flange (u 0 to 12); drawn at top, bottom, left and right in the front view",
+   "params": {
+    "operation": "cut",
+    "diameter": 10.5,
+    "from_u": 0,
+    "to_u": 12,
+    "offset_in_view": 27
+   }
+  },
+  {
+   "id": "I3",
+   "feature": "turned_axial",
+   "printed": "4x Ø10.5 (THRU) on PCD Ø54",
+   "derived": true,
+   "derived_from": "PCD Ø54 -> 27 from the axis; the holes go through the 12-wide flange (u 0 to 12); drawn at top, bottom, left and right in the front view",
+   "params": {
+    "operation": "cut",
+    "diameter": 10.5,
+    "from_u": 0,
+    "to_u": 12,
+    "offset_in_view": -27
+   }
+  },
+  {
+   "id": "I4",
+   "feature": "turned_axial",
+   "printed": "4x Ø10.5 (THRU) on PCD Ø54",
+   "derived": true,
+   "derived_from": "PCD Ø54 -> 27 from the axis; the holes go through the 12-wide flange (u 0 to 12); drawn at top, bottom, left and right in the front view",
+   "params": {
+    "operation": "cut",
+    "diameter": 10.5,
+    "from_u": 0,
+    "to_u": 12,
+    "offset_toward_viewer": 27
+   }
+  },
+  {
+   "id": "I5",
+   "feature": "turned_axial",
+   "printed": "4x Ø10.5 (THRU) on PCD Ø54",
+   "derived": true,
+   "derived_from": "PCD Ø54 -> 27 from the axis; the holes go through the 12-wide flange (u 0 to 12); drawn at top, bottom, left and right in the front view",
+   "params": {
+    "operation": "cut",
+    "diameter": 10.5,
+    "from_u": 0,
+    "to_u": 12,
+    "offset_toward_viewer": -27
+   }
+  }
+ ]
+}

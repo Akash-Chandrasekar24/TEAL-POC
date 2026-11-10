@@ -1,0 +1,79 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "needs_human": [],
+ "accepted_gaps": [],
+ "unsupported": [],
+ "part_name": "Water pump 05 MECHANICAL SEAL SEAT (sheet 1)",
+ "seen_dimensions": [
+  "36",
+  "12",
+  "18",
+  "6",
+  "Ø60",
+  "Ø50",
+  "Ø35 (SEAL SEAT)",
+  "Ø25",
+  "Ø42"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "uncertain": true,
+   "printed": "36 overall = 12 + 18 + 6; Ø60, Ø50 outside; Ø35 (SEAL SEAT), Ø25, Ø42 inside",
+   "derived": true,
+   "derived_from": "stations 0, 12, 30, 36 from the chain; radii half the printed diameters",
+   "note": "Read as: Ø60 collar 12 long then Ø50 body; bore Ø35 for the first 12, Ø25 for the next 18, Ø42 counterbore for the last 6. The section is small (scale 2:1): confirm the Ø42 step and its 6 length.",
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       17.5
+      ],
+      [
+       0,
+       30
+      ],
+      [
+       12,
+       30
+      ],
+      [
+       12,
+       25
+      ],
+      [
+       36,
+       25
+      ],
+      [
+       36,
+       21
+      ],
+      [
+       30,
+       21
+      ],
+      [
+       30,
+       12.5
+      ],
+      [
+       12,
+       12.5
+      ],
+      [
+       12,
+       17.5
+      ]
+     ]
+    }
+   }
+  }
+ ]
+}

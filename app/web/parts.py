@@ -20,7 +20,8 @@ from pathlib import Path
 ID = re.compile(r"^[0-9a-f]{12}$")
 _LATEST = threading.Lock()                                                   # build lists are written in parallel: one writer of latest.json
 _ASSEMBLY_VIEW = re.compile(r"\b(assembly|assembled|exploded|parts list|projection symbol)\b", re.I)
-_BUY = re.compile(r"\b(bolt|screw|nut|washer|dowel|oil seal|bearing|o-ring|circlip|key)\b", re.I)
+_BUY = re.compile(r"\b(bolt|screw|nut|washer|dowel|oil seal|mechanical seal|bearing|o-ring|circlip|key)\b", re.I)
+_MATERIAL_SPLIT = re.compile(r"\s+[—–-]\s+")      # "Pump Casing — Cast Iron (FC250)": the parts list's material column read into the name
 _VIEW_WORDS = re.compile(r"\b(front|side|top|end|rear|plan|section|detail|view|isometric|partial|scale)\b.*$", re.I)
 
 
@@ -47,10 +48,10 @@ def detect_parts(result: dict) -> list[dict]:
     parts = []
     if bom:
         for row in bom:
-            name = str(row.get("description") or row.get("part_number") or "").strip()
+            name, *material = _MATERIAL_SPLIT.split(str(row.get("description") or row.get("part_number") or "").strip(), maxsplit=1)
             if name:
                 parts.append({"name": name, "item": str(row.get("item") or ""), "quantity": row.get("quantity"),
-                              "kind": "buy" if _BUY.search(name) else "make"})
+                              "kind": "buy" if _BUY.search(name) else "make", **({"material": material[0]} if material else {})})
     else:
         seen = set()
         for v in views:

@@ -178,3 +178,10 @@ def test_approve_all_refuses_a_part_whose_gaps_were_not_accepted():
         server._save_batch("abcdef123456", {**batch, "phase": "awaiting_approval"})
         out = server.approve_batch("abcdef123456", batch["id"], {})
         assert out["items"][0]["status"] == "not_approved"
+
+
+def test_a_material_column_read_into_the_name_is_split_off():
+    bom = [{"item": "1", "description": "Pump Casing \u2014 Cast Iron (FC250)", "quantity": 1}, {"item": "6", "description": "Mechanical Seal \u2014 Carbon / SiC (FKM)", "quantity": 1}]
+    found = {p["id"]: p for p in parts.detect_parts({"pages": [page(1, ["01. PUMP CASING (FRONT VIEW)", "SECTION A-A (PUMP CASING)"], bom=bom)]})}
+    assert found["pump-casing"]["material"] == "Cast Iron (FC250)" and len(found["pump-casing"]["views"]) == 2
+    assert found["mechanical-seal"]["kind"] == "buy"
