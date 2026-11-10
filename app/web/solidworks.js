@@ -27,6 +27,46 @@ function doubtSection(r, blocked, post) {
     panels.map(({ p, panel }) => el("div", { class: "doubt-part" }, el("b", { class: "doubt-part-name", text: p.name }), panel)));
 }
 
+// ---- THE SolidWorks button: one uninterrupted flow (build lists -> AI decides any doubt -> every part built -> one assembly)
+const FLOW_ITEM = { to_prepare: "Waiting", preparing: "Writing its build list…", listed: "Build list ready", queued: "Waiting for SolidWorks", building: "Building in SolidWorks…",
+  awaiting_review: "Built", accepted: "Built", exported: "Built", not_buildable: "Not built", list_failed: "Not built", build_failed: "Not built",
+  needs_human: "Not built", awaiting_fix_approval: "Not built", llm_failed: "Not built" };
+
+function flowBox(r, data, reload, status) {
+  const batch = data.batch, sw = data.solidworks || {};
+  const running = batch && batch.flow === "one_button" && ["preparing", "resolving", "building", "assembling"].includes(batch.phase);
+  const start = el("button", { type: "button", class: "btn build-all", text: batch?.flow === "one_button" && batch.phase === "done" ? "Build in SolidWorks again" : "Build in SolidWorks",
+    disabled: running || !sw.ready });
+  start.addEventListener("click", async () => {
+    start.disabled = true;
+    try { await workflowRequest("/api/parts/build-in-solidworks", { result_id: r.id, llm: ($("#llm") && $("#llm").value) || r.llm }); await reload(); }
+    catch (error) { status.textContent = error.message; start.disabled = false; }
+  });
+  const items = (batch?.flow === "one_button" ? batch.items : []) || [];
+  const phaseOf = (it) => it.job?.phase || it.status;
+  const built = items.filter((it) => ["awaiting_review", "accepted", "exported"].includes(phaseOf(it)));
+  const rows = items.map((it) => {
+    const ph = phaseOf(it), ok = ["awaiting_review", "accepted", "exported"].includes(ph), bad = FLOW_ITEM[ph] === "Not built";
+    const row = el("li", { class: `flow-item ${ok ? "ok" : bad ? "bad" : "busy"}` }, el("b", { text: it.name }), el("span", { text: FLOW_ITEM[ph] || ph }));
+    const why = it.job?.detail || it.detail;
+    if (bad && why) row.append(el("small", { text: why.slice(0, 220) }));
+    if (it.job && ok) row.append(el("button", { type: "button", class: "m-link", text: "Open", onclick: () => { r.workflowJob = it.job; window.dispatchEvent(new CustomEvent("studio:job", { detail: { job: it.job } })); show(r); pollJob(r); } }));
+    return row;
+  });
+  const asm = batch?.assembly;
+  const asmLine = asm ? el("p", { class: `flow-asm ${asm.status === "awaiting_review" || asm.status === "accepted" ? "ok" : ["building", "placing"].includes(asm.status) ? "busy" : "bad"}`,
+    text: asm.status === "placing" ? "Placing the parts into one assembly…" : asm.status === "building" ? "Building the assembly in SolidWorks…" :
+      ["awaiting_review", "accepted", "exported"].includes(asm.status) ? "Assembly built: one SolidWorks file for the whole drawing" : `Assembly not built: ${(asm.detail || asm.status).slice(0, 220)}` }) : null;
+  const doneN = items.filter((it) => !["to_prepare", "preparing", "listed", "queued", "building"].includes(phaseOf(it))).length;
+  const head = running ? el("div", { class: "batch-progress" }, el("span", { class: "spinner", "aria-hidden": "true" }),
+      el("b", { text: batch.phase === "preparing" ? "Preparing every part" : batch.phase === "assembling" ? "Assembling" : `Building in SolidWorks: ${doneN} of ${items.length}` }))
+    : el("p", { class: "hint", text: !sw.ready ? `SolidWorks is not ready: ${sw.detail || ""}` : batch?.flow === "one_button" && batch.phase === "done"
+      ? `Done: ${built.length} of ${items.length} part${items.length === 1 ? "" : "s"} built.${batch.error ? " " + batch.error : ""}`
+      : "One click builds the whole drawing: the build steps for every part, the parts in SolidWorks and, for several parts, one assembly. No further questions: the doubts were settled on the Review page." });
+  return el("div", { class: `batch-box flow${running ? " running" : ""}` }, head, el("div", { class: "part-actions" }, start),
+    rows.length ? el("ol", { class: "batch-list" }, rows) : null, asmLine);
+}
+
 function batchBox(r, data, reload, status, partPost) {
   const batch = data.batch, sw = data.solidworks || {};
   const post = async (path, body) => {
@@ -200,7 +240,7 @@ function partsPanel(r) {
       const data = await (await fetch(`/api/parts/${r.id}`)).json();
       render(data);
       clearTimeout(timer);
-      if ((["preparing", "building"].includes(data.batch?.phase) || data.batch?.assembly?.status === "building") && state.result === r) timer = setTimeout(() => load(true), 2500);   // live progress
+      if ((["preparing", "resolving", "building", "assembling"].includes(data.batch?.phase) || data.batch?.assembly?.status === "building") && state.result === r) timer = setTimeout(() => load(true), 2500);   // live progress
     }
     catch (error) { host.replaceChildren(el("p", { class: "hint", text: `Could not list the parts: ${error.message}` })); }
   };
@@ -268,9 +308,10 @@ function partsPanel(r) {
       body.append(el("div", { class: "part-actions" }, create, upload, file));
       return el("article", { class: "part-card", "data-part": part.id }, head, body);
     });
-    host.replaceChildren(el("div", { class: "parts-head" }, el("h3", { text: "Parts on this sheet" }),
-      el("p", { class: "hint", text: "Each part gets a build list: the 3D steps the AI worked out from its views and your reviewed measurements. Approve, SolidWorks builds, you compare each model with the drawing below, then export." })),
-      batchBox(r, data, () => load(true), status, post), assemblyBox(r, data, post), swLine, el("div", { class: "part-list" }, rows), status);
+    host.replaceChildren(el("div", { class: "parts-head" }, el("h3", { text: "Build in SolidWorks" })),
+      flowBox(r, data, () => load(true), status), swLine, status,
+      el("details", { class: "part-details" }, el("summary", { text: `Per-part details (${rows.length} part${rows.length === 1 ? "" : "s"})` }),
+        el("div", { class: "part-list" }, rows)));
   };
   host.load = load;
   return host;

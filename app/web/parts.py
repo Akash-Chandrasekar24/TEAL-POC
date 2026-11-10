@@ -130,6 +130,35 @@ def solidworks_status() -> dict:
 
 
 # ------------------------------------------------------------------ build lists per part
+MIN_SIDE = 2000          # a page smaller than this is enlarged before the AI reads it (a 440 px scan has unreadable dimension text)
+
+
+def whole_pages(result: dict, page_png) -> bytes:
+    """Every page of the drawing, stacked and enlarged to a readable size: what the AI sees when the drawing is ONE part (cropping its
+    views only loses information: measured on a 440 px sheet whose view boxes came back as four fragments of one view)."""
+    from PIL import Image
+    pages = []
+    for p in result.get("pages") or []:
+        png = page_png(p["no"])
+        if png is None:
+            continue
+        im = Image.open(io.BytesIO(png)).convert("RGB")
+        if max(im.size) < MIN_SIDE:
+            k = MIN_SIDE / max(im.size)
+            im = im.resize((int(im.width * k), int(im.height * k)), Image.LANCZOS)
+        pages.append(im)
+    if not pages:
+        raise ValueError("The drawing's pages are not available")
+    w, h = max(i.width for i in pages), sum(i.height for i in pages) + 10 * (len(pages) - 1)
+    sheet = Image.new("RGB", (w, h), "white")
+    y = 0
+    for im in pages:
+        sheet.paste(im, (0, y)); y += im.height + 10
+    buf = io.BytesIO()
+    sheet.save(buf, "PNG")
+    return buf.getvalue()
+
+
 def part_sheet(result: dict, part: dict, page_png) -> bytes:
     """The part's views stacked into one picture (the model takes one picture per call)."""
     from PIL import Image, ImageDraw
@@ -141,6 +170,9 @@ def part_sheet(result: dict, part: dict, page_png) -> bytes:
         with Image.open(io.BytesIO(png)) as im:
             x0, y0, x1, y1 = (int(round(c)) for c in v["box"])
             crop = im.convert("RGB").crop((max(0, x0 - 8), max(0, y0 - 8), x1 + 8, y1 + 8))
+        if max(crop.size) < 900:                                            # a small view of a low-resolution scan: enlarge it to be readable
+            k = 900 / max(crop.size)
+            crop = crop.resize((int(crop.width * k), int(crop.height * k)), Image.LANCZOS)
         crop.thumbnail((1400, 900))
         crops.append((v["label"], crop))
     if not crops:

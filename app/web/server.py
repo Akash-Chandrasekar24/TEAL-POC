@@ -640,7 +640,7 @@ def parts_overview(rid: str) -> dict:
     parts = [{**{k: v for k, v in p.items() if k != "views"}, "views": [{"page": v["page"], "no": v["no"], "label": v["label"]} for v in p["views"]],
               "list": lists.get(p["id"])} for p in detect_parts(result)]
     batch = load_batch(rid)
-    if batch and batch["phase"] in ("preparing", "building") and batch["id"] not in _ACTIVE:
+    if batch and batch["phase"] in ("preparing", "resolving", "building", "assembling") and batch["id"] not in _ACTIVE:
         batch["phase"] = "interrupted"                                            # the server restarted mid-run: offer to start again
     if batch:                                                                     # live status of every part job the batch started
         for item in batch["items"]:
@@ -818,6 +818,139 @@ def approve_batch(rid, bid, accepted):
     return batch
 
 
+_BUILT = ("awaiting_review", "accepted", "exported")
+
+
+def build_in_solidworks(rid, llm_name=None):
+    """THE button: one uninterrupted flow for the whole drawing. The designer settled the doubts on the Review page and pressed it, which is
+    the approval: build lists for every part (AI) -> the AI decides any remaining doubt -> every part is built in SolidWorks (one already
+    built from the same list is reused, not rebuilt) -> when several parts were built, they are placed and built as ONE assembly."""
+    from app.web.parts import detect_parts, solidworks_status
+    result = result_with_design(rid)
+    if any("human review required" in q or "confirm this" in q for q in result["drawing_model"].get("issues", [])):
+        raise ValueError("Approve the measurements on the Review step first")
+    sw = solidworks_status()
+    if not sw["ready"]:
+        raise ValueError(f"SolidWorks is not ready: {sw['detail']}")
+    with _BATCH_LOCK:
+        current = load_batch(rid)
+        if current and current.get("phase") in ("preparing", "resolving", "building", "assembling") and current["id"] in _ACTIVE:
+            return current
+        previous = {i["part_id"]: i for i in (current or {}).get("items", [])}
+        items = []
+        for p in detect_parts(result):
+            old = previous.get(p["id"], {})
+            items.append({"part_id": p["id"], "name": p["name"], "status": "to_prepare",
+                          **({"job_id": old["job_id"], "built_list": old.get("list_id")} if old.get("job_id") else {})})
+        batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name, "flow": "one_button"}
+        _save_batch(rid, batch)
+        _ACTIVE.add(batch["id"])
+    _PREP_POOL.submit(_one_flow, rid, batch["id"], llm_name)
+    return batch
+
+
+def _one_flow(rid, bid, llm_name):
+    from app.web.parts import latest_lists
+    batch = load_batch(rid)
+
+    def save(**kw):
+        with _BATCH_LOCK:
+            batch.update(kw)
+            _save_batch(rid, batch)
+
+    def mark(item, **kw):
+        with _BATCH_LOCK:
+            item.update(kw)
+            _save_batch(rid, batch)
+
+    try:
+        def one(item):                                                   # a ready build list for this part, whatever it takes
+            mark(item, status="preparing")
+            try:
+                art = latest_lists(PART_LISTS, rid).get(item["part_id"])
+                if not art:
+                    art = create_part_list(rid, item["part_id"], llm_name)
+                if art["check"]["status"] != "ready":
+                    if _only_doubts(art):
+                        art = confirm_part_list(rid, item["part_id"], _ai_decides(art))
+                    else:
+                        art = create_part_list(rid, item["part_id"], llm_name, answers=_ai_decides(art), work_it_out=True)
+                        wrong = [b for b in art["check"]["blocking"] if not _DOUBTS_ONLY.search(b)]
+                        if wrong or not art["draft"].get("items"):           # the checker refused it: one retry with its words
+                            fix = [{"question": "The offline checker refused your last build list. Fix exactly this and keep everything else",
+                                    "answer": "; ".join(wrong) or "the list had no 3D steps"}]
+                            art = create_part_list(rid, item["part_id"], llm_name, answers=_ai_decides(art) + fix, work_it_out=True)
+                        if _only_doubts(art):
+                            art = confirm_part_list(rid, item["part_id"], _ai_decides(art))
+                if art["check"]["status"] == "ready":
+                    mark(item, status="listed", list_id=art["id"], accepted_gaps=[u["id"] for u in art["check"]["unsupported"]])
+                else:
+                    mark(item, status="not_buildable", detail="; ".join(art["check"]["blocking"])[:600])
+            except Exception as ex:                                              # noqa: BLE001 - recorded per part; the flow goes on
+                mark(item, status="list_failed", detail=f"{type(ex).__name__}: {ex}"[:600])
+
+        with ThreadPoolExecutor(max_workers=_PREP_WORKERS, thread_name_prefix="one-flow") as pool:
+            list(pool.map(one, batch["items"]))
+        for item in batch["items"]:                                              # built before from the same list: keep it, do not rebuild
+            if item["status"] == "listed":
+                if item.get("job_id") and item.get("built_list") == item["list_id"] and _job_phase(item["job_id"]) in _BUILT:
+                    mark(item, status=_job_phase(item["job_id"]), detail="built earlier from the same build list")
+                else:
+                    mark(item, status="queued")
+        save(phase="building")
+        _BATCH_POOL.submit(_build_each_then_assemble, rid, bid, llm_name)
+    except Exception as ex:                                                      # noqa: BLE001
+        save(phase="done", error=f"{type(ex).__name__}: {ex}"[:600])
+        _ACTIVE.discard(bid)
+
+
+def _job_phase(jid):
+    try:
+        return WORKFLOW.status(jid)["phase"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _build_each_then_assemble(rid, bid, llm_name):
+    try:
+        _build_each(rid)
+        batch = load_batch(rid)
+        for item in batch["items"]:
+            if item.get("job_id") and item.get("list_id"):
+                item["built_list"] = item["list_id"]
+        _save_batch(rid, batch)
+        built = [i for i in batch["items"] if i.get("job_id") and _job_phase(i["job_id"]) in _BUILT]
+        if len(built) > 1:                                                       # several parts: one SolidWorks file for the whole drawing
+            with _BATCH_LOCK:
+                batch = load_batch(rid); batch["phase"] = "assembling"; batch["assembly"] = {"status": "placing"}; _save_batch(rid, batch)
+            try:
+                art = assemble_parts(rid, llm_name)
+                from app.assembly.from_parts import approve
+                plan = approve(AssemblyPlan.model_validate(art["plan"]))
+                saved = save_assembly(rid, plan, art.get("extracted", {}), art.get("harness"), art.get("review_notes"))
+                for key in ("left_out", "problems", "frame"):
+                    if key in art:
+                        saved[key] = art[key]
+                write_json(ASSEMBLIES / rid / f"{saved['id']}.json", saved)
+                write_json(ASSEMBLIES / rid / "latest.json", saved)
+                if saved["blockers"]:
+                    done = {"status": "not_buildable", "detail": "; ".join(saved["blockers"][:6])[:2000]}
+                else:
+                    with _BATCH_LOCK:
+                        batch = load_batch(rid); batch["assembly"] = {"status": "building", "attempt": saved["id"]}; _save_batch(rid, batch)
+                    _build_assembly(rid, saved["id"])
+                    done = None
+            except Exception as ex:                                              # noqa: BLE001 - the parts stay built
+                done = {"status": "build_failed", "detail": f"{type(ex).__name__}: {ex}"[:2000]}
+            if done:
+                with _BATCH_LOCK:
+                    batch = load_batch(rid); batch["assembly"] = {**batch.get("assembly", {}), **done}; _save_batch(rid, batch)
+        with _BATCH_LOCK:
+            batch = load_batch(rid); batch["phase"] = "done"; _save_batch(rid, batch)
+    finally:
+        _ACTIVE.discard(bid)
+
+
 def _build_batch(rid, bid):
     try:
         _build_each(rid)
@@ -951,7 +1084,11 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
     shown = part if part["views"] else {**part, "views": assembly_views(result)}
     if not shown["views"]:
         raise ValueError(f"{part['name']} is not drawn anywhere on the sheet: describe it in an answer and let the AI work it out")
-    png = part_sheet(result, shown, lambda no: default_cache().get_blob(shas[no]))
+    from app.web.parts import detect_parts, whole_pages
+    if len(detect_parts(result)) == 1:                                           # the whole drawing is this part: show all of it, not crops
+        png = whole_pages(result, lambda no: default_cache().get_blob(shas[no]))
+    else:
+        png = part_sheet(result, shown, lambda no: default_cache().get_blob(shas[no]))
     work_it_out = work_it_out or not part["views"]                              # nothing printed for it: the AI must work its sizes out
     from app.web.parts import latest_lists
     previous = latest_lists(PART_LISTS, rid).get(part_id)
@@ -1191,7 +1328,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/parts/confirm", "/api/parts/ai-resolve", "/api/parts/assemble", "/api/parts/assemble-approve", "/api/parts/build-all", "/api/parts/approve-all", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
+        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/parts/confirm", "/api/parts/ai-resolve", "/api/parts/assemble", "/api/parts/assemble-approve", "/api/parts/build-in-solidworks", "/api/parts/build-all", "/api/parts/approve-all", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
             return self._json(404, {"error": "not found"})
         size = int(self.headers.get("Content-Length") or 0)
         if not 0 < size <= MAX_BODY:
@@ -1229,6 +1366,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, job)
                 decision = {key: body[key] for key in ("review_hash", "compared_drawing", "checked_measurements", "message", "params", "accepted_gaps") if key in body}
                 return self._json(200, WORKFLOW.action(str(body.get("job_id", "")), body.get("revision"), str(body.get("action", "")), **decision))
+            if self.path == "/api/parts/build-in-solidworks":
+                if not self._same_origin_json():
+                    return self._json(403, {"error": "Start builds from this drawing workspace"})
+                return self._json(200, build_in_solidworks(str(body.get("result_id", "")), llm))
             if self.path in ("/api/parts/assemble", "/api/parts/assemble-approve"):
                 if not self._same_origin_json():
                     return self._json(403, {"error": "Start this from the drawing workspace"})

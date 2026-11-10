@@ -2,8 +2,8 @@
 
   python scripts/demo_rehearsal.py inputs/image_9.png [inputs/image_8.jpg ...]   [--no-build]
 
-Per drawing: upload + read -> "Approve all measurements" -> "Build everything" (build lists) -> "Let AI handle every doubt" ->
-"Approve all and build" (SolidWorks, one part after another). Every step is the same request the page sends. It makes a NEW result per
+Per drawing: upload + read -> "Approve all measurements" -> "Build in SolidWorks" (the one button: build lists, AI decides doubts, every part
+built, one assembly for several parts). Every step is the same request the page sends. It makes a NEW result per
 drawing, so earlier reviews are left alone. The approvals stand in for the human's clicks during a rehearsal only.
 """
 from __future__ import annotations
@@ -57,27 +57,13 @@ def rehearse(path: Path, build: bool) -> dict:
             resolutions[key] = model[key]
     post("/api/review", {"result_id": rid, "source_hash": model["source_hash"], "resolutions": resolutions})
     out.update(readings=len(dims), approved_s=stamp())
-    post("/api/parts/build-all", {"result_id": rid})
-    wait_batch(rid)
-    parts = get(f"/api/parts/{rid}")["parts"]
-    out.update(parts=len(parts), lists_s=stamp())
-    blocked = [p["id"] for p in parts if (p.get("list") or {}).get("check", {}).get("status") != "ready"]
-    if blocked:
-        post("/api/parts/ai-resolve", {"result_id": rid, "part_ids": blocked})
-        wait_batch(rid)
-    d = get(f"/api/parts/{rid}")
-    ready = [p for p in d["parts"] if (p.get("list") or {}).get("check", {}).get("status") == "ready"]
-    out.update(ready=len(ready), resolved_s=stamp(),
-               not_ready={p["name"]: ((p.get("list") or {}).get("check", {}).get("blocking") or ["no list"])[0][:200] for p in d["parts"] if p not in ready})
-    if build and ready:
-        while LOCK.exists():                                            # another build is using SolidWorks
-            time.sleep(10)
-        post("/api/parts/approve-all", {"result_id": rid, "batch_id": d["batch"]["id"],
-                                        "accepted_gaps": {p["id"]: [u["id"] for u in p["list"]["check"].get("unsupported", [])] for p in ready}})
-        b = wait_batch(rid, ("building",), 10)
-        out["built"] = {i["name"]: ((i.get("job") or {}).get("phase") or i["status"], ((i.get("job") or {}).get("detail") or i.get("detail") or "")[:200])
-                        for i in b["items"] if i.get("list_id") or i["status"] not in ("listed",)}
-        out["build_s"] = stamp()
+    if not build:
+        return out
+    post("/api/parts/build-in-solidworks", {"result_id": rid})                  # THE button: one flow, no pause
+    b = wait_batch(rid, ("preparing", "resolving", "building", "assembling"), 10)
+    out["built"] = {i["name"]: ((i.get("job") or {}).get("phase") or i["status"], ((i.get("job") or {}).get("detail") or i.get("detail") or "")[:200]) for i in b["items"]}
+    out["assembly"] = b.get("assembly")
+    out["total_s"] = stamp()
     return out
 
 

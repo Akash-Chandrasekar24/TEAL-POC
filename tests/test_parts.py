@@ -247,3 +247,41 @@ def test_let_ai_handle_every_doubt_confirms_at_once_or_rewrites_in_the_backgroun
         assert lists["gear"]["source"] == "designer" and lists["gear"]["check"]["status"] == "ready"
         assert lists["shaft"]["source"] == "designer" and lists["shaft"]["check"]["status"] == "ready"
         assert server.load_batch("abcdef123456")["phase"] == "awaiting_approval"                 # still waits for the build approval
+
+
+def test_one_button_builds_everything_without_a_pause_and_does_not_rebuild_an_unchanged_part():
+    result = {"id": "abcdef123456", "pages": [page(1, ["01. GEAR", "02. SHAFT"])], "drawing_model": {"issues": []}}
+    doubt = {**good(), "needs_human": ["Gear width?"]}
+    doubt["items"][0]["uncertain"] = True
+    created, built, assembled = [], [], []
+
+    def fake_create(rid, part_id, llm_name=None, client=None, answers=None, work_it_out=False):
+        created.append(part_id)
+        return parts.save_part_list(server.PART_LISTS, rid, {"id": part_id, "name": part_id, "item": "", "quantity": 1}, good(), "ai")
+
+    class FakeWorkflow:
+        root = Path(".")
+        def create(self, rid, attempt):
+            return {"id": "j" + attempt[:5], "revision": 1}
+        def action(self, jid, rev, action, **d):
+            built.append(jid)
+            return {"id": jid, "phase": "awaiting_review"}
+        def status(self, jid):
+            return {"id": jid, "phase": "awaiting_review"}
+
+    class Now:
+        def submit(self, fn, *a):
+            fn(*a)
+    ready = lambda: {"ready": True, "detail": "Ready to build."}
+    with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), patch.object(server, "WORKFLOW", FakeWorkflow()), \
+         patch.object(server, "_BATCH_POOL", Now()), patch.object(server, "_PREP_POOL", Now()), patch.object(server, "create_part_list", fake_create), \
+         patch.object(parts, "solidworks_status", ready), patch.object(server, "assemble_parts", lambda rid, llm=None: assembled.append(rid) or (_ for _ in ()).throw(ValueError("placed by a stand-in"))), \
+         patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)):
+        parts.save_part_list(Path(d), "abcdef123456", {"id": "gear", "name": "gear", "item": "", "quantity": 1}, doubt, "ai")
+        server.build_in_solidworks("abcdef123456")
+        b = server.load_batch("abcdef123456")
+        assert b["phase"] == "done" and created == ["shaft"] and len(built) == 2          # the gear's doubt was decided, not asked
+        assert {i["part_id"]: i["status"] for i in b["items"]} == {"gear": "awaiting_review", "shaft": "awaiting_review"}
+        assert assembled == ["abcdef123456"] and b["assembly"]["status"] == "build_failed"  # two parts built: the assembly step ran
+        server.build_in_solidworks("abcdef123456")                                        # again, nothing changed: nothing is rebuilt
+        assert len(built) == 2 and all("built earlier" in i["detail"] for i in server.load_batch("abcdef123456")["items"])
