@@ -228,7 +228,17 @@ function updateExtractionProgress(r) {
   host.replaceChildren();
   if (r.extraction_status === "processing") host.append(el("span", {class:"spinner"}), " Measurements are ready to review. Feature and component identification is continuing in the background.");
   else if (r.extraction_status === "needs_attention") host.textContent = r.feature_extraction_error || "Some questions need your answer. Open them with the Open questions button on the Review page, where the AI can also draft answers for you to confirm.";
-  else if (r.extraction_status === "complete") host.textContent = r.reviewDirty ? "Feature results are ready. Save your current measurement edits to refresh the remaining review sections." : "Feature and component extraction complete.";
+  else if (r.extraction_status === "complete") host.textContent = r.reviewDirty || r.extractionRefreshPending ? "Feature results are ready. They appear after you save your answers or edits (nothing you typed is lost)." : "Feature and component extraction complete.";
+}
+
+// The person is in the middle of something on the page: AI drafts on screen (or being drafted) or an answer typed and not saved.
+// A background refresh must never re-draw the page over it; it waits until they save.
+function unsavedWork(r) {
+  if (r.suggestBusy) return true;
+  try {
+    if (document.querySelector("#build-plan .ai-card")) return true;
+    return [...document.querySelectorAll("#build-plan textarea, #design textarea")].some((t) => t.value && t.value.trim());
+  } catch (_) { return false; }                                            // no page to inspect: nothing is lost
 }
 
 function pollExtraction(r) {
@@ -242,7 +252,7 @@ function pollExtraction(r) {
       const latest = await response.json();
       for (const key of ["extraction_status", "extracted_features", "feature_extraction_error", "extraction_seconds"]) if (key in latest) r[key] = latest[key];
       if (!r.assembly && latest.assembly) r.assembly = latest.assembly;
-      if (r.extraction_status !== "processing" && !r.reviewDirty) { show(r); return; }
+      if (r.extraction_status !== "processing" && !r.reviewDirty && !unsavedWork(r)) { show(r); return; }
       if (r.extraction_status !== "processing") r.extractionRefreshPending = true;
       updateExtractionProgress(r);
     } catch (_) { /* Keep the review usable and retry status without replaying extraction. */ }
@@ -1170,8 +1180,10 @@ function suggestPanel(r, questions, drafted, count) {
   const ask = el("button", { type: "button", class: "btn", text: `Let AI suggest answers (${count || keys.length})` });
   ask.addEventListener("click", async () => {
     ask.disabled = true; status.textContent = "The AI is reading the drawing and drafting answers. This can take a minute. Nothing is saved until you accept.";
+    r.suggestBusy = true;
     try { suggestionCards(r, await workflowRequest("/api/clarify", { result_id: r.id, llm: ($("#llm") && $("#llm").value) || r.llm }), host, drafted); }
     catch (error) { status.textContent = error.message; ask.disabled = false; }
+    finally { r.suggestBusy = false; }                                     // the drafts on screen keep the page from re-drawing (unsavedWork)
   });
   host.append(el("p", { class: "hint", text: "The AI can draft an answer for each question from the drawing itself. You see every draft first and confirm it before anything is saved." }), ask, status);
   return host;

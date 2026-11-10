@@ -210,6 +210,8 @@ async function main() {
   assert.ok(sections.length>=1,"a button per section of the drawing");
   assert.ok(all(gated,(e) => e.attrs.class==="m-gapprove" && /^Approve section \(\d+\)$/.test(e.textContent)).length>=1,"each section is approved from its own header");
   assert.ok(!gated.textContent.includes("Measurements, made clear."),"plain heading");
+  assert.equal(context.unsavedWork({suggestBusy:true}),true,"AI drafts being written: a background refresh must not re-draw the page");
+  assert.equal(context.unsavedWork({}),false,"nothing on screen: the refresh may re-draw");
   assert.ok(gated.textContent.includes("Open questions appear here once every measurement is approved"),"questions wait for the measurements");
   assert.equal(all(gated,(e) => e.attrs.id==="build-plan")[0].hidden,true,"the questions block is hidden until approval");
   assert.ok(html.includes('class="ai-fab"') && html.includes('class="chat-close"'),"the assistant opens from a floating button and closes from its window");
