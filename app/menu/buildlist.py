@@ -187,5 +187,7 @@ def list_gate(bl: BuildList) -> list[str]:
         reasons.append(f"{first.feature} makes the whole part: it must be the only item")
     if any((it.feature == BASE_FEATURE and not placed(it.params)) or it.feature in ("revolve_base", *STANDALONE_FEATURES) for it in bl.items[1:]):
         reasons.append("only the first item may be a base (an extrude_profile_boss without a face, or a revolve_base)")
+    if any(it.feature == "shell" for it in bl.items[2:]) or (bl.items and bl.items[0].feature == "shell"):
+        reasons.append("a shell must be the second item, directly after its base (it hollows the plain base)")
     reasons += seen_violations(bl)
     return reasons

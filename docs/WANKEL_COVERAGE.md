@@ -33,3 +33,9 @@ are listed as an `unsupported` gap that a human must accept.
 2. ~~Rotated slots / grooves~~ done (turned rectangles in cuts and outlines). Angled datum planes (spark-plug boss) remain.
 3. A cavity/shell feature (water jacket) through our own C# extension.
 4. ~~General edge fillets/chamfers~~ partly done: any face of the base, with an `along` direction filter (e.g. corner edges through the thickness). Edges on later features' faces and chamfers with two distances remain.
+
+## Update 2026-11-10
+- Spark-plug boss on the side housing: `angled_boss` (tilted round boss + hole down its axis, through the new `ext_angled_plane`).
+  Needs the printed tilt angle, boss diameter / height and the M14x1.25 position.
+- Water jacket of the rotor housing: it runs through the housing and is closed by the side housings, so it is a `profile_cut` (through) of the
+  jacket outline, not a shell; the jacket outline is not dimensioned on the sheet. `shell` (new) covers hollow boxes and cups.

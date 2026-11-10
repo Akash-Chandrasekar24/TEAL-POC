@@ -21,7 +21,8 @@ class BackendUnavailable(RuntimeError):
     pass
 
 
-APPLICATION_TOOL_PARAMETERS = {"inspect_assembly": {"inspection_type"}, "inspect_drawing": set()}
+APPLICATION_TOOL_PARAMETERS = {"inspect_assembly": {"inspection_type"}, "inspect_drawing": set(),
+                               "ext_sweep": {"spec"}, "ext_shell": {"spec"}, "ext_angled_plane": {"spec"}, "ext_sketch_extrude": {"spec"}}
 
 
 def extension_hashes() -> dict[str, str]:
@@ -144,7 +145,11 @@ def catalog(tools: list | None = None) -> dict:
             "application_tools": [{"name": "inspect_assembly", "kind": "read", "layer": "application_mcp",
                                    "purpose": "Workspace, rebuild, bounds, constraints and interference verification"},
                                   {"name": "inspect_drawing", "kind": "read", "layer": "application_mcp",
-                                   "purpose": "Native sheet, model references, view layout/scale and dimension readback"}],
+                                   "purpose": "Native sheet, model references, view layout/scale and dimension readback"},
+                                  {"name": "ext_sweep", "kind": "model", "layer": "application_mcp", "purpose": "Swept boss or swept CUT along a path sketch"},
+                                  {"name": "ext_shell", "kind": "model", "layer": "application_mcp", "purpose": "Shell the part, removing chosen faces"},
+                                  {"name": "ext_angled_plane", "kind": "model", "layer": "application_mcp", "purpose": "Reference plane at an angle through an axis, direction checked"},
+                                  {"name": "ext_sketch_extrude", "kind": "model", "layer": "application_mcp", "purpose": "Sketch + extrude (one or both ways) on any plane, direction by vector"}],
             "custom_features": [{"name": e.name, "summary": e.summary, "limits": list(e.limits),
                                  "layer": "application", "execution": "upstream_mcp"} for e in MENU.values()],
             "note": "Native tool availability is separate from the validated custom build-list menu. Human approval and feature checks remain required."}
@@ -159,11 +164,12 @@ def custom_graph_checks() -> dict:
     from app.runner import prepare
     base = {"id": "F1", "feature": "extrude_profile_boss", "params": copy.deepcopy(MENU["extrude_profile_boss"].example)}
     turned_base = {"id": "F1", "feature": "revolve_base", "params": copy.deepcopy(MENU["revolve_base"].example)}
+    box_base = {"id": "F1", "feature": "extrude_profile_boss", "params": {"profile": {"shape": "rectangle", "width": 120, "height": 80}, "depth": 30}}
     cases = []
     for name, entry in MENU.items():
         is_base = name in BASE_FEATURES
         item = {"id": "F1" if is_base else "F2", "feature": name, "params": copy.deepcopy(entry.example)}
-        first = turned_base if name in ("turned_axial", "cross_hole", "radial_blades", "turned_keyway") else base
+        first = turned_base if name in ("turned_axial", "cross_hole", "radial_blades", "turned_keyway") else box_base if name == "shell" else base
         data = {"list_version": "1", "unit": "mm", "projection": "third", "items": [item] if is_base else [first, item]}
         feature = prepare(parse_reply(data))[-1].feature
         method = getattr(feature, "graph", None)

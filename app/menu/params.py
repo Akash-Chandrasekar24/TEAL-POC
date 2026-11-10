@@ -407,6 +407,46 @@ class SheetMetalBaseParams(Strict):
     flanges: list[FlangeParams] = Field(default_factory=list, description="flanges on the blank's edges, at most one per edge")
 
 
+class PolylinePath(Strict):
+    kind: Literal["polyline"]
+    points: list[Annotated[list[float], Field(min_length=2, max_length=2)]] = Field(min_length=2, description="the passage's centre line: the points where "
+                                                                                     "its straight runs meet, [x, y] from the centre of the base outline; the first run horizontal or vertical")
+    bend_radius: Union[float, list[float]] = Field(description="centreline bend radius at the corners: one for all or one per corner")
+
+
+class SpiralPath(Strict):
+    kind: Literal["spiral"]
+    centre: Pos = Field(description="the centre the spiral winds round (e.g. the impeller axis), placed like any position")
+    start_radius: float = Field(gt=0, description="radius of the passage centre line where the spiral starts (e.g. at the cutwater)")
+    end_radius: float = Field(gt=0, description="radius where it ends (e.g. at the discharge throat)")
+    sweep_deg: float = Field(ge=30, le=720, description="how far round it winds, in degrees (a volute: about 360)")
+    start_angle_deg: Literal[0, 90, 180, 270] = Field(0, description="where it starts round the centre, counter-clockwise from +x (0 = to the right)")
+    hand: Literal["counter_clockwise", "clockwise"] = Field("counter_clockwise", description="which way it winds, as seen in the front view")
+
+
+class SweptPassageParams(Strict):
+    operation: Literal["cut", "boss"] = Field("cut", description="cut = a passage / gallery / channel; boss = a round rod or rib along the path")
+    diameter: float = Field(gt=0, description="diameter of the round passage section")
+    plane_z: float = Field(description="depth of the path's plane, measured from the BACK face toward the viewer (e.g. half the thickness)")
+    path: Union[PolylinePath, SpiralPath] = Field(discriminator="kind")
+
+
+class ShellParams(Strict):
+    thickness: float = Field(gt=0, description="wall thickness, as printed")
+    open_faces: list[Literal["front", "back", "top", "bottom", "left", "right", "start", "end"]] = Field(
+        min_length=1, description="faces left open: front / back / top / bottom / left / right of a box base; start / end (u = 0 / far end) of a turned base")
+
+
+class AngledBossParams(Strict):
+    position: Pos = Field(description="where the boss axis meets the FRONT face")
+    diameter: float = Field(gt=0, description="boss diameter")
+    height: float = Field(gt=0, description="length of the boss along its own axis, from the face to its flat top")
+    tilt_deg: float = Field(gt=0, le=60, description="angle between the boss axis and the face normal, as printed")
+    lean: Literal["up", "down", "left", "right"] = Field(description="which way the top of the boss leans, as seen in the front view")
+    hole_diameter: float | None = Field(None, gt=0, description="a hole down the boss axis (e.g. a spark-plug or port bore): its diameter")
+    hole_depth: Union[float, Literal["through"], None] = Field(None, description="the hole depth from the top of the boss, or 'through'")
+
+
 class RibParams(Strict):
     axis: Pos = Field(description="the axis of the round boss the rib leans on, as a position on the plate")
     boss_diameter: float = Field(gt=0, description="outer diameter of that boss")

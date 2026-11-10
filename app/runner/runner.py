@@ -143,6 +143,7 @@ def prepare(bl: BuildList) -> list[Prepared]:
             (w, h), shift, thickness = base_info(params, bl.unit)
             ctx.outline_wh, ctx.frame_shift, ctx.thickness = (w, h), shift, thickness
             ctx.turned = it.feature == "revolve_base"
+            ctx.base_feature = feature
             if ctx.turned:
                 ctx.turned_profile, ctx.turned_axis = feature.profile, feature.axis
         ctx.anchors.update(anchors_of(it.id, feature))                         # the flat faces this item made: later items can say "on <id>.top"

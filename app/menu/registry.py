@@ -30,6 +30,8 @@ from app.features.revolve_base import RevolveBase, turned_base_info
 from app.features.revolve_on_face import RevolveOnFace
 from app.features.blades import RadialBlades, TurnedKeyway
 from app.features.standalone import Loft, Section, SheetMetalBase, SweptTube
+from app.features.ext_features import AngledBoss, Shell, SweptPassage
+from app.features.turned_ops import MM3_PER_UNIT3 as _MM3
 from app.features.turned_ops import CrossHole, TurnedAxial
 from app.features.outline_helpers import round_polygon_corners, rounded_rectangle
 from app.geometry import profile_bounds
@@ -52,6 +54,7 @@ class BuildContext:
     turned: bool = False                                 # the base is a revolve_base: its front / back / top / bottom are not flat faces
     turned_profile: list | None = None                   # that base's half-section (u, r) and axis: what turned_axial / cross_hole build on
     turned_axis: str | None = None
+    base_feature: Any = None                             # the base item's feature (a shell checks it is a plain box or cylinder)
     anchors: dict = field(default_factory=dict)          # name -> Anchor: the flat faces earlier items created ("F6.top", "F5.end"); filled by the runner's prepare()
 
     @property
@@ -505,6 +508,47 @@ def build_sheet_metal_base(p: P.SheetMetalBaseParams, ctx: BuildContext, label: 
                           p.k_factor, label=label)
 
 
+def build_swept_passage(p: P.SweptPassageParams, ctx: BuildContext, label: str) -> SweptPassage:
+    ctx.need_base("a swept passage")
+    size = (*ctx.outline_wh, ctx.thickness)
+    if isinstance(p.path, P.SpiralPath):
+        f = factor(ctx.unit)
+        sx, sy = _position(p.path.centre).to_sketch_m(ctx.unit, ctx.outline_wh)
+        spiral = (sx / f, sy / f, p.path.start_radius, p.path.end_radius, p.path.sweep_deg, p.path.start_angle_deg,
+                  1 if p.path.hand == "counter_clockwise" else -1)
+        return SweptPassage(ctx.unit, p.operation, p.diameter, p.plane_z, "spiral", spiral=spiral, size=size, label=label)
+    radii = p.path.bend_radius if isinstance(p.path.bend_radius, list) else [p.path.bend_radius]
+    return SweptPassage(ctx.unit, p.operation, p.diameter, p.plane_z, "polyline", points=tuple(tuple(q) for q in p.path.points),
+                        bend_radii=tuple(radii), size=size, label=label)
+
+
+def build_shell(p: P.ShellParams, ctx: BuildContext, label: str) -> Shell:
+    ctx.need_base("a shell")
+    base = ctx.base_feature
+    vol = base.expected_delta_mm3() if base is not None and hasattr(base, "expected_delta_mm3") else None
+    k = _MM3[ctx.unit]
+    if ctx.turned:
+        from app.features.revolve_base import turned_extent
+        L, R, _ = turned_extent(ctx.turned_profile)
+        if vol is None or abs(vol - math.pi * R * R * L * k) > 1e-6 * vol:
+            raise FeatureRequestError("a shell is built on a plain cylinder (a rectangular half-section from the axis) only")
+        return Shell(ctx.unit, p.thickness, tuple(p.open_faces), "cylinder", (L, R, ctx.turned_axis), label=label)
+    W, H = ctx.outline_wh
+    if vol is None or abs(vol - W * H * ctx.thickness * k) > 1e-6 * vol:
+        raise FeatureRequestError("a shell is built on a plain box (a rectangular outline with sharp corners) only")
+    return Shell(ctx.unit, p.thickness, tuple(p.open_faces), "box", (W, H, ctx.thickness), label=label)
+
+
+def build_angled_boss(p: P.AngledBossParams, ctx: BuildContext, label: str) -> AngledBoss:
+    ctx.need_base("an angled boss")
+    if ctx.turned:
+        raise FeatureRequestError("an angled boss stands on the front face of a flat (extruded) base, not on a turned part")
+    f = factor(ctx.unit)
+    sx, sy = _position(p.position).to_sketch_m(ctx.unit, ctx.outline_wh)
+    return AngledBoss(ctx.unit, sx / f, sy / f, p.diameter, p.height, p.tilt_deg, p.lean, (*ctx.outline_wh, ctx.thickness),
+                      p.hole_diameter, p.hole_depth, label=label)
+
+
 def build_rib(p: P.RibParams, ctx: BuildContext, label: str) -> Rib:
     if ctx.turned:
         raise FeatureRequestError("a rib after a turned base (revolve_base) is not built: needs_human")
@@ -545,7 +589,8 @@ class MenuEntry:
                 "profile_cut": ExtrudeProfileCut, "rib": Rib, "fillet_chamfer_edges": FilletChamferEdges,
                 "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole,
                 "radial_blades": RadialBlades, "turned_keyway": TurnedKeyway,
-                "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase}[self.name]
+                "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase,
+                "swept_passage": SweptPassage, "shell": Shell, "angled_boss": AngledBoss}[self.name]
 
 
 _COMMON = frozenset({"unit", "plane", "label", "regression_delta_mm3", "outline_wh"})
@@ -704,4 +749,31 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
          "no holes, cut-outs or reliefs yet", "the volume is checked as a range (SolidWorks' own flange-length convention)"),
         {"width": 120, "height": 80, "thickness": 2, "bend_radius": 3, "flanges": [{"edge": "top", "length": 30}, {"edge": "bottom", "length": 30}]},
         build_sheet_metal_base, _COMMON),
+    MenuEntry(
+        "swept_passage", P.SweptPassageParams,
+        "After a base: a round passage CUT (or a round rod boss) along a path in a plane parallel to the front face: straight runs with bends, "
+        "or a spiral that winds outward (a pump volute, a coolant gallery, a channel).",
+        "Give the section diameter, the depth of the path's plane from the back face and the path: points + bend radius, or a spiral (centre, "
+        "start and end radius, how far round, where it starts, which way).",
+        ("a round section of ONE diameter all along (a volute that widens is approximated by its mean section)", "the path lies in a plane parallel to the front face and starts horizontal or vertical",
+         "the passage must stay inside the part (cut) and must not run into itself", "the volume is checked as an upper bound"),
+        {"operation": "cut", "diameter": 8, "plane_z": 5, "path": {"kind": "polyline", "points": [[-40, 0], [20, 0], [20, 25]], "bend_radius": 10}},
+        build_swept_passage, _COMMON),
+    MenuEntry(
+        "shell", P.ShellParams,
+        "Directly after a plain box or cylinder base: hollow it out to a wall thickness, leaving chosen faces open (a box, a cover, a cup, a tube end).",
+        "Give the wall thickness and the faces left open: front / back / top / bottom / left / right of a box; start / end of a turned base.",
+        ("only the SECOND item, directly after a base that is a sharp-cornered rectangle outline or a plain cylinder",
+         "inward walls of one thickness (no outward shell, no different wall thicknesses)"),
+        {"thickness": 3, "open_faces": ["front"]},
+        build_shell, _COMMON),
+    MenuEntry(
+        "angled_boss", P.AngledBossParams,
+        "On the front face of a flat base: a round boss standing at an angle to the face (a spark-plug boss, an angled port), optionally with a hole down its axis.",
+        "Give where its axis meets the face, the diameter, the height along its axis, the tilt from the face normal and which way it leans; "
+        "for a hole, its diameter and depth from the top (or 'through').",
+        ("front face of an extruded base only", "tilt up to 60 degrees, leaning up / down / left / right as drawn (not diagonally)",
+         "the boss foot must stay on the face and the plate be thick enough to seat it"),
+        {"position": {"x": 0, "y": 0}, "diameter": 20, "height": 25, "tilt_deg": 20, "lean": "up", "hole_diameter": 10, "hole_depth": 15},
+        build_angled_boss, _COMMON),
 ]}

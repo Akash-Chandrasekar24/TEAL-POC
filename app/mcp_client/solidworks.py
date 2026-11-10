@@ -42,6 +42,10 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "get_recipe": 30.0,
     "inspect_assembly": 200.0,
     "inspect_drawing": 150.0,
+    "ext_sweep": 250.0,
+    "ext_shell": 250.0,
+    "ext_angled_plane": 250.0,
+    "ext_sketch_extrude": 250.0,
 }
 _LOG_ARG_CHARS = 1500
 _LOG_RESULT_CHARS = 600
@@ -267,6 +271,12 @@ class SolidWorksClient(ToolsMixin):
         if inspection_type not in ("workspace", "verification"):
             raise ValueError("unknown assembly inspection type")
         return await self.call("inspect_assembly", {"inspection_type": inspection_type})
+
+    async def geometry(self, tool: str, spec: dict) -> ToolResult:
+        """One of the application geometry tools (ext_sweep, ext_shell, ext_angled_plane, ext_sketch_extrude); spec in model metres."""
+        if tool not in ("ext_sweep", "ext_shell", "ext_angled_plane", "ext_sketch_extrude"):
+            raise ValueError(f"not a geometry tool: {tool}")
+        return await self.call(tool, {"spec": spec})
 
     async def open_new_part(self) -> ToolResult:
         return await self.call("open_new_part")

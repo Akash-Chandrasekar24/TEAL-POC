@@ -47,7 +47,7 @@ def test_gate_reasons():
         "unsupported items not accepted by a human": good(unsupported=[{"id": "U1", "text": "knurl"}]),
         "is not in seen_dimensions": good(seen_dimensions=["120", "80", "10"]),
         "the first item must be the base": good(items=[GOOD["items"][1], PLATE]),
-        "is not on the menu": good(items=[PLATE, {"id": "F2", "feature": "shell", "params": {}}]),
+        "is not on the menu": good(items=[PLATE, {"id": "F2", "feature": "frobnicate", "params": {}}]),
         "duplicate item ids": good(items=[PLATE, {**GOOD["items"][1], "id": "F1"}]),
     }
     for expected, lst in cases.items():

@@ -46,11 +46,10 @@ What they unlock here, once the designer gives the numbers the sheet does not pr
 | 02 Pump shaft keyway | `turned_keyway` 10 x 4.5 on the Ø50 seat | keyway length (key 40 vs seat 38) |
 `tests/test_blades.py` builds the fan and the keyway with sample designer answers to prove the path end to end.
 
-## Still not buildable: the pump casing volute
-The volute is a passage whose cross-section GROWS round the impeller. The SolidWorks bridge's feature graph has a swept BOSS only (no swept cut,
-no shell, no loft between angled planes: sketches go on the three datum planes and offsets of them). A hollow volute therefore needs new
-operations in the C# executor (`third_party/mcp-server-solidworks-main/execution/solidworks`): a swept cut and reference planes at an angle.
-The sheet does not dimension the volute either (section sizes round the spiral, cutwater position).
+## Pump casing volute (updated 2026-11-10)
+Now buildable as `swept_passage` (cut) with a `spiral` path, through the new `ext_sweep` swept cut (extensions/solidworks/GeometryExtensions.cs).
+Limit: one section diameter all round (a real volute widens; use its mean section). The sheet still does not dimension the volute
+(spiral start / end radius, section size, cutwater position): the designer must give them.
 
 ## Bought parts
 Bearings DE / NDE (6306), mechanical seal, eye bolt: supply SolidWorks models. Note: the sheet prints 6306 as Ø30 x Ø62 x 16, which are the
