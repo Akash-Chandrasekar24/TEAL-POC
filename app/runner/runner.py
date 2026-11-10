@@ -216,13 +216,16 @@ class Runner:
             return report
         verifier = StepVerifier(self.sw, self.log, doc=report.document)
         ctx = FeatureContext(self.sw, verifier, self.log)
-        for p, rep in zip(prepared, report.items):
+        for n, (p, rep) in enumerate(zip(prepared, report.items)):
             t0 = time.time()
             self._event("item_start", id=p.item.id, feature=p.item.feature)
             try:
                 result = await p.feature.apply(ctx)
             except FeatureRequestError as ex:
                 self._finish_item(rep, t0, "failed", str(ex))
+                if n > 0:                                                            # not the base: skip this step, build the rest
+                    report.warnings.append(f"{p.item.id} ({p.item.feature}) was not built: {ex}"[:400])
+                    continue
                 report.failure = Failure(p.item.id, p.item.feature, "request", str(ex))
                 return report
             except (McpToolTimeout, VerifyError, ConnectionError) as ex:
@@ -242,7 +245,14 @@ class Runner:
             if result.ok:
                 self._finish_item(rep, t0, "ok", "")
                 continue
-            report.failure = self._classify(p, result)
+            failure = self._classify(p, result)
+            if n > 0 and failure.kind != "environment":
+                # A step whose check failed (e.g. a hole that overlaps a pocket removes 1.7% less) or that SolidWorks refused: keep what it
+                # made, flag it for the designer to look at, and build the remaining steps. Before, one such step left a flat plate.
+                self._finish_item(rep, t0, "check_failed", failure.message)
+                report.warnings.append(f"CHECK FAILED, look at it in the model: {p.item.id} ({p.item.feature}): {failure.message}"[:400])
+                continue
+            report.failure = failure
             self._finish_item(rep, t0, "failed", report.failure.message)
             return report
         report.ok = True
