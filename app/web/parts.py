@@ -218,7 +218,8 @@ def latest_lists(root: Path, rid: str) -> dict:
 WORK_IT_OUT = ("The designer asked YOU to work out what the sheet does not print. Use, in this order: the sizes of the parts it fits on this sheet "
                "(a bore, cavity, shaft or seat it sits in or on), the assembly and section views, and the standard catalogue sizes of a standard part "
                "named on the sheet (e.g. a 6306 bearing, an M10 bolt). Write EVERY number you worked out with derived: true and derived_from starting "
-               "'ASSUMED:' (say where it came from), mark that item uncertain, and add one needs_human question per assumption so the designer can confirm it. "
+               "'ASSUMED:' (say where it came from) and mark that item uncertain. Put in needs_human ONLY the one or two assumptions that change the shape most "
+               "(never one per number). "
                "Do not stop and do not return an empty list: write the best complete build list you can.")
 
 
@@ -233,11 +234,14 @@ def reader_context(result: dict, part: dict, model: dict, answers: list | None =
             f"{' (item ' + part['item'] + ')' if part.get('item') else ''}"
             f"{'. The picture shows only the views of this part, each with its caption' if part['views'] else '. The part has no view of its own: the picture shows the assembly and section views where it appears'}.\n"
             "Model it as ONE solid part even when it is a standard or multi-piece component (a bearing, a seal, a bolt): never stop for that.\n"
+            "needs_human: at most 3 short questions, only real doubts that change the 3D shape; combine related ones; never ask to confirm a printed value, "
+            "a simplification or a modelling choice.\n"
             f"Drawing unit: {model.get('unit')}; projection: {model.get('projection')}.\n"
             f"Measurements the human reviewed for these views (use only printed values, as always): {json.dumps(dims, ensure_ascii=False)}")
     answered = [a for a in (answers or []) if isinstance(a, dict) and str(a.get("answer", "")).strip()]
     if answered:
-        text += ("\nThe designer answered these questions. Treat each answer as a printed value, list the numbers in seen_dimensions, and do not ask them again: "
+        text += ("\nThe designer answered these questions (an answer 'AI decides' means: keep your best assumption). Treat each answer as a printed value, "
+                 "list the numbers in seen_dimensions, and do not ask about any of them again: "
                  + json.dumps([{"question": str(a.get("question", ""))[:600], "answer": str(a["answer"])[:600]} for a in answered], ensure_ascii=False))
     if work_it_out:
         text += "\n" + WORK_IT_OUT

@@ -16,6 +16,17 @@ const BATCH_ITEM = { to_prepare: "Waiting for its build list", preparing: "Writi
   accepted: "Accepted", exported: "Exported", awaiting_fix_approval: "Needs your OK for a fix", awaiting_approval: "Stopped before SolidWorks", needs_human: "Needs your attention",
   llm_failed: "Model unavailable: retry", build_failed: "Build failed", not_buildable: "Not buildable yet", not_approved: "Not approved" };
 
+// The section of parts with doubts: one button hands every doubt of every part to the AI, or each line is resolved on its own.
+function doubtSection(r, blocked, post) {
+  const panels = blocked.map((p) => ({ p, panel: resolvePanel(r, p, post) }));
+  const all = el("button", { type: "button", class: "btn", text: `Let AI handle every doubt (${blocked.length} part${blocked.length === 1 ? "" : "s"})` });
+  all.addEventListener("click", async () => { all.disabled = true; for (const { panel } of panels) await panel.handleAll(); });
+  return el("div", { class: "doubt-section" },
+    el("div", { class: "doubt-head" }, el("div", {}, el("b", { text: `${blocked.length} part${blocked.length === 1 ? "" : "s"} with doubts` }),
+      el("small", { class: "hint", text: " Answer a doubt yourself, or let the AI decide. Every size the AI decides is marked ASSUMED, and nothing is built until you approve." })), all),
+    panels.map(({ p, panel }) => el("div", { class: "doubt-part" }, el("b", { class: "doubt-part-name", text: p.name }), panel)));
+}
+
 function batchBox(r, data, reload, status, partPost) {
   const batch = data.batch, sw = data.solidworks || {};
   const post = async (path, body) => {
@@ -74,9 +85,7 @@ function batchBox(r, data, reload, status, partPost) {
     el("ul", { class: "batch-ready" }, ready.map((p) => el("li", {}, el("b", { text: p.name }), ` · ${(p.list.draft.items || []).length} features`))),
     gaps.length ? el("div", { class: "part-gaps" }, el("b", { text: `Not modelled (${gaps.length})` }), el("ul", {}, gaps.map(({ part, u }) => el("li", { text: `${part.name}: ${u.text}` }))),
       el("label", {}, accept, " I accept every not-modelled item listed above")) : null,
-    blocked.length ? el("details", { class: "part-features", open: true }, el("summary", { text: `${blocked.length} part${blocked.length === 1 ? "" : "s"} need${blocked.length === 1 ? "s" : ""} your answer or the AI before they can be built` }),
-      el("div", { class: "resolve-list" }, blocked.map((p) => el("details", { class: "resolve-part" },
-        el("summary", {}, el("b", { text: p.name }), el("span", { text: blockedReasons(p)[0] })), resolvePanel(r, p, partPost))))) : null,
+    blocked.length ? doubtSection(r, blocked, partPost) : null,
     el("div", { class: "part-actions" }, approve, why),
     el("div", { class: "part-actions" }, el("button", { type: "button", class: "m-link", text: "Start again", onclick: () => post("/api/parts/build-all", {}) })));
 }
@@ -98,28 +107,54 @@ function blockedReasons(part) {
   return [...new Set(out)];
 }
 
+// The part's doubts, one line each: the AI's questions, else its assumed steps, else why there is no list at all.
+function doubtsOf(part) {
+  const list = part.list, draft = list?.draft || {}, check = list?.check || {};
+  const questions = (draft.needs_human || []).map((q) => ({ text: q, kind: (draft.items || []).length ? "question" : "empty-q" }));
+  if (!list || check.status === "stopped" || check.status === "invalid" || (!(draft.items || []).length && !questions.length))
+    return [{ text: blockedReasons(part)[0], kind: "empty" }];
+  const out = questions;
+  if (!out.length) out.push(...(draft.items || []).filter((i) => i.uncertain).map((i) => ({ text: `${i.printed || i.feature}: ${(i.derived_from || "size not printed").replace(/^ASSUMED:\s*/i, "assumed ")}`, kind: "uncertain" })));
+  const other = (check.blocking || []).filter((b) => !/^needs_human is not empty|^uncertain items|the list has no items/.test(b));
+  out.push(...other.map((b) => ({ text: blockedReasons({ ...part, list: { ...list, check: { ...check, blocking: [b] } } })[0], kind: "other" })));
+  return out;
+}
+
+const AI_DECIDES = "AI decides";
+
+// Resolve the doubts: every one answered by the designer or handed to the AI, then ONE request. All handed to the AI and nothing is
+// missing -> the list is confirmed as written (no model call); otherwise the AI rewrites it with the answers.
+function applyDoubts(part, rows, post) {
+  const mine = rows.filter((x) => x.mode === "human" && x.box.value.trim()).map((x) => ({ question: x.d.text, answer: x.box.value.trim() }));
+  const ai = rows.filter((x) => x.mode === "ai").map((x) => ({ question: x.d.text, answer: AI_DECIDES }));
+  const onlyConfirm = !mine.length && rows.every((x) => x.d.kind === "question" || x.d.kind === "uncertain");
+  if (onlyConfirm) return post("/api/parts/confirm", { part_id: part.id, answers: ai }, `Confirming ${part.name}: the AI's sizes are kept`);
+  return post("/api/parts/create", { part_id: part.id, answers: [...mine, ...ai], work_it_out: ai.length > 0 }, `Rewriting the build list for ${part.name}`);
+}
+
 function resolvePanel(r, part, post) {
-  const list = part.list, draft = list?.draft || {}, questions = draft.needs_human || [];
-  const boxes = questions.map((q) => ({ q, box: el("textarea", { class: "q-input", rows: "2", maxlength: 600, placeholder: "Your answer (leave empty to let the AI decide)", "aria-label": `Answer: ${q}` }) }));
-  const free = el("textarea", { class: "q-input", rows: "2", maxlength: 600, "aria-label": `Sizes or notes for ${part.name}`,
-    placeholder: questions.length ? "Anything else the AI should know (optional)" : "Main sizes or a short description, e.g. \"fits the Ø120 cavity, 168 long\" (optional)" });
-  const answers = () => [...boxes.map(({ q, box }) => ({ question: q, answer: box.value.trim() })),
-    ...(free.value.trim() ? [{ question: `About ${part.name}`, answer: free.value.trim() }] : [])].filter((a) => a.answer);
-  const send = el("button", { type: "button", class: "btn secondary", text: "Send my answers", disabled: true,
-    onclick: () => post("/api/parts/create", { part_id: part.id, answers: answers() }, `Rewriting the build list for ${part.name} with your answers`) });
-  const ai = el("button", { type: "button", class: "btn", text: "Let AI work it out",
-    onclick: () => post("/api/parts/create", { part_id: part.id, answers: answers(), work_it_out: true }, `The AI is working out the sizes of ${part.name}`) });
-  const canConfirm = (draft.items || []).length > 0 && list?.check?.status === "needs_information"
-    && (list.check.blocking || []).every((b) => /^needs_human is not empty|^uncertain items/.test(b));
-  const confirm = canConfirm ? el("button", { type: "button", class: "m-link", text: "Confirm as written",
-    onclick: () => post("/api/parts/confirm", { part_id: part.id, answers: answers() }, `Confirming the build list for ${part.name}`) }) : null;
-  [...boxes.map((b) => b.box), free].forEach((t) => t.addEventListener("input", () => { send.disabled = !answers().length; }));
-  return el("div", { class: "resolve" },
-    el("ul", { class: "resolve-why" }, blockedReasons(part).map((t) => el("li", { text: t }))),
-    questions.length ? el("ol", { class: "resolve-qs" }, boxes.map(({ q, box }) => el("li", {}, el("p", { text: q }), box))) : null,
-    free,
-    el("div", { class: "part-actions" }, ai, send, confirm),
-    el("small", { class: "hint", text: "The AI marks every size it works out as ASSUMED. Nothing is built until you approve the build." }));
+  const rows = doubtsOf(part).map((d) => ({ d, mode: null, box: el("textarea", { class: "q-input doubt-box", rows: "2", maxlength: 600, hidden: true,
+    placeholder: d.kind === "empty" ? "Main sizes or a short description, e.g. \"fits the Ø120 cavity, 168 long\"" : "Your answer", "aria-label": `Answer: ${d.text}` }) }));
+  const apply = el("button", { type: "button", class: "btn", onclick: () => { apply.disabled = true; applyDoubts(part, rows, post); } });
+  const progress = el("small", { class: "hint" });
+  const sync = () => {
+    const done = rows.filter((x) => x.mode === "ai" || (x.mode === "human" && x.box.value.trim())).length;
+    apply.disabled = done < rows.length;
+    apply.textContent = "Apply";
+    progress.textContent = done < rows.length ? `${done} of ${rows.length} resolved` : "Ready to apply";
+    rows.forEach((x) => { x.li.dataset.mode = x.mode || ""; x.humanBtn.className = `doubt-btn${x.mode === "human" ? " on" : ""}`; x.aiBtn.className = `doubt-btn ai${x.mode === "ai" ? " on" : ""}`; });
+  };
+  rows.forEach((x) => {
+    x.humanBtn = el("button", { type: "button", text: "Answer myself", onclick: () => { x.mode = "human"; x.box.hidden = false; x.box.focus?.(); sync(); } });
+    x.aiBtn = el("button", { type: "button", text: AI_DECIDES, onclick: () => { x.mode = "ai"; x.box.hidden = true; sync(); } });
+    x.box.addEventListener("input", sync);
+    x.li = el("li", { class: "doubt" }, el("div", { class: "doubt-line" }, el("span", { class: "doubt-text", text: x.d.text }),
+      el("span", { class: "doubt-actions" }, x.humanBtn, x.aiBtn)), x.box);
+  });
+  sync();
+  const panel = el("div", { class: "resolve" }, el("ol", { class: "doubts" }, rows.map((x) => x.li)), el("div", { class: "part-actions" }, apply, progress));
+  panel.handleAll = () => { rows.forEach((x) => { x.mode = "ai"; x.box.hidden = true; }); return applyDoubts(part, rows, post); };
+  return panel;
 }
 
 // ---- Parts on this sheet: a build list per part, then the existing approval / build / review / export path
@@ -173,7 +208,7 @@ function partsPanel(r) {
         const features = (list.draft.items || []).map((it) => `${it.id} ${it.feature}${it.printed ? " · " + it.printed : ""}`);
         body.append(el("p", { class: "part-summary", text: `${(list.draft.items || []).length} feature${(list.draft.items || []).length === 1 ? "" : "s"} · from ${list.source === "ai" ? "the AI" : "a file"} · ${new Date(list.created).toLocaleString()}` }),
           el("details", { class: "part-features" }, el("summary", { text: "Features in this build list" }), el("ol", {}, features.map((t) => el("li", { text: t })))));
-        if (check.status !== "ready") body.append(el("div", { class: "part-blocking" }, el("b", { text: "Before it can be built:" }), resolvePanel(r, part, post)));
+        if (check.status !== "ready") body.append(el("p", { class: "part-why-line", text: `${blockedReasons(part).join(" ")} Resolve it under “parts with doubts” above.` }));
         const gaps = (check.unsupported || []).map((u) => ({ u, box: el("input", { type: "checkbox", "aria-label": `Accept ${u.id}` }) }));
         if (gaps.length) body.append(el("div", { class: "part-gaps" }, el("b", { text: "Not modelled: tick each one you accept" }),
           gaps.map(({ u, box }) => el("label", {}, box, ` ${u.id}: ${u.text}`))));
@@ -198,7 +233,7 @@ function partsPanel(r) {
           body.append(el("div", { class: "part-actions" }, build, why));
         }
       }
-      if (!list) body.append(el("div", { class: "part-blocking" }, resolvePanel(r, part, post)));
+      if (!list) body.append(el("p", { class: "part-why-line", text: blockedReasons(part)[0] }));
       body.append(el("div", { class: "part-actions" }, create, upload, file));
       return el("article", { class: "part-card", "data-part": part.id }, head, body);
     });
