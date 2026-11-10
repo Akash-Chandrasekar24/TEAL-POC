@@ -1230,6 +1230,56 @@ async function submitCorrection(r, body) {
   return saved;
 }
 
+// ---- where a question points on the drawing: a callout (o19), a view (v3), a feature (f7), quoted text, a section / detail name; else the page
+function questionSpot(r, key, text) {
+  const m = /^P(\d+)\.u\d+$/.exec(key || "");
+  const page = m && (r.pages || []).find((p) => p.no === Number(m[1]));
+  if (!page) return null;
+  const ex = page.read?.evidence?.extraction || {};
+  const px = (b) => calloutPixels(page, b);
+  const viewBox = (n) => page.boxes?.[n - 1] || null;
+  const norm = (t) => String(t || "").toLowerCase().replace(/\s+/g, "").replace(/[⌀ø]/g, "ø");
+  let box = null, exact = false;
+  const callout = /\bo(\d+)\b/.exec(text);
+  if (callout) { const c = (ex.callouts || []).find((x) => x.id === `o${callout[1]}`); if (c?.box) { box = px(c.box); exact = true; } }
+  const view = !box && /\bv(\d+)\b/.exec(text);
+  if (view) box = viewBox(Number(view[1]));
+  const feat = !box && /\bf(\d+)\b/.exec(text);
+  if (feat) { const f = (ex.features || []).find((x) => x.id === `f${feat[1]}`); const v = /^v(\d+)$/.exec(f?.views?.[0] || ""); if (v) box = viewBox(Number(v[1])); }
+  if (!box) {                                                       // quoted printed text, e.g. '1:1,5' or "Ø45 H7"
+    for (const q of text.match(/['"“‘]([^'"”’]{1,40})['"”’]/g) || []) {
+      const want = norm(q.slice(1, -1));
+      const c = want && (ex.callouts || []).find((x) => x.box && norm(x.text).includes(want));
+      if (c) { box = px(c.box); exact = true; break; }
+    }
+  }
+  if (!box) {                                                       // SECTION D-D / DETAIL F / a view label
+    const name = /\b(section|detail)\s+([a-z])(?:\s*-\s*\2)?\b/i.exec(text);
+    if (name) {
+      const want = norm(name[0]);
+      const i = (page.read?.views || []).findIndex((v) => norm(v.label).includes(want));
+      if (i >= 0) box = viewBox((page.read.views[i].no) || i + 1);
+    }
+  }
+  return { page, box: box || [0, 0, page.width, page.height], exact, whole: !box };
+}
+
+function questionCrop(r, key, text) {
+  const spot = questionSpot(r, key, text);
+  if (!spot) return null;
+  const { page, box, exact, whole } = spot;
+  const pad = exact ? Math.max(60, Math.max(box[2] - box[0], box[3] - box[1]) * 2) : 12;          // a callout: show its surroundings too
+  const x0 = Math.max(0, box[0] - pad), y0 = Math.max(0, box[1] - pad);
+  const x1 = Math.min(page.width, box[2] + pad), y1 = Math.min(page.height, box[3] + pad);
+  const svg = svgEl("svg", { class: "q-crop", viewBox: `${x0} ${y0} ${x1 - x0} ${y1 - y0}`, preserveAspectRatio: "xMidYMid meet", role: "img",
+    "aria-label": whole ? `Page ${page.no} of the drawing` : `The part of page ${page.no} this question is about` });
+  svg.append(svgEl("image", { href: `/api/page/${page.sha}`, x: 0, y: 0, width: page.width, height: page.height }));
+  if (!whole) svg.append(svgEl("rect", { class: "q-crop-mark", x: box[0] - 4, y: box[1] - 4, width: box[2] - box[0] + 8, height: box[3] - box[1] + 8 }));
+  const wrap = el("figure", { class: `q-crop-wrap${whole ? " whole" : ""}` }, svg,
+    el("figcaption", { text: whole ? `Page ${page.no}: the question does not name a spot, so the whole page is shown` : exact ? "The callout the question is about" : "The view the question is about" }));
+  return wrap;
+}
+
 function answerCard(r, key, question) {
   const box = el("textarea", { class: "q-input", rows: "2", maxlength: 4000, placeholder: "Your answer: what is actually printed, or what it means", "aria-label": `Answer ${key}` });
   const status = el("p", { class: "hint", "aria-live": "polite" });
@@ -1241,7 +1291,7 @@ function answerCard(r, key, question) {
     catch (error) { status.textContent = error.message; save.disabled = false; }
   });
   return el("li", { class: "q-card", "data-question": key }, el("small", { class: "q-where", text: `Page ${key.slice(1).split(".")[0]} · question ${key.split(".u")[1]}` }),
-    el("p", { class: "q-text", text: question }), box, el("div", { class: "q-actions" }, save), status);
+    el("p", { class: "q-text", text: question }), questionCrop(r, key, question), box, el("div", { class: "q-actions" }, save), status);
 }
 
 function questionList(r, questions) {
@@ -1282,7 +1332,7 @@ function suggestionCards(r, res, host) {
     const withReading = el("input", { type: "checkbox", "aria-label": `Also set the reading for ${sg.key}` });
     withReading.checked = false;                       // adding a reading changes the measurements: only if the reviewer opts in
     const reading = sg.measurement ? el("label", { class: "ai-reading" }, withReading, ` Also add the corrected reading "${sg.measurement}" (${sg.view})`) : null;
-    const crop = sg.view ? viewCrop(r, sg.view) : null;
+    const crop = sg.view ? viewCrop(r, sg.view) : questionCrop(r, sg.key, sg.question);
     const body = sg.can_answer
       ? [el("label", { class: "ai-accept" }, accept, " Accept this answer"), answer, reading]
       : [el("p", { class: "hint", text: "The AI could not tell from the image. Answer it yourself above or in the assistant." })];
@@ -1479,7 +1529,11 @@ $("#run").addEventListener("click", run);
 document.addEventListener("click", (e) => {
   const t = e.target && e.target.closest ? e.target : null;
   if (!t) return;
-  if (t.closest(".ai-fab")) { document.body.classList.add("chat-wide"); setTimeout(() => $("#chat-reply")?.focus(), 50); return; }
+  if (t.closest(".ai-fab")) {
+    document.body.classList.add("chat-wide");
+    setTimeout(() => { const m = $("#chat-messages"); if (m) m.scrollTop = m.scrollHeight; $("#chat-reply")?.focus(); }, 50);   // open on the latest messages
+    return;
+  }
   if (t.closest(".chat-close")) { document.body.classList.remove("chat-wide"); return; }
   if (t.closest(".chat-expand")) document.body.classList.toggle("chat-wide");
 });

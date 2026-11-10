@@ -200,6 +200,16 @@ async function main() {
   assert.ok(gated.textContent.includes("Open questions appear here once every measurement is approved"),"questions wait for the measurements");
   assert.equal(all(gated,(e) => e.attrs.id==="build-plan")[0].hidden,true,"the questions block is hidden until approval");
   assert.ok(html.includes('class="ai-fab"') && html.includes('class="chat-close"'),"the assistant opens from a floating button and closes from its window");
+  const pageR={pages:[{no:1,sha:"a".repeat(64),width:1000,height:500,boxes:[[0,0,500,500],[500,0,1000,500]],read:{views:[{no:1,label:"FRONT"},{no:2,label:"SECTION D-D"}],
+    evidence:{extraction:{callouts:[{id:"o19",text:"SCALE 1:1,5",box:[100,100,200,150]}],features:[{id:"f7",views:["v2"]}]}}}}]};
+  const spot=(t) => JSON.parse(JSON.stringify(context.questionSpot(pageR,"P1.u2",t)));
+  assert.deepEqual(spot("o19: conflict: SCALE 1:1,5").box,[100,50,200,75],"a callout id points at that callout (normalized box -> pixels)");
+  assert.deepEqual(spot("Confirm whether the decimal comma in '1:1,5' is 1:1.5").box,[100,50,200,75],"quoted printed text finds its callout");
+  assert.deepEqual(spot("v2: confirm the cutting plane").box,[500,0,1000,500],"a view id points at that view");
+  assert.deepEqual(spot("f7: is 12 a hole depth?").box,[500,0,1000,500],"a feature points at its view");
+  assert.deepEqual(spot("The cutting plane of SECTION D-D is not visible").box,[500,0,1000,500],"a section name finds its view");
+  assert.equal(spot("No tolerance is printed").whole,true,"no spot named: the whole page");
+  assert.equal(context.questionSpot(pageR,"bad","x"),null);
   const showBody=html.slice(html.indexOf("function show(r)"),html.indexOf("function updateExtractionProgress"));
   assert.ok(!showBody.includes("assemblyCard(r)") && !showBody.includes("featureCard(r)") && !showBody.includes("assessmentCard(r)"),"review page omits the removed inspector sections");
   console.log("Drawing review UI smoke test passed");

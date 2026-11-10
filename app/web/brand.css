@@ -371,3 +371,26 @@ details.advanced,details.tech-details{background:transparent;border:0;border-rad
 details.advanced>summary,details.tech-details>summary{padding:4px 0}
 
 .m-approve-row [hidden],.m-save-row [hidden]{display:none!important}
+
+/* the spot a question is about */
+.q-crop-wrap{margin:0 0 10px;padding:0}
+.q-crop{display:block;width:100%;height:220px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.q-crop-wrap.whole .q-crop{height:160px}
+.q-crop-mark{fill:#f89e611f;stroke:var(--orange);stroke-width:3;vector-effect:non-scaling-stroke}
+.q-crop-wrap figcaption{font-size:10.5px;color:var(--muted);margin-top:4px}
+
+/* the floating assistant: a compact window (a transform left by the step animation made "fixed" follow the page, so the window stretched) */
+.studio-page.active{animation-fill-mode:backwards!important}
+body[data-step="2"].chat-wide .review-left #review-conversation-slot{top:auto!important;bottom:24px!important;right:24px!important;
+  width:min(440px,calc(100vw - 32px))!important;height:min(620px,calc(100vh - 110px))!important}
+body[data-step="2"].chat-wide #agent-chat{height:100%!important}
+#agent-chat .chat-composer{padding:10px 14px!important}
+#agent-chat .chat-composer textarea{min-height:44px!important;max-height:96px!important}
+#agent-chat .chat-focus{margin:6px 0!important}
+#agent-chat .chat-scope{margin:4px 0 0!important}
+#agent-chat .chat-message p{margin:4px 0 0}
+#agent-chat .chat-message{max-width:92%}
+
+#agent-chat .chat-modes button{padding:6px 10px!important;font-size:12px}
+#agent-chat .chat-send{min-height:38px!important;padding:8px 16px!important;margin-top:8px!important}
+#agent-chat .chat-composer textarea{min-height:40px!important}
