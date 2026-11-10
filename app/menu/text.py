@@ -46,5 +46,45 @@ def feature_card(name: str) -> str:
             f"`params` JSON schema: {json.dumps(params_schema(name), separators=(',', ':'))}")
 
 
+def _shared_types() -> dict[str, dict]:
+    """Named object types (Pos, the outline shapes ...) used by two or more places of the menu: printed once, referred to by name."""
+    seen: dict[str, list] = {}
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "object" and node.get("title") and "properties" in node:
+                seen.setdefault(node["title"], []).append(node)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    for name in MENU:
+        walk(params_schema(name))
+    return {t: nodes[0] for t, nodes in seen.items() if len(nodes) > 1 and all(n == nodes[0] for n in nodes)}
+
+
+def _by_name(node: Any, shared: dict, top: bool = True) -> Any:
+    if isinstance(node, dict):
+        if not top and node.get("title") in shared and node == shared[node["title"]]:
+            return {"type": node["title"]}
+        return {k: _by_name(v, shared, False) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_by_name(v, shared, False) for v in node]
+    return node
+
+
 def menu_text() -> str:
-    return "## Feature menu (the only features you may use)\n" + menu_overview() + "\n\n" + "\n\n".join(feature_card(n) for n in MENU)
+    """The reader's menu. A type used in several features (a position, an outline shape) is printed ONCE under "Shared types" and named in
+    the feature schemas as {"type": "<Name>"}: the same information, about a third of the size (every build list is one call with it)."""
+    shared = _shared_types()
+    types = "\n".join(f"- {t}: {json.dumps(_by_name(sch, shared), separators=(',', ':'))}" for t, sch in sorted(shared.items()))
+    cards = []
+    for n in MENU:
+        e = MENU[n]
+        limits = "\n".join(f"  - {x}" for x in e.limits)
+        cards.append(f"### {e.name}\n{e.description}\nLimits:\n{limits}\nExample `params`: {json.dumps(e.example)}\n"
+                     f"`params` JSON schema: {json.dumps(_by_name(params_schema(n), shared), separators=(',', ':'))}")
+    return ("## Feature menu (the only features you may use)\n" + menu_overview() + "\n\n## Shared types\n"
+            "A schema written {\"type\": \"<Name>\"} means the object type <Name> defined here.\n" + types + "\n\n" + "\n\n".join(cards))
