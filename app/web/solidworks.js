@@ -44,7 +44,7 @@ function flowBox(r, data, reload, status) {
     catch (error) { status.textContent = error.message; start.disabled = false; }
   });
   const items = (batch?.flow === "one_button" ? batch.items : []) || [];
-  const phaseOf = (it) => { const ph = it.job?.phase || it.status; return stopped && ["to_prepare", "preparing", "listed", "queued", "building"].includes(ph) ? "stopped" : ph; };
+  const phaseOf = (it) => { const ph = ["to_prepare", "preparing", "listed", "queued", "building"].includes(it.status) ? it.status : it.job?.phase || it.status; return stopped && ["to_prepare", "preparing", "listed", "queued", "building"].includes(ph) ? "stopped" : ph; };
   const built = items.filter((it) => ["awaiting_review", "accepted", "exported"].includes(phaseOf(it)));
   const rows = items.map((it) => {
     const ph = phaseOf(it), ok = ["awaiting_review", "accepted", "exported"].includes(ph), bad = FLOW_ITEM[ph] === "Not built";
