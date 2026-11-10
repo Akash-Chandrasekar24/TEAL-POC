@@ -95,6 +95,7 @@ class SweptPassage:
     spiral: tuple = ()                   # (cx, cy, r0, r1, sweep_deg, start_angle_deg, hand)
     size: tuple = (0.0, 0.0, 0.0)        # the base's (W, H, T) for the inside-the-part check
     label: str = "swept passage"
+    end_diameter: float | None = None    # spiral only: a volute that widens, swept a quarter turn at a time, each with its own diameter
 
     NAME = "swept_passage"
 
@@ -103,11 +104,25 @@ class SweptPassage:
             return spiral_path(*self.spiral)
         return tube_path([tuple(p) for p in self.points], list(self.bend_radii))
 
+    def pieces(self) -> list[tuple[list[dict], float]]:
+        """(segments, diameter) per sweep: one sweep, or for a widening volute one per quarter-turn arc with the diameter at the arc's
+        middle (a stepped volute)."""
+        segs, _ = self.path()
+        if self.end_diameter is None or self.end_diameter == self.diameter:
+            return [(segs, self.diameter)]
+        n = len(segs)
+        return [([s], self.diameter + (self.end_diameter - self.diameter) * (i + 0.5) / n) for i, s in enumerate(segs)]
+
     def validate(self) -> None:
         factor(self.unit)
         if self.operation not in ("cut", "boss") or not self.diameter > 0:
             raise FeatureRequestError("a swept passage is a cut or a boss with a positive diameter")
-        r = self.diameter / 2
+        if self.end_diameter is not None:
+            if self.path_kind != "spiral" or not self.end_diameter > 0:
+                raise FeatureRequestError("an end diameter (a widening passage) is for a spiral path, and must be positive")
+            if self.spiral[4] % 90 or self.spiral[4] < 180:              # every step must start square to x or y
+                raise FeatureRequestError("a widening volute winds a whole number of quarter turns, at least half a turn (180, 270, 360 ... degrees)")
+        r = max(self.diameter, self.end_diameter or 0) / 2
         if self.path_kind == "spiral":
             cx, cy, r0, r1, sweep, start, hand = self.spiral
             if not (0 < r0 and 0 < r1 and 30 <= sweep <= 720) or start % 90 or hand not in (1, -1):
@@ -136,19 +151,33 @@ class SweptPassage:
                     or self.plane_z - r < -_EPS or self.plane_z + r > T + _EPS:
                 raise FeatureRequestError("the passage leaves the part's outline or thickness: check the path, the depth and the diameter")
 
-    def spec(self) -> dict:
-        self.validate()
+    def _one_spec(self, segs: list[dict], diameter: float) -> dict:
         f = factor(self.unit)
-        segs, _ = self.path()
         x0, y0 = segs[0]["x1"], segs[0]["y1"]
         t = _start_tangent(segs[0])
         plane = {"datum": "right", "offset": x0 * f} if abs(t[0]) > 0.5 else {"datum": "top", "offset": y0 * f}
-        circle = {"kind": "circle", "center": [x0 * f, y0 * f, self.plane_z * f], "radius": self.diameter / 2 * f}
+        circle = {"kind": "circle", "center": [x0 * f, y0 * f, self.plane_z * f], "radius": diameter / 2 * f}
         return {"operation": self.operation, "path": {"plane": {"datum": "front", "offset": self.plane_z * f}, "entities": entities_3d(segs, self.plane_z, f)},
                 "profile": {"plane": plane, "entities": [circle]}}
 
+    def specs(self) -> list[dict]:
+        self.validate()
+        return [self._one_spec(segs, d) for segs, d in self.pieces()]
+
+    def spec(self) -> dict:
+        return self.specs()[0]
+
+    def piece_bounds_mm3(self) -> list[float]:
+        """Each piece: section area x its arc length (one quarter-turn arc of the spiral: radius x pi/2)."""
+        k = MM3_PER_UNIT3[self.unit]
+        ps = self.pieces()
+        if len(ps) == 1:
+            return [math.pi / 4 * self.diameter ** 2 * self.path()[1] * k]
+        step = math.radians(self.spiral[4]) / len(ps)
+        return [math.pi / 4 * d ** 2 * math.hypot(s[0]["x1"] - s[0]["cx"], s[0]["y1"] - s[0]["cy"]) * step * k for s, d in ps]
+
     def bound_mm3(self) -> float:
-        return math.pi / 4 * self.diameter ** 2 * self.path()[1] * MM3_PER_UNIT3[self.unit]
+        return sum(self.piece_bounds_mm3())
 
     def expected(self) -> Expect:
         return Expect(bound_mm3=self.bound_mm3(), bodies=1, expect_doc="at most section x centreline length: the passage may run partly outside material")
@@ -157,9 +186,15 @@ class SweptPassage:
         return (-1 if self.operation == "cut" else 1) * self.bound_mm3()
 
     async def apply(self, ctx: FeatureContext) -> FeatureResult:
-        spec = self.spec()
+        specs, bounds = self.specs(), self.piece_bounds_mm3()
         res = FeatureResult(self.NAME)
-        res.verdicts.append(await ctx.verifier.run_step(self.label, lambda: ctx.sw.geometry("ext_sweep", spec), self.expected()))
+        for i, (spec, b) in enumerate(zip(specs, bounds)):
+            label = self.label if len(specs) == 1 else f"{self.label} {i + 1}/{len(specs)}"
+            v = await ctx.verifier.run_step(label, lambda spec=spec: ctx.sw.geometry("ext_sweep", spec),
+                                            Expect(bound_mm3=b, bodies=1, expect_doc="at most section x centreline length"))
+            res.verdicts.append(v)
+            if not v.ok:
+                break
         return res
 
 

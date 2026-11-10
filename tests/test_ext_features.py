@@ -55,6 +55,37 @@ def test_swept_passage_request_and_bound():
             assert words in str(ex), str(ex)
 
 
+def test_widening_volute_is_one_sweep_per_quarter_turn():
+    vol = SweptPassage("mm", "cut", 16, 40, "spiral", spiral=(0, 0, 60, 90, 360, 0, 1), size=(260, 260, 80), end_diameter=32)
+    specs = vol.specs()
+    assert np.allclose([s["profile"]["entities"][0]["radius"] for s in specs], [0.009, 0.011, 0.013, 0.015])   # diameters 18 22 26 30 mid-step
+    for s in specs:                                                          # each step starts square to x or y: its section on a datum
+        (sx, sy, _), plane = s["profile"]["entities"][0]["center"], s["profile"]["plane"]
+        assert plane in ({"datum": "top", "offset": sy}, {"datum": "right", "offset": sx}) and len(s["path"]["entities"]) == 1
+    radii = [60, 70, 80, 90]
+    assert math.isclose(vol.bound_mm3(), sum(math.pi / 4 * d * d * r * math.pi / 2 for d, r in zip((18, 22, 26, 30), radii)))
+    sent = []
+
+    class SW:
+        async def geometry(self, tool, spec):
+            sent.append(tool)
+            return type("R", (), {"ok": True})()
+
+    class Verifier:
+        async def run_step(self, label, action, expect):
+            await action()
+            return type("V", (), {"ok": True})()
+
+    res = asyncio.run(vol.apply(type("C", (), {"sw": SW(), "verifier": Verifier()})()))
+    assert sent == ["ext_sweep"] * 4 and len(res.verdicts) == 4
+    for bad in (dict(end_diameter=32, spiral=(0, 0, 60, 90, 90, 0, 1)), dict(end_diameter=32, spiral=(0, 0, 60, 90, 315, 0, 1))):
+        try:
+            SweptPassage(**(dict(unit="mm", operation="cut", diameter=16, plane_z=40, path_kind="spiral", size=(260, 260, 80)) | bad)).validate()
+            assert False, bad
+        except FeatureRequestError as ex:
+            assert "quarter turns" in str(ex)
+
+
 def test_shell_cavities_are_exact():
     box = Shell("mm", 3, ("front",), "box", (120, 80, 30))
     assert box.expected_delta_mm3() == -(114 * 74 * 27)

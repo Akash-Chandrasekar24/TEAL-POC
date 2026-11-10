@@ -28,7 +28,7 @@ computed from the printed sizes, the body count, and position probes. The catalo
 ## On any base
 | Feature | Adds | Volume check |
 |---|---|---|
-| `swept_passage` | a round passage CUT (or rod boss) along straight runs + bends, or a spiral that winds outward (pump volute, gallery, channel) | upper bound |
+| `swept_passage` | a round passage CUT (or rod boss) along straight runs + bends, or a spiral that winds outward (pump volute, gallery, channel); a spiral may WIDEN (`end_diameter`), built as one sweep per quarter turn | upper bound (per step) |
 | `shell` | hollows a plain box or cylinder to a wall thickness, chosen faces open (second item only) | exact |
 
 ## On a turned base
@@ -47,7 +47,7 @@ rebuilds it flipped if needed) and `ext_sketch_extrude` (any plane, both ways, d
 space and converted with SolidWorks' own sketch transform. The MCP handshake lists 53 tools (47 upstream + 6 ours), no parameter drift.
 
 ## Not built yet
-A volute whose section WIDENS round the spiral (swept_passage uses one diameter), shells on bases with other features, loft through more than
+A volute that widens SMOOTHLY (swept_passage steps once per quarter turn), shells on bases with other features, loft through more than
 two sections, holes in sheet metal, threads (notes only).
 
 Nothing here has run in SolidWorks yet (no licence on the development machine): every feature compiles, passes the bridge's own feature-graph

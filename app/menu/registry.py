@@ -516,7 +516,7 @@ def build_swept_passage(p: P.SweptPassageParams, ctx: BuildContext, label: str) 
         sx, sy = _position(p.path.centre).to_sketch_m(ctx.unit, ctx.outline_wh)
         spiral = (sx / f, sy / f, p.path.start_radius, p.path.end_radius, p.path.sweep_deg, p.path.start_angle_deg,
                   1 if p.path.hand == "counter_clockwise" else -1)
-        return SweptPassage(ctx.unit, p.operation, p.diameter, p.plane_z, "spiral", spiral=spiral, size=size, label=label)
+        return SweptPassage(ctx.unit, p.operation, p.diameter, p.plane_z, "spiral", spiral=spiral, size=size, label=label, end_diameter=p.end_diameter)
     radii = p.path.bend_radius if isinstance(p.path.bend_radius, list) else [p.path.bend_radius]
     return SweptPassage(ctx.unit, p.operation, p.diameter, p.plane_z, "polyline", points=tuple(tuple(q) for q in p.path.points),
                         bend_radii=tuple(radii), size=size, label=label)
@@ -755,7 +755,7 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
         "or a spiral that winds outward (a pump volute, a coolant gallery, a channel).",
         "Give the section diameter, the depth of the path's plane from the back face and the path: points + bend radius, or a spiral (centre, "
         "start and end radius, how far round, where it starts, which way).",
-        ("a round section of ONE diameter all along (a volute that widens is approximated by its mean section)", "the path lies in a plane parallel to the front face and starts horizontal or vertical",
+        ("a round section; a spiral may widen from diameter to end_diameter (built one step per quarter turn, so it winds whole quarter turns)", "the path lies in a plane parallel to the front face and starts horizontal or vertical",
          "the passage must stay inside the part (cut) and must not run into itself", "the volume is checked as an upper bound"),
         {"operation": "cut", "diameter": 8, "plane_z": 5, "path": {"kind": "polyline", "points": [[-40, 0], [20, 0], [20, 25]], "bend_radius": 10}},
         build_swept_passage, _COMMON),

@@ -48,7 +48,7 @@ What they unlock here, once the designer gives the numbers the sheet does not pr
 
 ## Pump casing volute (updated 2026-11-10)
 Now buildable as `swept_passage` (cut) with a `spiral` path, through the new `ext_sweep` swept cut (extensions/solidworks/GeometryExtensions.cs).
-Limit: one section diameter all round (a real volute widens; use its mean section). The sheet still does not dimension the volute
+The volute may widen from the cutwater to the throat (`end_diameter`): built as one sweep per quarter turn, each at the diameter mid-step, so a stepped volute, not a smooth one. The sheet still does not dimension the volute
 (spiral start / end radius, section size, cutwater position): the designer must give them.
 
 ## Bought parts

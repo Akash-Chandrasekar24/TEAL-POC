@@ -428,6 +428,8 @@ class SweptPassageParams(Strict):
     operation: Literal["cut", "boss"] = Field("cut", description="cut = a passage / gallery / channel; boss = a round rod or rib along the path")
     diameter: float = Field(gt=0, description="diameter of the round passage section")
     plane_z: float = Field(description="depth of the path's plane, measured from the BACK face toward the viewer (e.g. half the thickness)")
+    end_diameter: float | None = Field(None, gt=0, description="spiral only: the section diameter where the spiral ENDS, for a volute that widens "
+                                       "toward the discharge (diameter is then the section at the start / cutwater)")
     path: Union[PolylinePath, SpiralPath] = Field(discriminator="kind")
 
 
