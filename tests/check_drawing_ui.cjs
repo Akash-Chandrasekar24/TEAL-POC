@@ -166,7 +166,7 @@ async function main() {
   assert.equal(context.clarificationKey(qr,"Page 1: unreadable source callout: The rotated dimension reads 42"),"P1.u2","an issue line maps back to its question id");
   assert.equal(context.clarificationKey(qr,"Confirm projection: unreadable"),null,"other blockers are not clarification questions");
   assert.equal(context.clarificationKey(qr,"Page 1: unreadable source callout: not a real question"),null,"an unknown question is not answerable");
-  const qlist=context.questionList(qr,["Page 1: unreadable source callout: Scale label","Confirm projection: unreadable"]);
+  const qlist=context.el("ul",{},context.questionCards(qr,["Page 1: unreadable source callout: Scale label","Confirm projection: unreadable"]).map((c) => c.node));
   assert.equal(all(qlist,(e) => e.attrs["data-question"]==="P1.u1").length,1,"a clarification question gets an answer box");
   assert.equal(all(qlist,(e) => e.tagName==="textarea" && e.attrs["aria-label"]==="Answer P1.u1").length,1);
   assert.equal(all(qlist,(e) => e.tagName==="li").length,2,"a non-clarification blocker stays plain text");
@@ -194,6 +194,10 @@ async function main() {
   assert.equal(sum,"1 draft is ticked for you. 1 draft proposes a corrected reading and is left unticked for your own check. The AI could not tell 1 question. Nothing is saved until you confirm. Edit or untick anything first.","the summary reads correctly");
   const gated=context.designCard(confidenceResult);
   assert.ok(all(gated,(e) => e.tagName==="button" && /^Approve all measurements \(\d+\)$/.test(e.textContent)).length===1,"one button approves every reading");
+  const sections=all(gated,(e) => (e.attrs.class||"").startsWith("m-navbtn") && !(e.attrs.class||"").includes("m-qnav"));
+  assert.ok(sections.length>=1,"a button per section of the drawing");
+  assert.ok(all(gated,(e) => e.attrs.class==="m-gapprove" && /^Approve section \(\d+\)$/.test(e.textContent)).length>=1,"each section is approved from its own header");
+  assert.ok(!gated.textContent.includes("Measurements, made clear."),"plain heading");
   assert.ok(gated.textContent.includes("Open questions appear here once every measurement is approved"),"questions wait for the measurements");
   assert.equal(all(gated,(e) => e.attrs.id==="build-plan")[0].hidden,true,"the questions block is hidden until approval");
   assert.ok(html.includes('class="ai-fab"') && html.includes('class="chat-close"'),"the assistant opens from a floating button and closes from its window");

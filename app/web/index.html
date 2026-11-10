@@ -561,6 +561,41 @@ function designCard(r) {
     save("undo");
   });
   let gate = () => {};
+  const nav = el("nav", {class:"m-nav","aria-label":"Sections of the drawing"});
+  const boxes = new Map();                                          // group key -> its <details>, for the section buttons
+  const groupKeys = () => [...new Set(inputs.map((i) => i.group.key))].sort((x, y) => inputs.find((i) => i.group.key === x).group.order - inputs.find((i) => i.group.key === y).group.order);
+  const goTo = (k) => {
+    view.tab = "all"; view.query = ""; search.value = ""; view.groupOpen.set(k, true); redraw();
+    const b = boxes.get(k); if (b && b.scrollIntoView) b.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const approveGroup = (k) => {
+    const mine = inputs.filter((i) => i.group.key === k);
+    mine.forEach((i) => { i.checked.checked = true; i.forced = false; });
+    redraw();
+    save("section", `${mine[0].group.title} (${mine.length} readings)`);
+  };
+  const pageNav = el("div", {class:"m-pages", role:"group", "aria-label":"Pages"});
+  const cleanTitle = (t) => String(t || "").replace(/[\s,;:]+$/, "");
+  const drawNav = () => {
+    const keys = groupKeys(), first = (k) => inputs.find((i) => i.group.key === k);
+    const left = (k) => inputs.filter((i) => i.group.key === k && i.state() !== "verified").length;
+    const pages = [...new Set(keys.map((k) => first(k).group.page || 0))];
+    if (!pages.includes(view.navPage)) view.navPage = pages.find((pg) => keys.some((k) => (first(k).group.page || 0) === pg && left(k))) ?? pages[0];
+    pageNav.replaceChildren(...pages.map((pg) => {
+      const mine = keys.filter((k) => (first(k).group.page || 0) === pg), todo = mine.reduce((a, k) => a + left(k), 0);
+      const b = el("button", {type:"button", class:`m-pagebtn${pg === view.navPage ? " on" : ""}`, "aria-pressed": String(pg === view.navPage)},
+        el("span", {text: pg ? `Page ${pg}` : "Sections"}), el("small", {text: todo ? `${todo} to approve` : `${mine.length} sections ✓`}));
+      b.addEventListener("click", () => { view.navPage = pg; drawNav(); });
+      return b;
+    }), qBtn);
+    nav.replaceChildren(...keys.filter((k) => (first(k).group.page || 0) === view.navPage).map((k) => {
+      const t = cleanTitle(first(k).group.title), n = left(k);
+      const b = el("button", {type:"button", class:`m-navbtn${n ? "" : " done"}`, title: n ? `${t}: ${n} to approve` : `${t}: approved`},
+        el("span", {class:"m-navname", text:t}), el("span", {class:"m-navcount", text: n ? String(n) : "✓"}));
+      b.addEventListener("click", () => goTo(k));
+      return b;
+    }));
+  };
   const redraw = () => {
     if (view.tab === null) view.tab = count("open") ? "open" : "all";
     TABS.forEach(([key, label], n) => {
@@ -573,6 +608,7 @@ function designCard(r) {
     approveAll.hidden = pending === 0;
     approveAll.textContent = `Approve all measurements (${pending})`;
     gate();
+    drawNav();
     const q = view.query.trim().toLowerCase();
     const rows = inputs.filter((i) => (view.tab === "all" || i.state() === view.tab) && (!q || `${i.d.id} ${i.d.text} ${i.correction.value}`.toLowerCase().includes(q)));
     if (!rows.length) { list.replaceChildren(el("p", {class:"lane-empty",text: q ? "No measurement matches your search." : view.tab === "open" ? "Nothing left to verify." : "Nothing here yet."})); return; }
@@ -591,7 +627,14 @@ function designCard(r) {
           n("open") ? el("b", {class:"c-open", text:`${n("open")} to verify`}) : null,
           n("ai") ? el("b", {class:"c-ai", text:`${n("ai")} AI verified`}) : null,
           n("verified") ? el("b", {class:"c-you", text:`${n("verified")} verified by you`}) : null));
+      const left = all.length - n("verified");
+      if (left) {
+        const ap = el("button", {type:"button", class:"m-gapprove", text:`Approve section (${left})`});
+        ap.addEventListener("click", (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } approveGroup(k); });   // not a toggle of the section
+        head.append(ap);
+      } else head.append(el("span", {class:"m-gdone", text:"✓ Approved"}));
       const box = el("details", {class:"m-group", ...(wantOpen ? {open:true} : {})}, head, el("div", {class:"m-gbody"}, mine.map((i) => i.row)));
+      boxes.set(k, box);
       box.addEventListener("toggle", () => view.groupOpen.set(k, box.open));
       head.addEventListener("mouseenter", () => { if (g.page && g.no) highlight(g.page, [g.no], true); });
       head.addEventListener("mouseleave", () => { if (g.page && g.no) highlight(g.page, [g.no], false); });
@@ -609,11 +652,13 @@ function designCard(r) {
     expandAll.textContent = view.allOpen ? "Collapse all" : "Expand all";
     redraw();
   });
-  const qBtn = el("button", {type:"button",class:"m-link m-qlink",hidden:true});
+  const qBtn = el("button", {type:"button",class:"m-navbtn m-qnav m-qlink",hidden:true});
   qBtn.addEventListener("click", () => { if (output.scrollIntoView) output.scrollIntoView({ behavior: "smooth", block: "start" }); });
+  const btn = el("button", { class: "btn secondary", type: "button", text: "Save reviewed measurements" });
   const review = el("div", {class:"m-panel"},
-    el("div", {class:"m-approve-row"}, approveAll, undoBtn, el("span", {class:"hint", text:"Marks every reading as checked by you and saves. You can still send any reading back with ⚑."})),
-    el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, qBtn, expandAll), list);
+    el("div", {class:"m-approve-row"}, approveAll, btn, undoBtn, el("span", {class:"hint", text:"Approve a section with its own button, or everything at once. You can still send any reading back with ⚑."})),
+    el("div", {class:"m-navwrap"}, pageNav, nav),
+    el("div", {class:"m-toolbar"}, el("div", {class:"m-tabs",role:"group","aria-label":"Show"}, tabButtons), search, expandAll), list);
   redraw();
   // From the drawing: hovering a callout highlights its row; clicking it jumps to the row.
   globalThis.__measureFocus = (id, on) => { const row = inputs.find((i) => i.d.id === id)?.row; if (row && row.classList) row.classList.toggle("m-hover", on); };
@@ -624,21 +669,30 @@ function designCard(r) {
   };
   const clarifications = [];
   const note = {value:model.resolutions.note || ""};
-  const btn = el("button", { class: "btn", type: "button", text: "Save reviewed measurements" });
-  controls.append(review, el("div", {class:"m-save-row"}, btn));
+  controls.append(review);
   const issues = (questions) => el("ul", {}, questions.map((q) => el("li", { text: q })));
   let openAsk = 0;                                                  // answerable questions still open (drives "Review complete")
   const renderPlan = (artifact) => {
     const p = artifact.plan;
     const asks = p.questions.filter((q) => clarificationKey(r, q)), notes = p.questions.filter((q) => !clarificationKey(r, q) && !/human review required|confirm this .*dimension/.test(q));
     openAsk = asks.length;
-    qBtn.hidden = !asks.length; qBtn.textContent = `Open questions (${asks.length}) ↓`;
+    qBtn.hidden = !asks.length; qBtn.textContent = `Open questions (${asks.length})`;
     gate();
     output.replaceChildren(el("h3", { text: asks.length ? "Open questions" : "Notes for the 3D build" }));
     if (asks.length) {
-      const sp = suggestPanel(r, asks), list = questionList(r, asks);
+      const sp = suggestPanel(r, asks), cards = questionCards(r, asks);
+      const pageOf = (c) => c.key ? c.key.slice(1).split(".")[0] : "";
+      const pages = [...new Set(cards.map(pageOf).filter(Boolean))].sort((a, b) => a - b);
+      const chips = [["", `All (${cards.length})`], ...pages.map((pg) => [pg, `Page ${pg} (${cards.filter((c) => pageOf(c) === pg).length})`])]
+        .map(([pg, label]) => el("button", { type: "button", class: `m-navbtn${pg ? "" : " on"}`, "data-page": pg, text: label }));
+      chips.forEach((b, i) => b.addEventListener("click", () => {
+        const pg = i ? pages[i - 1] : "";
+        chips.forEach((c, j) => { c.className = `m-navbtn${j === i ? " on" : ""}`; });
+        cards.forEach((c) => { c.node.hidden = Boolean(pg) && pageOf(c) !== pg; });
+      }));
+      if (pages.length > 1) output.append(el("nav", { class: "m-nav q-nav", "aria-label": "Questions by page" }, chips));
       if (sp) output.append(sp);
-      output.append(asks.length > 4 ? el("details", { open: true }, el("summary", { text: `${asks.length} questions to answer` }), list) : list);
+      output.append(el("ul", { class: "q-list" }, cards.map((c) => c.node)));
     }
     if (notes.length) output.append(el("div", { class: "build-notes" }, el("h4", { text: "Before a 3D build (nothing to answer here)" }),
       el("ul", {}, notes.map((n) => el("li", { text: n.replace(/\s*\n\s*/g, " ") })))));
@@ -679,8 +733,8 @@ function designCard(r) {
   };
   controls.addEventListener("input", edited);
   controls.addEventListener("change", edited);
-  const save = async (mode) => {
-    const approving = mode === "approve" || mode === "undo";
+  const save = async (mode, what = "") => {
+    const approving = mode === "approve" || mode === "undo" || mode === "section";
     if (clarifications.some((q) => q.text.value.trim() && !q.answer.value.trim())) {
       status.textContent = "Explain the corrected source callout before applying its measurement.";
       return;
@@ -709,7 +763,9 @@ function designCard(r) {
       r.reviewDirty = false;
       if (r.workflowJob) { r.workflowJob.stale = true; if ($("#workflow-job")) replaceWorkflow(r); }
       if (approving) {                                // every reading approved: saved without a model call; the open questions come next
-        r.approvalNote = mode === "undo" ? "Approval undone: the readings are back to how they were before." : `All ${inputs.length} measurements approved and saved. The open questions are below.`;
+        r.approvalNote = mode === "undo" ? "Approval undone: the readings are back to how they were before."
+          : mode === "section" ? `Approved and saved: ${what}.`
+          : `All ${inputs.length} measurements approved and saved. The open questions are below.`;
         if (state.result === r) show(r); else { status.textContent = r.approvalNote; renderPlan(artifact); }
         renderAgentChat(r);
         return;
@@ -726,8 +782,9 @@ function designCard(r) {
     }
   };
   btn.addEventListener("click", () => save(false));
-  return el("section", { class: "card pad", id: "design" }, el("div",{class:"review-title"},el("span",{class:"eyebrow",text:"EXTRACTION REVIEW"}),el("h2", { text: "Measurements, made clear." })),
-    el("p", { class: "hint", text: "The agent handles confident readings. You resolve the rest." }), donePanel, controls, status, gateNote, output);
+  return el("section", { class: "card pad", id: "design" }, el("div",{class:"review-title"},el("h2", { text: "Extraction review" }),
+    el("p", { class: "hint", text: `${inputs.length} measurements in ${groupKeys().length} sections. Approve each section, then answer the open questions.` })),
+    donePanel, controls, status, gateNote, output);
 }
 
 // ---------------------------------------------------------------- process log (storage/runs/<id>/trace.jsonl)
@@ -956,11 +1013,11 @@ function answerCard(r, key, question) {
     el("p", { class: "q-text", text: question }), questionCrop(r, key, question), box, el("div", { class: "q-actions" }, save), status);
 }
 
-function questionList(r, questions) {
-  return el("ul", { class: "q-list" }, questions.map((q) => {
+function questionCards(r, questions) {
+  return questions.map((q) => {
     const key = clarificationKey(r, q);
-    return key ? answerCard(r, key, q.replace(/^Page \d+: unreadable source callout: /, "")) : el("li", { text: q });
-  }));
+    return { key, node: key ? answerCard(r, key, q.replace(/^Page \d+: unreadable source callout: /, "")) : el("li", { text: q }) };
+  });
 }
 
 // The picture of one view of the drawing, so a draft can be checked against the evidence without leaving the card.
