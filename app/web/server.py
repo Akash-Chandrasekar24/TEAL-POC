@@ -145,7 +145,7 @@ def run(rid: str, files: list[dict], llm_name: str | None, read: bool, *, workfl
             if on_progress:
                 on_progress({"event":"page", "id":rid, "page":item, "total":len(pages)})
             return item
-        out_pages = ordered_map(read_one, pages)
+        out_pages = ordered_map(read_one, pages, workers=config.PAGE_WORKERS)
         result = {"id": rid, "llm": llm_name if read else None, "seconds": round(time.monotonic() - started, 1), "pages": out_pages,
                   "segmentation_version": SEGMENT_V,
                   "calls": sum((p["read"] or {}).get("calls", 0) for p in out_pages),

@@ -19,7 +19,9 @@ from app.drawing.confidence import RUBRIC_PROMPT,rubric_score
 
 
 class Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    # A model reply that adds an unasked-for field (e.g. "confidence_reason_support") is still a valid reading: drop the extra field
+    # instead of failing the page (and with it the whole run). Every asked-for field is still validated.
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
 
 
 class Located(Strict):

@@ -46,6 +46,7 @@ WORKER_LLM_PROVIDER = os.getenv("WORKER_LLM_PROVIDER", "domo").strip().lower() o
 DOMO_INSTANCE = os.getenv("DOMO_INSTANCE", "").strip()                  # e.g. "acme" or "acme.domo.com"
 DOMO_MODEL = os.getenv("DOMO_MODEL", "").strip() or "domo.openai.gpt-5.6-sol"
 DOMO_REASONING_EFFORT = os.getenv("DOMO_REASONING_EFFORT", "high").strip().lower() or "high"
+PAGE_WORKERS = max(1, int(os.getenv("PAGE_WORKERS", "4")))    # pages read side by side (each is one 1-2 min model call)
 EXTRACTION_REASONING_EFFORT = os.getenv("EXTRACTION_REASONING_EFFORT", "medium").strip().lower() or "medium"
 CAD_REASONING_EFFORT = os.getenv("CAD_REASONING_EFFORT", "high").strip().lower() or "high"
 # R1/R2 only, Domo only: pages whose local OCR finds MIN..MAX text lines are "simple" and are read at SIMPLE_EFFORT instead of
