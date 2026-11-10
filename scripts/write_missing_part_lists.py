@@ -119,6 +119,26 @@ write("pump_bearing_housing", "Water pump 03 BEARING HOUSING / END COVER (sheet 
        "Which is right? (PCD Ø90 through the body used)"],
       ["Square flange with four lugs (110 x 106) is not on a turned part's menu; the body is modelled round (Ø106)."])
 
+for name, part in (("pump_bearing_de", "Water pump 05 BEARING (DE), 6306 (sheet 2 detail 04)"), ("pump_bearing_nde", "Water pump 08 BEARING (NDE), 6306 (sheet 2 detail 04)")):
+    write(name, part, ["Ø30", "Ø62", "16", "6306 (Ø30×Ø62×16)"],
+          [item("I1", "revolve_base", {"axis": "horizontal", "profile": {"shape": "polygon", "points": [
+              [0, 15], [0, 20], [2, 20], [2, 27], [0, 27], [0, 31], [16, 31], [16, 27], [14, 27], [14, 20], [16, 20], [16, 15]]}},
+                "6306 (Ø30×Ø62×16): bore Ø30, outside Ø62, 16 wide",
+                "radii 15 and 31 = Ø30 / 2 and Ø62 / 2; ASSUMED the inner ring to r 20 and the outer ring from r 27, with the 2 deep "
+                "recess between them on both faces where the balls and cage sit (the rings and the shields as one body)", uncertain=True)],
+          ["The sheet prints 6306 as Ø30 x Ø62 x 16, which are the sizes of a 6206; a real 6306 is Ø30 x Ø72 x 19. Which sizes should the model use? (Ø30 x Ø62 x 16 used)",
+           "Ring sizes are not printed: inner ring up to Ø40, outer ring from Ø54, recess 2 deep on both faces. Confirm or give the sizes."],
+          ["The balls and cage are not modelled one by one: the bearing is one solid with the rings and a recess between them."])
+
+write("pump_mechanical_seal", "Water pump 06 MECHANICAL SEAL (sheet 2 detail 05)", ["Ø35 (SHAFT)", "Ø42", "Ø25", "12", "18", "6", "36"],
+      [item("I1", "revolve_base", {"axis": "horizontal", "profile": {"shape": "polygon", "points": [
+          [0, 17.5], [0, 21], [12, 21], [12, 19.5], [30, 19.5], [30, 21], [36, 21], [36, 17.5]]}},
+            "rotating face 12, spring 18, seat 6 (36 overall) on the Ø35 shaft, Ø42 outside",
+            "bore 17.5 = Ø35 / 2, outside 21 = Ø42 / 2; 12 + 18 = 30, + 6 = 36; ASSUMED the spring zone at Ø39 (r 19.5) between the two faces", uncertain=True)],
+      ["The seal's sizes are only partly printed (detail 05 is an assembly): is Ø42 the outside of both faces, what is the spring's outside diameter, "
+       "and what does the Ø25 refer to? (modelled: Ø42 faces, Ø39 spring zone, Ø35 bore)"],
+      ["The spring, the carbon face and the SiC face are modelled as one stepped ring."])
+
 # ------------------------------------------------------------------ wankel
 write("wankel_rotor_housing", "Wankel 01 ROTOR HOUSING (sheet 1)",
       ["220", "30", "160", "205", "37.5", "130", "68", "R65.000 (TROCHOID)", "e = 15.00", "12x Ø10.5 (THRU) PCD Ø190", "30° (TYP.)", "Ø16 COOLANT", "48", "18"],

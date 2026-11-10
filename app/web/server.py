@@ -686,8 +686,8 @@ def start_batch(rid, llm_name=None):
         if current and current.get("phase") in ("preparing", "building") and current["id"] in _ACTIVE:
             return current
         lists = latest_lists(PART_LISTS, rid)
-        items = [{"part_id": p["id"], "name": p["name"], "kind": p["kind"], "status": "bought" if p["kind"] == "buy" else
-                  ("listed" if lists.get(p["id"]) else "to_prepare" if p["views"] else "no_views")} for p in detect_parts(result)]
+        items = [{"part_id": p["id"], "name": p["name"], "status": "listed" if lists.get(p["id"]) else "to_prepare" if p["views"] else "no_views"}
+                 for p in detect_parts(result)]
         batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name}
         _save_batch(rid, batch)
         _ACTIVE.add(batch["id"])
@@ -733,7 +733,7 @@ def approve_batch(rid, bid, accepted):
         lists = latest_lists(PART_LISTS, rid)
         for item in batch["items"]:
             art = lists.get(item["part_id"])
-            if item["kind"] == "buy" or not art:
+            if not art:
                 continue
             if art["check"]["status"] != "ready":
                 item.update(status="not_buildable", detail="; ".join(art["check"]["blocking"]))

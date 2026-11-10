@@ -1,0 +1,89 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Water pump 08 BEARING (NDE), 6306 (sheet 2 detail 04)",
+ "seen_dimensions": [
+  "Ø30",
+  "Ø62",
+  "16",
+  "6306 (Ø30×Ø62×16)"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "6306 (Ø30×Ø62×16): bore Ø30, outside Ø62, 16 wide",
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       15
+      ],
+      [
+       0,
+       20
+      ],
+      [
+       2,
+       20
+      ],
+      [
+       2,
+       27
+      ],
+      [
+       0,
+       27
+      ],
+      [
+       0,
+       31
+      ],
+      [
+       16,
+       31
+      ],
+      [
+       16,
+       27
+      ],
+      [
+       14,
+       27
+      ],
+      [
+       14,
+       20
+      ],
+      [
+       16,
+       20
+      ],
+      [
+       16,
+       15
+      ]
+     ]
+    }
+   },
+   "derived": true,
+   "derived_from": "radii 15 and 31 = Ø30 / 2 and Ø62 / 2; ASSUMED the inner ring to r 20 and the outer ring from r 27, with the 2 deep recess between them on both faces where the balls and cage sit (the rings and the shields as one body)",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "The sheet prints 6306 as Ø30 x Ø62 x 16, which are the sizes of a 6206; a real 6306 is Ø30 x Ø72 x 19. Which sizes should the model use? (Ø30 x Ø62 x 16 used)",
+  "Ring sizes are not printed: inner ring up to Ø40, outer ring from Ø54, recess 2 deep on both faces. Confirm or give the sizes."
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "The balls and cage are not modelled one by one: the bearing is one solid with the rings and a recess between them."
+  }
+ ]
+}

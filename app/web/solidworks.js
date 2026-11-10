@@ -12,7 +12,7 @@ function solidworksPage(r) {
 
 // ---- "Build everything in SolidWorks": one button -> build lists for every part -> ONE approval -> every part built in turn
 const BATCH_ITEM = { to_prepare: "Waiting for its build list", preparing: "Writing its build list…", listed: "Build list ready", list_failed: "Build list failed",
-  no_views: "No views on the sheet", bought: "Bought part", queued: "Queued", building: "Building in SolidWorks…", awaiting_review: "Built: compare it with the drawing",
+  no_views: "No views on the sheet", queued: "Queued", building: "Building in SolidWorks…", awaiting_review: "Built: compare it with the drawing",
   accepted: "Accepted", exported: "Exported", awaiting_fix_approval: "Needs your OK for a fix", awaiting_approval: "Stopped before SolidWorks", needs_human: "Needs your attention",
   llm_failed: "Model unavailable: retry", build_failed: "Build failed", not_buildable: "Not buildable yet", not_approved: "Not approved" };
 
@@ -43,17 +43,17 @@ function batchBox(r, data, reload, status) {
       el("div", { class: "part-actions" }, start), list);
   }
   if (batch.phase === "preparing" || batch.phase === "building") {
-    const total = batch.items.filter((it) => batch.phase === "preparing" ? ["to_prepare", "preparing", "listed", "list_failed"].includes(it.status) && it.kind !== "buy"
+    const total = batch.items.filter((it) => batch.phase === "preparing" ? ["to_prepare", "preparing", "listed", "list_failed"].includes(it.status)
                                                                           : it.list_id).length;
     const now = batch.items.find((it) => ["preparing", "building"].includes(it.status));
-    const doneN = batch.items.filter((it) => batch.phase === "preparing" ? ["listed", "list_failed"].includes(it.status) && it.kind !== "buy" : it.list_id && it.status !== "queued" && it.status !== "building").length;
+    const doneN = batch.items.filter((it) => batch.phase === "preparing" ? ["listed", "list_failed"].includes(it.status) : it.list_id && it.status !== "queued" && it.status !== "building").length;
     return el("div", { class: "batch-box running" }, el("div", { class: "batch-progress" }, el("span", { class: "spinner", "aria-hidden": "true" }),
       el("b", { text: batch.phase === "preparing" ? `Writing build lists: ${doneN} of ${total}` : `Building in SolidWorks: ${doneN} of ${total}` }),
       el("span", { text: batch.phase === "preparing" ? " · up to 4 at a time, about 1–2 min each" : now ? ` · ${now.name}` : "" })), list);
   }
   // awaiting_approval: the single human approval for the whole sheet
-  const ready = (data.parts || []).filter((p) => p.kind !== "buy" && p.list?.check?.status === "ready");
-  const blocked = (data.parts || []).filter((p) => p.kind !== "buy" && !(p.list?.check?.status === "ready"));
+  const ready = (data.parts || []).filter((p) => p.list?.check?.status === "ready");
+  const blocked = (data.parts || []).filter((p) => !(p.list?.check?.status === "ready"));
   const gaps = ready.flatMap((p) => (p.list.check.unsupported || []).map((u) => ({ part: p, u })));
   const accept = el("input", { type: "checkbox", "aria-label": "Accept every not-modelled item" });
   const approve = el("button", { type: "button", class: "btn", text: `Approve all and build in SolidWorks (${ready.length} part${ready.length === 1 ? "" : "s"})` });
@@ -112,16 +112,12 @@ function partsPanel(r) {
       el("button", { type: "button", class: "m-link", text: "Check again", onclick: load }));
     const rows = (data.parts || []).map((part) => {
       const list = part.list, check = list?.check || {};
-      const [tone, label] = part.kind === "buy" ? ["muted", "Bought part"] : list ? PART_STATUS[check.status] || ["warn", check.status] : ["muted", "No build list yet"];
+      const [tone, label] = list ? PART_STATUS[check.status] || ["warn", check.status] : ["muted", "No build list yet"];
       const head = el("div", { class: "part-head" },
         el("div", {}, el("b", { class: "part-name", text: part.name }),
           el("small", { text: [part.item && `item ${part.item}`, part.quantity && `qty ${part.quantity}`, `${part.views.length} view${part.views.length === 1 ? "" : "s"}`].filter(Boolean).join(" · ") })),
         el("span", { class: `part-chip ${tone}`, text: label }));
       const body = el("div", { class: "part-body" });
-      if (part.kind === "buy") {
-        body.append(el("p", { class: "hint", text: "A standard bought part: supply its SolidWorks model in the assembly step; it is not drawn from this sheet." }));
-        return el("article", { class: "part-card buy", "data-part": part.id }, head, body);
-      }
       const file = el("input", { type: "file", accept: ".json,application/json", hidden: true });
       file.addEventListener("change", async () => {
         const f = file.files && file.files[0]; if (!f) return;

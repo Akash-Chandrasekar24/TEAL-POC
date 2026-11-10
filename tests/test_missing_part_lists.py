@@ -13,11 +13,13 @@ from app.menu import parse_reply
 from app.runner import prepare, validate_list
 
 ROOT = Path(__file__).resolve().parents[1]
-WAITS = {"pump_casing": 3, "pump_motor_housing": 3, "pump_impeller": 2, "pump_cooling_fan": 3, "pump_bearing_housing": 3,
+WAITS = {"pump_casing": 3, "pump_motor_housing": 3, "pump_impeller": 2, "pump_cooling_fan": 3, "pump_bearing_housing": 3, "pump_bearing_de": 3, "pump_bearing_nde": 3, "pump_mechanical_seal": 3,
          "wankel_rotor_housing": 3, "wankel_side_housing": 3, "wankel_rotor": 3, "wankel_apex_seal": 1, "wankel_side_seal": 0,
          "wankel_corner_seal": 1, "wankel_dowel": 2}
 VOLUMES = {"wankel_apex_seal": 38 * 3 * 3, "wankel_side_seal": 32 * 2.5 * 2.5, "wankel_corner_seal": 12 * 2 * 3, "wankel_dowel": pi * 16 * 24,
-           "pump_cooling_fan": pi * (30 ** 2 - 14 ** 2) * 32 + 12 * 3 * 50 * 32}
+           "pump_cooling_fan": pi * (30 ** 2 - 14 ** 2) * 32 + 12 * 3 * 50 * 32,
+           "pump_bearing_de": pi * ((31 ** 2 - 15 ** 2) * 16 - 2 * (27 ** 2 - 20 ** 2) * 2),
+           "pump_mechanical_seal": pi * ((21 ** 2 - 17.5 ** 2) * 36 - (21 ** 2 - 19.5 ** 2) * 18)}
 
 
 def test_missing_part_lists_wait_for_the_designer_then_compile():

@@ -1,0 +1,75 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Water pump 06 MECHANICAL SEAL (sheet 2 detail 05)",
+ "seen_dimensions": [
+  "Ø35 (SHAFT)",
+  "Ø42",
+  "Ø25",
+  "12",
+  "18",
+  "6",
+  "36"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "rotating face 12, spring 18, seat 6 (36 overall) on the Ø35 shaft, Ø42 outside",
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       17.5
+      ],
+      [
+       0,
+       21
+      ],
+      [
+       12,
+       21
+      ],
+      [
+       12,
+       19.5
+      ],
+      [
+       30,
+       19.5
+      ],
+      [
+       30,
+       21
+      ],
+      [
+       36,
+       21
+      ],
+      [
+       36,
+       17.5
+      ]
+     ]
+    }
+   },
+   "derived": true,
+   "derived_from": "bore 17.5 = Ø35 / 2, outside 21 = Ø42 / 2; 12 + 18 = 30, + 6 = 36; ASSUMED the spring zone at Ø39 (r 19.5) between the two faces",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "The seal's sizes are only partly printed (detail 05 is an assembly): is Ø42 the outside of both faces, what is the spring's outside diameter, and what does the Ø25 refer to? (modelled: Ø42 faces, Ø39 spring zone, Ø35 bore)"
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "The spring, the carbon face and the SiC face are modelled as one stepped ring."
+  }
+ ]
+}

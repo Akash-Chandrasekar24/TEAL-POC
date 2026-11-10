@@ -20,7 +20,6 @@ from pathlib import Path
 ID = re.compile(r"^[0-9a-f]{12}$")
 _LATEST = threading.Lock()                                                   # build lists are written in parallel: one writer of latest.json
 _ASSEMBLY_VIEW = re.compile(r"\b(assembly|assembled|exploded|parts list|projection symbol)\b", re.I)
-_BUY = re.compile(r"\b(bolt|screw|nut|washer|dowel|oil seal|mechanical seal|bearing|o-ring|circlip|key)\b", re.I)
 _MATERIAL_SPLIT = re.compile(r"\s+[—–-]\s+")      # "Pump Casing — Cast Iron (FC250)": the parts list's material column read into the name
 _VIEW_WORDS = re.compile(r"\b(front|side|top|end|rear|plan|section|detail|view|isometric|partial|scale)\b.*$", re.I)
 
@@ -39,7 +38,7 @@ def _slug(text: str) -> str:
 
 
 def detect_parts(result: dict) -> list[dict]:
-    """[{id, name, item, quantity, kind: make|buy, views: [{page, no, label, box}]}]"""
+    """[{id, name, item, quantity, views: [{page, no, label, box}]}]: every part is built in 3D, bearings, seals and bolts included."""
     pages = result.get("pages") or []
     views = [{"page": p["no"], "no": v.get("no", i + 1), "label": v.get("label") or "", "box": (p.get("boxes") or [])[v.get("no", i + 1) - 1]
               if v.get("no", i + 1) - 1 < len(p.get("boxes") or []) else None}
@@ -51,7 +50,7 @@ def detect_parts(result: dict) -> list[dict]:
             name, *material = _MATERIAL_SPLIT.split(str(row.get("description") or row.get("part_number") or "").strip(), maxsplit=1)
             if name:
                 parts.append({"name": name, "item": str(row.get("item") or ""), "quantity": row.get("quantity"),
-                              "kind": "buy" if _BUY.search(name) else "make", **({"material": material[0]} if material else {})})
+                              **({"material": material[0]} if material else {})})
     else:
         seen = set()
         for v in views:
@@ -61,9 +60,9 @@ def detect_parts(result: dict) -> list[dict]:
             name = _VIEW_WORDS.sub("", m.group(1).split("(")[0]).strip(" ,/-") or m.group(1).strip()
             if _core(name) and _core(name) not in seen:
                 seen.add(_core(name))
-                parts.append({"name": name.title(), "item": "", "quantity": None, "kind": "buy" if _BUY.search(name) else "make"})
+                parts.append({"name": name.title(), "item": "", "quantity": None})
     if not parts:
-        parts = [{"name": "This part", "item": "", "quantity": 1, "kind": "make"}]
+        parts = [{"name": "This part", "item": "", "quantity": 1}]
     cores = sorted(((_core(p["name"]), p) for p in parts), key=lambda c: -len(c[0]))
     for p in parts:
         p["views"] = []
@@ -184,7 +183,7 @@ def save_part_list(root: Path, rid: str, part: dict, draft: dict, source: str, l
     if draft.get("status") != "stopped":
         draft = {**draft, "accepted_gaps": []}                              # only the reviewer may accept a gap, at build time
     attempt = uuid.uuid4().hex[:12]
-    artifact = {"id": attempt, "result_id": rid, "kind": "part_build_list", "part": {k: part[k] for k in ("id", "name", "item", "quantity", "kind")},
+    artifact = {"id": attempt, "result_id": rid, "kind": "part_build_list", "part": {k: part[k] for k in ("id", "name", "item", "quantity")},
                 "source": source, "llm": llm, "created": datetime.now(timezone.utc).isoformat(timespec="seconds"), "draft": draft, "check": _check(draft)}
     folder = root / rid
     folder.mkdir(parents=True, exist_ok=True)

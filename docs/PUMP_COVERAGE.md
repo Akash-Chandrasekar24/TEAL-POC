@@ -22,7 +22,7 @@ itself still needs its volute (below).
 | Part | Why | What is needed |
 |---|---|---|
 | 01 Pump casing | cast volute (spiral passage growing around the impeller), discharge neck at an angle to the body | a sweep / loft feature; the volute's spiral is not dimensioned on the sheet either |
-| 02 Motor housing | cylinder Ø140 x 168 with Ø150 end flanges, feet and stator cavity Ø120 are buildable; the cooling fins are not dimensioned, the lifting eye is a bought part | fin sizes: fins are now `radial_blades` (below) |
+| 02 Motor housing | cylinder Ø140 x 168 with Ø150 end flanges, feet and stator cavity Ø120 are buildable; the cooling fins and the lifting eye are not dimensioned | fin sizes: fins are now `radial_blades` (below) |
 | 01 Impeller | hub and shrouds are a revolve (Ø140, Ø110, Ø50 eye, Ø70 hub), but the 7 curved blades are free-form | blades are now `radial_blades` arc (below); count, thickness and blade angles are not printed |
 | 08 Cooling fan | hub Ø60 with Ø28 H7 bore, Ø160 x 32 is buildable; the radial blades are not dimensioned | blades are now `radial_blades` straight (below); count and thickness from the designer |
 | 03 Bearing housing / end cover | the view mixes a section with the bolt pattern: 4x Ø10.5 "PCD Ø90" but the holes are drawn 88 apart on a 110 x 106 square outline (a PCD of about 124) | the designer's answer on the hole pattern |
@@ -51,17 +51,18 @@ Now buildable as `swept_passage` (cut) with a `spiral` path, through the new `ex
 The volute may widen from the cutwater to the throat (`end_diameter`): built as one sweep per quarter turn, each at the diameter mid-step, so a stepped volute, not a smooth one. The sheet still does not dimension the volute
 (spiral start / end radius, section size, cutwater position): the designer must give them.
 
-## Bought parts
-Bearings DE / NDE (6306), mechanical seal, eye bolt: supply SolidWorks models. Note: the sheet prints 6306 as Ø30 x Ø62 x 16, which are the
-sizes of a 6206; a 6306 is Ø30 x Ø72 x 19. Worth confirming before ordering.
+## Bearings and mechanical seal (built in 3D like every part)
+`pump_bearing_de` / `pump_bearing_nde`: one solid ring Ø30 x Ø62 x 16 with the inner / outer rings and the ball recess (balls not modelled one by one).
+The sheet prints 6306 as Ø30 x Ø62 x 16, which are the sizes of a 6206 (a 6306 is Ø30 x Ø72 x 19): the list asks which to use.
+`pump_mechanical_seal`: a stepped ring on the Ø35 shaft, 12 / 18 / 6 = 36 long, Ø42 outside.
 
 ## Fixed while testing
 The extraction read the parts list's material column into the part name ("Pump Casing — Cast Iron (FC250)"), so the SolidWorks page found
-no views for 11 of 12 parts. Names are now split at the dash (material kept separately) and the mechanical seal counts as bought.
+no views for 11 of 12 parts. Names are now split at the dash (material kept separately) and every part, the mechanical seal and bearings included, is built in 3D.
 
 ## Build lists for the remaining parts (2026-11-10)
 `scripts/write_missing_part_lists.py` writes `pump_casing`, `pump_motor_housing`, `pump_impeller`, `pump_cooling_fan` and `pump_bearing_housing`.
 Numbers the sheet does not print are written as ASSUMED and the item is uncertain, with a question for the designer, so each build waits on the
 Review page. Once confirmed, every feature compiles and passes the IR validator (`tests/test_missing_part_lists.py`). Still gaps (accepted by a
 human or built later): the casing's discharge neck and feet, the motor housing's feet and eye-bolt boss, the end cover's square lug flange.
-Stator and rotor have no detail drawing; bearings, seal and eye bolt are bought parts.
+Stator and rotor have no detail drawing. Bearings and the seal now have build lists too (above).

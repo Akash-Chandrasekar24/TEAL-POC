@@ -33,7 +33,7 @@ def test_parts_come_from_the_bom_and_views_go_to_the_longest_matching_name():
     assert set(found) == {"rotor-housing-trochoid", "rotor", "hex-bolt-m10"}
     assert [v["label"] for v in found["rotor-housing-trochoid"]["views"]] == ["01. ROTOR HOUSING (FRONT VIEW)", "SECTION A-A (ROTOR HOUSING)"]
     assert [v["label"] for v in found["rotor"]["views"]] == ["01. ROTOR (FRONT VIEW)"]                 # not the housing views
-    assert found["hex-bolt-m10"]["kind"] == "buy" and found["rotor"]["kind"] == "make" and found["hex-bolt-m10"]["quantity"] == 12
+    assert "kind" not in found["hex-bolt-m10"] and found["hex-bolt-m10"]["quantity"] == 12                 # bolts are built in 3D too
 
 
 def test_without_a_bom_numbered_labels_name_the_parts_and_a_plain_drawing_is_one_part():
@@ -46,7 +46,7 @@ def test_without_a_bom_numbered_labels_name_the_parts_and_a_plain_drawing_is_one
 
 def test_build_lists_are_checked_and_gaps_are_left_to_the_reviewer():
     with tempfile.TemporaryDirectory() as d:
-        root, part = Path(d), {"id": "gear", "name": "Gear", "item": "4", "quantity": 1, "kind": "make"}
+        root, part = Path(d), {"id": "gear", "name": "Gear", "item": "4", "quantity": 1}
         ready = parts.save_part_list(root, "abcdef123456", part, {**good(), "unsupported": [{"id": "U1", "text": "root fillets"}], "accepted_gaps": ["U1"]}, "file")
         assert ready["check"]["status"] == "ready" and [u["id"] for u in ready["check"]["unsupported"]] == ["U1"]
         assert ready["draft"]["accepted_gaps"] == []                                              # a file cannot pre-accept a gap
@@ -60,7 +60,7 @@ def test_build_lists_are_checked_and_gaps_are_left_to_the_reviewer():
 
 def test_a_part_build_list_goes_through_approval_build_review_and_export():
     with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d) / "parts"):
-        part = {"id": "gear", "name": "Gear", "item": "4", "quantity": 1, "kind": "make"}
+        part = {"id": "gear", "name": "Gear", "item": "4", "quantity": 1}
         art = parts.save_part_list(server.PART_LISTS, "abcdef123456", part, {**good(), "unsupported": [{"id": "U1", "text": "root fillets"}]}, "file")
         build = SimulatedBuild()
         def export(approved, job, receipt):
@@ -85,7 +85,7 @@ def test_a_part_build_list_goes_through_approval_build_review_and_export():
 
 def test_a_part_list_that_is_not_ready_cannot_start_a_build():
     with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)):
-        art = parts.save_part_list(Path(d), "abcdef123456", {"id": "x", "name": "X", "item": "", "quantity": 1, "kind": "make"}, {"items": []}, "ai")
+        art = parts.save_part_list(Path(d), "abcdef123456", {"id": "x", "name": "X", "item": "", "quantity": 1}, {"items": []}, "ai")
         try:
             server.workflow_plan("abcdef123456", art["id"])
             assert False
@@ -135,7 +135,7 @@ def test_build_everything_prepares_lists_waits_for_one_approval_then_builds_each
             return {"id": jid, "phase": "awaiting_review"}
     def fake_create(rid, part_id, llm_name=None, client=None):
         draft = {**good(), "unsupported": [{"id": "U1", "text": "chamfers"}]} if part_id == "gear" else {"items": []}
-        return parts.save_part_list(server.PART_LISTS, rid, {"id": part_id, "name": part_id, "item": "", "quantity": 1, "kind": "make"}, draft, "ai")
+        return parts.save_part_list(server.PART_LISTS, rid, {"id": part_id, "name": part_id, "item": "", "quantity": 1}, draft, "ai")
     class Now:                                                                     # run the background jobs inline
         def submit(self, fn, *a):
             fn(*a)
@@ -146,7 +146,7 @@ def test_build_everything_prepares_lists_waits_for_one_approval_then_builds_each
         batch = server.start_batch("abcdef123456")
         batch = server.load_batch("abcdef123456")
         assert batch["phase"] == "awaiting_approval" and not built                   # nothing built before the human approves
-        assert {i["part_id"]: i["status"] for i in batch["items"]} == {"gear": "listed", "shaft": "listed", "hex-bolt": "bought"}
+        assert {i["part_id"]: i["status"] for i in batch["items"]} == {"gear": "listed", "shaft": "listed", "hex-bolt": "listed"}
         with patch.object(parts, "solidworks_status", lambda: {"ready": False, "detail": "not running"}):
             try:
                 server.approve_batch("abcdef123456", batch["id"], {"gear": ["U1"]}); assert False
@@ -172,7 +172,7 @@ def test_approve_all_refuses_a_part_whose_gaps_were_not_accepted():
          patch.object(server, "_BATCH_POOL", type("N", (), {"submit": lambda self, fn, *a: None})()), \
          patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)), \
          patch.object(parts, "solidworks_status", lambda: {"ready": True, "detail": ""}):
-        parts.save_part_list(Path(d), "abcdef123456", {"id": "gear", "name": "Gear", "item": "", "quantity": 1, "kind": "make"},
+        parts.save_part_list(Path(d), "abcdef123456", {"id": "gear", "name": "Gear", "item": "", "quantity": 1},
                              {**good(), "unsupported": [{"id": "U1", "text": "chamfers"}]}, "file")
         batch = server.start_batch("abcdef123456")
         server._save_batch("abcdef123456", {**batch, "phase": "awaiting_approval"})
@@ -184,4 +184,4 @@ def test_a_material_column_read_into_the_name_is_split_off():
     bom = [{"item": "1", "description": "Pump Casing \u2014 Cast Iron (FC250)", "quantity": 1}, {"item": "6", "description": "Mechanical Seal \u2014 Carbon / SiC (FKM)", "quantity": 1}]
     found = {p["id"]: p for p in parts.detect_parts({"pages": [page(1, ["01. PUMP CASING (FRONT VIEW)", "SECTION A-A (PUMP CASING)"], bom=bom)]})}
     assert found["pump-casing"]["material"] == "Cast Iron (FC250)" and len(found["pump-casing"]["views"]) == 2
-    assert found["mechanical-seal"]["kind"] == "buy"
+    assert "kind" not in found["mechanical-seal"]                                                          # built in 3D like every part
