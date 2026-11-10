@@ -166,3 +166,20 @@ def test_a_question_raised_twice_is_asked_once_and_answers_both():
                                             {"key": "P1.u2", "can_answer": False, "answer": "", "measurement": None, "view": None, "basis": "b"}]}),
                   1, b"png", qs, VIEWS, [])
     assert out[0]["also"] == ["P1.u3"]
+
+
+def test_the_doubtful_callout_is_found_and_outlined_on_the_close_up():
+    import io
+    from PIL import Image
+    from app.drawing.clarify import crop_png, question_mark
+    page = {"no": 2, "width": 2000, "height": 1000, "boxes": [[0, 0, 900, 900], [1000, 100, 1600, 700]],
+            "read": {"views": [{"no": 1, "label": "FRONT"}, {"no": 2, "label": "SIDE SECTION"}],
+                     "evidence": {"extraction": {"callouts": [{"id": "o1", "text": "Ø20", "box": [100, 100, 150, 200], "views": ["v1"]},
+                                                              {"id": "o2", "text": "Ø20", "box": [600, 300, 650, 400], "views": ["v2"]},
+                                                              {"id": "o3", "text": "Ø205", "box": [700, 300, 750, 400], "views": ["v2"]}]}}}}
+    assert question_mark(page, "The Ø20 callout is crowded", [1000, 100, 1600, 700]) == [1200, 300, 1300, 400]   # the one in the view asked about
+    assert question_mark(page, "The Ø20 callout is crowded", None) is None                                      # two on the page: no guess
+    assert question_mark(page, "o3: conflict", None) == [1400, 300, 1500, 400]
+    buf = io.BytesIO(); Image.new("RGB", (2000, 1000), "white").save(buf, "PNG")
+    crop = Image.open(io.BytesIO(crop_png(buf.getvalue(), [1000, 100, 1600, 700], mark=[1200, 300, 1300, 400])))
+    assert crop.getpixel((1200 - 880 - 10, 350 - 0)) == (220, 30, 30)                                          # a red outline round the callout

@@ -175,6 +175,13 @@ async function main() {
   assert.equal(twins.length,1,"the same question raised twice is one card");
   assert.equal(JSON.stringify(twins[0].keys),JSON.stringify(["P2.u1","P2.u2"]),"and its answer goes to both");
   assert.ok(twins[0].node.textContent.includes("Also answers P2.u2"),"the card says so");
+  const markR={pages:[{no:2,sha:"b".repeat(64),width:2000,height:1000,boxes:[[0,0,900,900],[1000,100,1600,700]],read:{views:[{no:1,label:"07. COUPLING HALF FRONT"},{no:2,label:"07. COUPLING HALF SIDE SECTION"}],
+    issues:["The Ø20 callout on the coupling side section is crowded."],evidence:{extraction:{callouts:[{id:"o1",text:"Ø20",box:[100,100,150,200],views:["v1"]},{id:"o2",text:"Ø20",box:[600,300,650,400],views:["v2"]}]}}}}]};
+  const markSpot=context.questionSpot(markR,"P2.u1",markR.pages[0].read.issues[0]);
+  assert.equal(JSON.stringify(markSpot.mark),JSON.stringify([1200,300,1300,400]),"the doubtful callout in the view the question names is outlined");
+  const fig=context.questionCrop(markR,"P2.u1",markR.pages[0].read.issues[0]);
+  assert.equal(all(fig,(e) => e.attrs.class==="q-crop-mark exact").length,1,"with an exact outline");
+  assert.ok(fig.textContent.includes("Outlined: the callout the question is about"),"and says what is outlined");
   assert.equal(context.suggestPanel(qr,["Confirm projection: unreadable"]),null,"no AI option when nothing can be answered here");
   const sp=context.suggestPanel(qr,["Page 1: unreadable source callout: Scale label"]);
   assert.ok(all(sp,(e) => e.tagName==="button" && e.textContent==="Let AI suggest answers (1)").length===1,"the AI option is offered");

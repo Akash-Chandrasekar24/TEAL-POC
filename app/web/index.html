@@ -980,53 +980,72 @@ async function submitCorrection(r, body) {
 }
 
 // ---- where a question points on the drawing: a callout (o19), a view (v3), a feature (f7), quoted text, a section / detail name; else the page
+// Where a question's doubt is: `mark` = the callout itself (outlined), `frame` = the view around it (context). Found from a callout id (o12), quoted
+// printed text, or a printed value the question names (Ø20) matched to the reader's callouts, preferring the view the question is about
+// (v3, a feature id f8, SECTION / DETAIL X, or the view whose title shares the most words with the question).
+const SPOT_STOP = new Set(["the", "and", "this", "that", "with", "from", "callout", "view", "drawing", "page", "exact", "should", "verified", "visually", "crowded",
+  "legible", "against", "source", "attachment", "referenced", "surface", "cylindrical", "dimension", "dimensions", "shown", "clear"]);
 function questionSpot(r, key, text) {
   const m = /^P(\d+)\.u\d+$/.exec(key || "");
   const page = m && (r.pages || []).find((p) => p.no === Number(m[1]));
   if (!page) return null;
-  const ex = page.read?.evidence?.extraction || {};
+  const ex = page.read?.evidence?.extraction || {}, views = page.read?.views || [], callouts = (ex.callouts || []).filter((c) => c && c.box);
   const px = (b) => calloutPixels(page, b);
   const viewBox = (n) => page.boxes?.[n - 1] || null;
   const norm = (t) => String(t || "").toLowerCase().replace(/\s+/g, "").replace(/[⌀ø]/g, "ø");
-  let box = null, exact = false;
-  const callout = /\bo(\d+)\b/.exec(text);
-  if (callout) { const c = (ex.callouts || []).find((x) => x.id === `o${callout[1]}`); if (c?.box) { box = px(c.box); exact = true; } }
-  const view = !box && /\bv(\d+)\b/.exec(text);
-  if (view) box = viewBox(Number(view[1]));
-  const feat = !box && /\bf(\d+)\b/.exec(text);
-  if (feat) { const f = (ex.features || []).find((x) => x.id === `f${feat[1]}`); const v = /^v(\d+)$/.exec(f?.views?.[0] || ""); if (v) box = viewBox(Number(v[1])); }
-  if (!box) {                                                       // quoted printed text, e.g. '1:1,5' or "Ø45 H7"
-    for (const q of text.match(/['"“‘]([^'"”’]{1,40})['"”’]/g) || []) {
-      const want = norm(q.slice(1, -1));
-      const c = want && (ex.callouts || []).find((x) => x.box && norm(x.text).includes(want));
-      if (c) { box = px(c.box); exact = true; break; }
+  const union = (bs) => { bs = bs.filter(Boolean); return bs.length ? [Math.min(...bs.map((b) => b[0])), Math.min(...bs.map((b) => b[1])), Math.max(...bs.map((b) => b[2])), Math.max(...bs.map((b) => b[3]))] : null; };
+  const words = (t) => new Set((String(t).toLowerCase().match(/[a-z]{4,}/g) || []).filter((w) => !SPOT_STOP.has(w)));
+  // 1. the view(s) the question is about
+  let areaViews = [];
+  const v = /\bv(\d+)\b/.exec(text), f = /\bf(\d+)\b/.exec(text), name = /\b(section|detail)\s+([a-z])(?:\s*-\s*\2)?\b/i.exec(text);
+  if (v) areaViews = [Number(v[1])];
+  else if (f) areaViews = ((ex.features || []).find((x) => x.id === `f${f[1]}`)?.views || []).map((id) => /^v(\d+)$/.exec(id)).filter(Boolean).map((x) => Number(x[1]));
+  else if (name) { const i = views.findIndex((w) => norm(w.label).includes(norm(name[0]))); if (i >= 0) areaViews = [views[i].no || i + 1]; }
+  if (!areaViews.length && views.length) {
+    const qw = words(text);
+    const scored = views.map((w, i) => ({ no: w.no || i + 1, n: [...words(w.label)].filter((x) => qw.has(x)).length })).sort((x, y) => y.n - x.n);
+    if (scored[0].n >= 2 && (scored.length === 1 || scored[1].n < scored[0].n)) areaViews = [scored[0].no];
+  }
+  const area = union(areaViews.map(viewBox));
+  // 2. the callout itself
+  let mark = null;
+  const o = /\bo(\d+)\b/.exec(text);
+  if (o) { const c = callouts.find((x) => x.id === `o${o[1]}`); if (c) mark = px(c.box); }
+  if (!mark) for (const q of text.match(/['"“‘]([^'"”’]{1,40})['"”’]/g) || []) {                    // quoted printed text, e.g. '1:1,5' or "Ø45 H7"
+    const want = norm(q.slice(1, -1)), c = want && callouts.find((x) => norm(x.text).includes(want));
+    if (c) { mark = px(c.box); break; }
+  }
+  if (!mark) {                                                                                       // a printed value the question names: Ø20, R6, 4.50
+    const inArea = (c) => !areaViews.length || (c.views || []).some((id) => areaViews.includes(Number(String(id).slice(1))));
+    for (const tok of text.match(/[Øø⌀R]\s?\d+(?:[.,]\d+)?|\b\d+[.,]\d+\b/g) || []) {
+      const want = norm(tok), hits = callouts.filter((c) => { const t = norm(c.text); return t.startsWith(want) && !/[\d.,]/.test(t.charAt(want.length)); });
+      const here = hits.filter(inArea), pick = here.length === 1 ? here[0] : hits.length === 1 ? hits[0] : null;
+      if (pick) { mark = px(pick.box); break; }
     }
   }
-  if (!box) {                                                       // SECTION D-D / DETAIL F / a view label
-    const name = /\b(section|detail)\s+([a-z])(?:\s*-\s*\2)?\b/i.exec(text);
-    if (name) {
-      const want = norm(name[0]);
-      const i = (page.read?.views || []).findIndex((v) => norm(v.label).includes(want));
-      if (i >= 0) box = viewBox((page.read.views[i].no) || i + 1);
-    }
-  }
-  return { page, box: box || [0, 0, page.width, page.height], exact, whole: !box };
+  if (!mark && !area) return { page, mark: null, box: [0, 0, page.width, page.height], frame: [0, 0, page.width, page.height], whole: true, exact: false };
+  const frame = area ? union([area, mark]) : mark;
+  return { page, mark: mark || area, box: mark || area, frame, whole: false, exact: Boolean(mark), view: areaViews.length === 1 ? views.find((w, i) => (w.no || i + 1) === areaViews[0])?.label : "" };
 }
 
 function questionCrop(r, key, text) {
   const spot = questionSpot(r, key, text);
   if (!spot) return null;
-  const { page, box, exact, whole } = spot;
-  const pad = exact ? Math.max(60, Math.max(box[2] - box[0], box[3] - box[1]) * 2) : 12;          // a callout: show its surroundings too
-  const x0 = Math.max(0, box[0] - pad), y0 = Math.max(0, box[1] - pad);
-  const x1 = Math.min(page.width, box[2] + pad), y1 = Math.min(page.height, box[3] + pad);
+  const { page, mark, frame, exact, whole } = spot;
+  const w = frame[2] - frame[0], h = frame[3] - frame[1];
+  const pad = whole ? 0 : Math.max(40, (exact && !spot.view ? 2 : 0.08) * Math.max(w, h));                 // a lone callout: show its surroundings too
+  const x0 = Math.max(0, frame[0] - pad), y0 = Math.max(0, frame[1] - pad);
+  const x1 = Math.min(page.width, frame[2] + pad), y1 = Math.min(page.height, frame[3] + pad);
   const svg = svgEl("svg", { class: "q-crop", viewBox: `${x0} ${y0} ${x1 - x0} ${y1 - y0}`, preserveAspectRatio: "xMidYMid meet", role: "img",
     "aria-label": whole ? `Page ${page.no} of the drawing` : `The part of page ${page.no} this question is about` });
   svg.append(svgEl("image", { href: `/api/page/${page.sha}`, x: 0, y: 0, width: page.width, height: page.height }));
-  if (!whole) svg.append(svgEl("rect", { class: "q-crop-mark", x: box[0] - 4, y: box[1] - 4, width: box[2] - box[0] + 8, height: box[3] - box[1] + 8 }));
-  const wrap = el("figure", { class: `q-crop-wrap${whole ? " whole" : ""}` }, svg,
-    el("figcaption", { text: whole ? `Page ${page.no}: the question does not name a spot, so the whole page is shown` : exact ? "The callout the question is about" : "The view the question is about" }));
-  return wrap;
+  if (!whole) {
+    const g = Math.max(6, 0.015 * Math.max(x1 - x0, y1 - y0));                                       // ring around the callout, sized to the crop
+    svg.append(svgEl("rect", { class: exact ? "q-crop-mark exact" : "q-crop-mark", x: mark[0] - g, y: mark[1] - g, width: mark[2] - mark[0] + 2 * g, height: mark[3] - mark[1] + 2 * g, rx: g }));
+  }
+  const caption = whole ? `Page ${page.no}: the question does not name a spot, so the whole page is shown`
+    : exact ? `Outlined: the callout the question is about${spot.view ? ` (in ${spot.view})` : ""}` : `Outlined: the view the question is about${spot.view ? ` (${spot.view})` : ""}`;
+  return el("figure", { class: `q-crop-wrap${whole ? " whole" : ""}` }, svg, el("figcaption", { text: caption }));
 }
 
 // The same question raised twice (e.g. once for the page and once for a feature): the same printed values and two shared words.
@@ -1098,7 +1117,8 @@ function suggestionCards(r, res, host, drafted) {
     const withReading = el("input", { type: "checkbox", "aria-label": `Also set the reading for ${sg.key}` });
     withReading.checked = false;                       // adding a reading changes the measurements: only if the reviewer opts in
     const reading = sg.measurement ? el("label", { class: "ai-reading" }, withReading, ` Also add the corrected reading "${sg.measurement}" (${sg.view})`) : null;
-    const crop = sg.view ? viewCrop(r, sg.view) : questionCrop(r, sg.key, sg.question);
+    const spot = questionSpot(r, sg.key, sg.question);                // outline the doubt when it can be found; else the view the AI named
+    const crop = spot && !spot.whole ? questionCrop(r, sg.key, sg.question) : sg.view ? viewCrop(r, sg.view) : questionCrop(r, sg.key, sg.question);
     const body = sg.can_answer
       ? [el("label", { class: "ai-accept" }, accept, " Accept this answer"), answer, reading]
       : [el("p", { class: "hint", text: "The AI could not tell from the image. Answer it yourself above or in the assistant." })];

@@ -24,7 +24,8 @@ otherwise set can_answer false and say what is hard to read. A wrong confident a
 A "measurement" is only a dimension callout (numbers, optionally with a symbol such as Ø, R or °). A title, scale label, part name or note is never a measurement.
 When the answer is a corrected printed callout, put EXACTLY the printed text in "measurement" (one callout, e.g. "22" or "Ø10 - 8 hole") and the id of the view it
 belongs to in "view" (from the views list); otherwise leave both null. "basis" says in one sentence what you saw.
-The picture is either the whole page or, when the context says "picture": "close-up", a full-resolution close-up of the part of the page the question is about.
+The picture is either the whole page or, when the context says "picture": "close-up", a full-resolution close-up of the part of the page the question is about;
+a RED outline in a close-up marks the callout the question is about.
 Return JSON only: {"suggestions":[{"key":"P1.u1","can_answer":true,"answer":"...","measurement":null,"view":null,"basis":"..."}]}
 Answer every key once; do not add keys that were not asked.'''
 
@@ -45,7 +46,8 @@ def open_questions(result: dict, model) -> list[dict]:
                 if twin:                                         # raised twice (page + feature): asked once, the answer goes to both
                     twin["also"].append(key)
                 else:
-                    out.append({"key": key, "page": page["no"], "question": issue, "box": question_box(page, issue), "also": []})
+                    box = question_box(page, issue)
+                    out.append({"key": key, "page": page["no"], "question": issue, "box": box, "mark": question_mark(page, issue, box), "also": []})
     return out
 
 
@@ -115,7 +117,33 @@ def question_box(page: dict, text: str) -> list[float] | None:
     return None
 
 
-def crop_png(png: bytes, box, pad: int = 120) -> bytes | None:
+def question_mark(page: dict, text: str, area) -> list[float] | None:
+    """The callout a question is about (page pixels), the same way the review page outlines it: a callout id, else a printed value the question
+    names (Ø20, R6, 4.50) that is the only such callout inside `area` (or on the page)."""
+    ex = ((page.get("read") or {}).get("evidence") or {}).get("extraction") or {}
+    W, H = page.get("width") or 0, page.get("height") or 0
+    calls = [c for c in ex.get("callouts", []) if isinstance(c, dict) and c.get("box")]
+    px = lambda b: [b[0] * W / 1000, b[1] * H / 1000, b[2] * W / 1000, b[3] * H / 1000]
+    if not (W and H):
+        return None
+    m = re.search(r"\bo(\d+)\b", text)
+    if m:
+        c = next((c for c in calls if c.get("id") == f"o{m.group(1)}"), None)
+        if c:
+            return px(c["box"])
+    norm = lambda t: re.sub(r"\s+", "", str(t or "").lower()).replace("⌀", "ø")
+    inside = lambda b: area is None or (b[0] >= area[0] - 5 and b[1] >= area[1] - 5 and b[2] <= area[2] + 5 and b[3] <= area[3] + 5)
+    for tok in re.findall(r"[Øø⌀R]\s?\d+(?:[.,]\d+)?|\b\d+[.,]\d+\b", text):
+        want = norm(tok)
+        hits = [c for c in calls if norm(c.get("text")).startswith(want) and not re.match(r"[\d.,]", norm(c.get("text"))[len(want):len(want) + 1])]
+        here = [c for c in hits if inside(px(c["box"]))]
+        pick = here[0] if len(here) == 1 else hits[0] if len(hits) == 1 else None
+        if pick:
+            return px(pick["box"])
+    return None
+
+
+def crop_png(png: bytes, box, pad: int = 120, mark=None) -> bytes | None:
     """The question's spot at full resolution (shrunk only if longer than CROP_MAX)."""
     if not box:
         return None
@@ -127,7 +155,11 @@ def crop_png(png: bytes, box, pad: int = 120) -> bytes | None:
     x1, y1 = min(im.width, int(box[2]) + pad), min(im.height, int(box[3]) + pad)
     if x1 - x0 < 8 or y1 - y0 < 8:
         return None
-    im = im.crop((x0, y0, x1, y1))
+    im = im.crop((x0, y0, x1, y1)).convert("RGB")
+    if mark:                                                             # outline the callout in question (red), as the review page does
+        from PIL import ImageDraw
+        g = max(6, int(0.012 * max(im.size)))
+        ImageDraw.Draw(im).rectangle([mark[0] - x0 - g, mark[1] - y0 - g, mark[2] - x0 + g, mark[3] - y0 + g], outline=(220, 30, 30), width=max(3, g // 2))
     if max(im.size) > CROP_MAX:
         k = CROP_MAX / max(im.size)
         im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))))
@@ -165,7 +197,7 @@ def suggest(llm, page_no: int, png: bytes, questions: list[dict], views: list[di
     """Proposals for every question on one page (one model call per batch of 20). Each asked key appears once."""
     out, rest = [], []
     for q in questions:                       # a question that points at a spot is asked with its close-up (one picture per call)
-        crop = crop_png(png, q.get("box"))
+        crop = crop_png(png, q.get("box") or q.get("mark"), mark=q.get("mark"))
         if crop:
             out.extend(_suggest_batch(llm, page_no, crop, [q], views, dimensions, closeup=True))
         else:

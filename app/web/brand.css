@@ -492,3 +492,7 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 .m-qnav.m-qlink{border-radius:10px;padding:7px 14px}
 #build-plan .q-list{overflow-x:hidden}
 .q-also{font-size:11.5px;color:var(--muted);margin:-2px 0 8px}
+.q-crop-mark.exact{fill:#f89e6126;stroke:#e5531a;stroke-width:4;animation:qpulse 1.6s ease-in-out 3}
+@keyframes qpulse{50%{stroke-opacity:.35}}
+.q-crop{height:260px}
+@media(prefers-reduced-motion:reduce){.q-crop-mark.exact{animation:none}}
