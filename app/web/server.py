@@ -628,7 +628,71 @@ def assembly_review_result(rid: str, attempt: str, edited: dict, review_notes=No
     return save_assembly(rid, plan, prior["extracted"], prior.get("harness"), [*prior.get("review_notes", []), *(review_notes or [])])
 
 
+PART_LISTS = config.PROJECT_ROOT / "storage/parts"
+
+
+def parts_overview(rid: str) -> dict:
+    """Parts on the sheet, each with its latest build list, and whether SolidWorks can build here."""
+    from app.web.parts import detect_parts, latest_lists, solidworks_status
+    result = result_with_design(rid)
+    lists = latest_lists(PART_LISTS, rid)
+    parts = [{**{k: v for k, v in p.items() if k != "views"}, "views": [{"page": v["page"], "no": v["no"], "label": v["label"]} for v in p["views"]],
+              "list": lists.get(p["id"])} for p in detect_parts(result)]
+    return {"result_id": rid, "parts": parts, "solidworks": solidworks_status()}
+
+
+def _part(result: dict, part_id: str) -> dict:
+    from app.web.parts import detect_parts
+    part = next((p for p in detect_parts(result) if p["id"] == part_id), None)
+    if part is None:
+        raise ValueError("That part is not on this drawing")
+    return part
+
+
+def create_part_list(rid: str, part_id: str, llm_name=None, client=None) -> dict:
+    """One model call: the part's views + the reviewed measurements -> a build list (full feature menu). Validated offline; nothing is built."""
+    from app.llm import make_client
+    from app.llm.base import FilePart
+    from app.menu import parse_reply
+    from app.web.parts import part_sheet, reader_context, save_part_list
+    from app.agent.prompts import reader_system
+    result = result_with_design(rid)
+    if any("human review required" in q or "confirm this" in q for q in result["drawing_model"].get("issues", [])):
+        raise ValueError("Approve the measurements on the Review step first: the build list uses the reviewed values")
+    part = _part(result, part_id)
+    shas = {p["no"]: p["sha"] for p in result["pages"]}
+    png = part_sheet(result, part, lambda no: default_cache().get_blob(shas[no]))
+    attempt = uuid.uuid4().hex[:12]
+    with trace.run(attempt, RUNS / attempt, save_files=config.TRACE_FILES, workflow="part_build_list", drawing_result=rid, part=part_id):
+        provider = llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER
+        supervisor = Orchestrator(extraction=ExtractionAgent(client if client is not None else make_client(provider, reasoning_effort=config.CAD_REASONING_EFFORT)))
+        try:
+            response = supervisor.read_list([FilePart(png, "image/png"), reader_context(result, part, result["drawing_model"])])
+        except LLMError as ex:
+            ex.run_id = attempt
+            raise
+    draft = response.data if isinstance(response.data, dict) else {}
+    try:
+        parse_reply(draft)
+    except ValueError:
+        pass                                                                    # kept and reported by the check: the reviewer sees why it is not buildable
+    return save_part_list(PART_LISTS, rid, part, draft, "ai", provider)
+
+
+def upload_part_list(rid: str, part_id: str, draft) -> dict:
+    from app.web.parts import save_part_list
+    if not isinstance(draft, dict):
+        raise ValueError("A build list file is a JSON object")
+    return save_part_list(PART_LISTS, rid, _part(result_with_design(rid), part_id), draft, "file")
+
+
 def workflow_plan(rid, attempt):
+    from app.web.parts import load_part_list
+    part_list = load_part_list(PART_LISTS, rid, attempt)
+    if part_list is not None:                                                    # a part's build list: the same approval / build / review path
+        if part_list["check"]["status"] != "ready":
+            raise ValueError("This part's build list is not buildable yet: " + "; ".join(part_list["check"]["blocking"]))
+        return part_list, part_list["draft"]
     result = result_with_design(rid)
     if result.get("extraction_strategy") in {"r1", "r2"}:
         raise ValueError("R1/R2 extraction evaluation evidence cannot start or export a CAD workflow")
@@ -722,6 +786,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             return self._json(200, {"providers": providers(), "default": config.WORKER_LLM_PROVIDER, "max_files": MAX_FILES,
                                     "models": {"domo": config.DOMO_MODEL, "gemini": config.GEMINI_MODEL}})
+        m = re.fullmatch(r"/api/parts/([0-9a-f]{12})", path)
+        if m:
+            try:
+                return self._json(200, parts_overview(m.group(1)))
+            except (OSError, ValueError) as ex:
+                return self._json(404, {"error": str(ex)})
         if path == "/api/results":
             return self._json(200, {"results": recent_results()})
         if path == "/api/harness":
@@ -806,7 +876,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
+        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
             return self._json(404, {"error": "not found"})
         size = int(self.headers.get("Content-Length") or 0)
         if not 0 < size <= MAX_BODY:
@@ -839,10 +909,23 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path.endswith("/start"):
                     job = WORKFLOW.create(str(body.get("result_id", "")), str(body.get("attempt", "")))
                     if body.get("build") is True:
-                        job = WORKFLOW.action(job["id"], job["revision"], "build")
+                        gaps = [str(g) for g in body.get("accepted_gaps") or [] if isinstance(g, str)]
+                        job = WORKFLOW.action(job["id"], job["revision"], "build", accepted_gaps=gaps)
                     return self._json(200, job)
-                decision = {key: body[key] for key in ("review_hash", "compared_drawing", "checked_measurements", "message", "params") if key in body}
+                decision = {key: body[key] for key in ("review_hash", "compared_drawing", "checked_measurements", "message", "params", "accepted_gaps") if key in body}
                 return self._json(200, WORKFLOW.action(str(body.get("job_id", "")), body.get("revision"), str(body.get("action", "")), **decision))
+            if self.path in ("/api/parts/create", "/api/parts/upload"):
+                if not self._same_origin_json():
+                    return self._json(403, {"error": "Create build lists from this drawing workspace"})
+                if not _PLAN_LOCK.acquire(blocking=False):
+                    return self._json(409, {"error": "A review or plan is running. Wait for it to finish."})
+                try:
+                    rid, pid = str(body.get("result_id", "")), str(body.get("part_id", ""))
+                    if self.path.endswith("/create"):
+                        return self._json(200, create_part_list(rid, pid, llm))
+                    return self._json(200, upload_part_list(rid, pid, body.get("list")))
+                finally:
+                    _PLAN_LOCK.release()
             if self.path == "/api/clarify":
                 if not self._same_origin_json():
                     return self._json(403, {"error": "Ask for suggestions from this drawing workspace"})

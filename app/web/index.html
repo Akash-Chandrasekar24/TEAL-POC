@@ -685,17 +685,21 @@ function designCard(r) {
   // Open questions come after the measurements: they stay hidden while any reading is still to verify.
   const gateNote = el("p", {class:"m-gate"});
   const donePanel = el("div", { class: "review-done", hidden: true });
+  const parts = partsPanel(r);
+  parts.hidden = true;
   const done = () => {
     const finished = count("open") === 0 && openAsk === 0 && !r.reviewDirty;
     donePanel.hidden = !finished;
+    parts.hidden = !finished;
+    if (finished && !parts.loaded && typeof fetch === "function") { parts.loaded = true; parts.load(); }
     if (!finished) return;
     const csv = typeof Blob === "undefined" ? null : el("a", { class: "btn", download: "reviewed-measurements.csv",
       href: URL.createObjectURL(new Blob([measurementsCsv(measurementRows(inputs))], { type: "text/csv;charset=utf-8" })), text: "Download reviewed measurements (CSV)" });
     const next = r.design?.plan?.status === "ready_for_approval"
       ? "Next: approve the feature plan below to build it in SolidWorks. Build & Verify opens once the build starts."
       : isAssembly(r)
-        ? "This drawing is an assembly of several parts. The browser cannot plan a 3D build of the whole sheet yet (the next step we are building: a build list per part, then the assembly). Your review is saved; reopen it any time from Recent drawings."
-        : "Next: press “Save reviewed measurements” to plan the 3D build; Build & Verify opens once a build starts.";
+        ? "Next: build the parts one by one below. Each part gets a build list (AI or a prepared file); approve it and SolidWorks builds it, then you check it in Build & Verify."
+        : "Next: build it below (a build list for the part, then Approve and build), or press “Save reviewed measurements” for the simple plate / hole / boss planner.";
     donePanel.replaceChildren(el("div", { class: "review-done-head" }, el("span", { class: "review-done-tick", text: "✓", "aria-hidden": "true" }),
       el("div", {}, el("h3", { text: "Review complete" }), el("p", { text: `All ${inputs.length} measurements are approved and every question is answered.` }))),
       el("p", { class: "review-done-next", text: next }), el("div", { class: "review-done-actions" }, csv));
@@ -775,7 +779,7 @@ function designCard(r) {
   btn.addEventListener("click", () => save(false));
   finishBtn.addEventListener("click", () => save(true));
   return el("section", { class: "card pad", id: "design" }, el("div",{class:"review-title"},el("span",{class:"eyebrow",text:"EXTRACTION REVIEW"}),el("h2", { text: "Measurements, made clear." })),
-    el("p", { class: "hint", text: "The agent handles confident readings. You resolve the rest." }), donePanel, controls, status, gateNote, output);
+    el("p", { class: "hint", text: "The agent handles confident readings. You resolve the rest." }), donePanel, parts, controls, status, gateNote, output);
 }
 
 async function workflowRequest(path, body) {
@@ -1407,6 +1411,92 @@ function suggestPanel(r, questions) {
     catch (error) { status.textContent = error.message; ask.disabled = false; }
   });
   host.append(el("p", { class: "hint", text: "The AI can draft an answer for each question from the drawing itself. You see every draft first and confirm it before anything is saved." }), ask, status);
+  return host;
+}
+
+// ---- Parts on this sheet: a build list per part, then the existing approval / build / review / export path
+const PART_STATUS = { ready: ["ok", "Build list ready"], needs_information: ["warn", "Needs information"], invalid: ["warn", "Build list not valid"], stopped: ["warn", "Not buildable yet"] };
+
+function partsPanel(r) {
+  const host = el("section", { class: "parts-panel", "aria-label": "Parts on this sheet" });
+  const load = async () => {
+    host.replaceChildren(el("p", { class: "hint", text: "Finding the parts on this sheet…" }));
+    try { render(await (await fetch(`/api/parts/${r.id}`)).json()); }
+    catch (error) { host.replaceChildren(el("p", { class: "hint", text: `Could not list the parts: ${error.message}` })); }
+  };
+  const busy = (title, message) => window.dispatchEvent(new CustomEvent("studio:processing", { detail: { busy: Boolean(title), title, message } }));
+  const post = async (path, body, title) => {
+    busy(title, "One model call that sees only this part's views and your reviewed measurements. Nothing is built yet.");
+    try { await workflowRequest(path, { result_id: r.id, llm: ($("#llm") && $("#llm").value) || r.llm, ...body }); await load(); }
+    catch (error) { status.textContent = error.message; }
+    finally { busy(null); }
+  };
+  const status = el("p", { class: "hint", "aria-live": "polite" });
+  const render = (data) => {
+    const sw = data.solidworks || {};
+    const swLine = el("div", { class: `sw-status ${sw.ready ? "ok" : "warn"}` },
+      el("b", { text: sw.ready ? `SolidWorks ready${sw.version ? " · " + sw.version : ""}` : sw.installed ? `${sw.version || "SolidWorks"}: not ready` : "SolidWorks not found" }),
+      el("span", { text: sw.detail || "" }),
+      el("button", { type: "button", class: "m-link", text: "Check again", onclick: load }));
+    const rows = (data.parts || []).map((part) => {
+      const list = part.list, check = list?.check || {};
+      const [tone, label] = part.kind === "buy" ? ["muted", "Bought part"] : list ? PART_STATUS[check.status] || ["warn", check.status] : ["muted", "No build list yet"];
+      const head = el("div", { class: "part-head" },
+        el("div", {}, el("b", { class: "part-name", text: part.name }),
+          el("small", { text: [part.item && `item ${part.item}`, part.quantity && `qty ${part.quantity}`, `${part.views.length} view${part.views.length === 1 ? "" : "s"}`].filter(Boolean).join(" · ") })),
+        el("span", { class: `part-chip ${tone}`, text: label }));
+      const body = el("div", { class: "part-body" });
+      if (part.kind === "buy") {
+        body.append(el("p", { class: "hint", text: "A standard bought part: supply its SolidWorks model in the assembly step; it is not drawn from this sheet." }));
+        return el("article", { class: "part-card buy", "data-part": part.id }, head, body);
+      }
+      const file = el("input", { type: "file", accept: ".json,application/json", hidden: true });
+      file.addEventListener("change", async () => {
+        const f = file.files && file.files[0]; if (!f) return;
+        try { await post("/api/parts/upload", { part_id: part.id, list: JSON.parse(await f.text()) }, `Loading the build list for ${part.name}`); }
+        catch (error) { status.textContent = `That file is not a build list: ${error.message}`; }
+      });
+      const create = el("button", { type: "button", class: list ? "m-link" : "btn secondary", text: list ? "Create again with AI" : "Create build list with AI",
+        onclick: () => post("/api/parts/create", { part_id: part.id }, `Writing the build list for ${part.name}`) });
+      const upload = el("button", { type: "button", class: "m-link", text: list ? "Load another file" : "Load build list file", onclick: () => file.click() });
+      if (!part.views.length) body.append(el("p", { class: "hint", text: "No view of this part was located on the sheet, so the AI has nothing to read. Load a prepared build list file instead." }));
+      if (list) {
+        const features = (list.draft.items || []).map((it) => `${it.id} ${it.feature}${it.printed ? " · " + it.printed : ""}`);
+        body.append(el("p", { class: "part-summary", text: `${(list.draft.items || []).length} feature${(list.draft.items || []).length === 1 ? "" : "s"} · from ${list.source === "ai" ? "the AI" : "a file"} · ${new Date(list.created).toLocaleString()}` }),
+          el("details", { class: "part-features" }, el("summary", { text: "Features in this build list" }), el("ol", {}, features.map((t) => el("li", { text: t })))));
+        if (check.blocking?.length) body.append(el("div", { class: "part-blocking" }, el("b", { text: "Before it can be built:" }), el("ul", {}, check.blocking.map((t) => el("li", { text: t })))));
+        const gaps = (check.unsupported || []).map((u) => ({ u, box: el("input", { type: "checkbox", "aria-label": `Accept ${u.id}` }) }));
+        if (gaps.length) body.append(el("div", { class: "part-gaps" }, el("b", { text: "Not modelled: tick each one you accept" }),
+          gaps.map(({ u, box }) => el("label", {}, box, ` ${u.id}: ${u.text}`))));
+        if (check.status === "ready") {
+          const build = el("button", { type: "button", class: "btn", text: "Approve and build in SolidWorks" });
+          const why = el("small", { class: "part-why" });
+          const sync = () => {
+            const missing = gaps.filter((g) => !g.box.checked).length;
+            build.disabled = !sw.ready || missing > 0 || Boolean(r.workflowBusy);
+            why.textContent = !sw.ready ? "SolidWorks is not ready on this machine: start it with a valid licence, then press Check again." :
+              missing ? `Tick the ${missing} not-modelled item${missing === 1 ? "" : "s"} above to accept ${missing === 1 ? "it" : "them"}.` : "";
+          };
+          gaps.forEach((g) => g.box.addEventListener("change", sync)); sync();
+          build.addEventListener("click", async () => {
+            build.disabled = true;
+            try {
+              r.workflowJob = await workflowRequest("/api/workflow/start", { result_id: r.id, attempt: list.id });
+              await jobDecision(r, "build", { accepted_gaps: gaps.map((g) => g.u.id) });
+              if (typeof window !== "undefined") window.studioNavigate?.(3);
+            } catch (error) { status.textContent = error.message; sync(); }
+          });
+          body.append(el("div", { class: "part-actions" }, build, why));
+        }
+      }
+      body.append(el("div", { class: "part-actions" }, create, upload, file));
+      return el("article", { class: "part-card", "data-part": part.id }, head, body);
+    });
+    host.replaceChildren(el("div", { class: "parts-head" }, el("h3", { text: "Parts on this sheet" }),
+      el("p", { class: "hint", text: "Each part gets its own build list. Approve one and SolidWorks builds it; you check the model in Build & Verify, then export." })),
+      swLine, el("div", { class: "part-list" }, rows), status);
+  };
+  host.load = load;
   return host;
 }
 
