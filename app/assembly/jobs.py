@@ -3,17 +3,39 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 import uuid
 from pathlib import Path
 
 from .model import AssemblyPlan, digest, validate_plan
 
 
+# Windows refuses to replace a file while another thread has it open (and refuses the open during the replace): the server reads
+# and writes these files from several threads, so the replace and read_json take one lock. Measured: a build ended with
+# "PermissionError: Access is denied" on its batch file while the page was polling it.
+_FILE_LOCK = threading.Lock()
+
+
 def write_json(path: Path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
-    os.replace(temporary, path)
+    for attempt in range(40):                       # another PROCESS (antivirus, indexer) may still hold it a moment
+        try:
+            with _FILE_LOCK:
+                os.replace(temporary, path)
+            return
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.05)
+
+
+def read_json(path: Path):
+    """Read a file written by write_json without racing its replace."""
+    with _FILE_LOCK:
+        return json.loads(path.read_text(encoding="utf-8"))
 
 
 class AssemblyJob:

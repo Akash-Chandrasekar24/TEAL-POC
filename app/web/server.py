@@ -37,7 +37,7 @@ from app.menu import parse_reply
 from app.runner import validate_list
 from app.llm.base import LLMError
 from app.assembly.assets import import_model
-from app.assembly.jobs import write_json
+from app.assembly.jobs import read_json, write_json
 from app.assembly.model import AssemblyPlan, digest, validate_plan
 from app.drawing.readiness import readiness, source_quality
 from .workflow import Workflow
@@ -677,7 +677,7 @@ def _batch_path(rid):
 
 def load_batch(rid):
     path = _batch_path(rid)
-    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    return read_json(path) if path.is_file() else None
 
 
 def _save_batch(rid, batch):
