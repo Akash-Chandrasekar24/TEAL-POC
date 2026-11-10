@@ -29,3 +29,13 @@ def test_a_side_outline_taller_than_the_base_is_refused():
         prepare(build(40, CLAMP)); assert False
     except Exception as ex:
         assert "FULL height" in str(ex)
+
+
+def test_the_volume_bound_is_negative_for_material_removed():
+    from app.verify.step_verifier import Snapshot, judge
+    f = prepare(build(60, CLAMP))[1].feature
+    exp = f.expected()
+    assert exp.bound_mm3 < 0
+    before = Snapshot(doc="P", volume=1e-3, area=0, cog=(0, 0, 0), bodies=1, faces=6, edges=12, vertices=8)
+    after = Snapshot(doc="P", volume=1e-3 - 300000e-9, area=0, cog=(0, 0, 0), bodies=1, faces=30, edges=84, vertices=56)
+    assert judge("side", before, after, exp).ok                                      # a removal within the bound passes (it failed as wrong_sign)

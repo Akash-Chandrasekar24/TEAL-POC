@@ -180,7 +180,7 @@ class SweptPassage:
         return sum(self.piece_bounds_mm3())
 
     def expected(self) -> Expect:
-        return Expect(bound_mm3=self.bound_mm3(), bodies=1)
+        return Expect(bound_mm3=self.expected_delta_mm3(), bodies=1)       # signed: a cut removes
 
     def expected_delta_mm3(self) -> float:
         return (-1 if self.operation == "cut" else 1) * self.bound_mm3()
@@ -191,7 +191,7 @@ class SweptPassage:
         for i, (spec, b) in enumerate(zip(specs, bounds)):
             label = self.label if len(specs) == 1 else f"{self.label} {i + 1}/{len(specs)}"
             v = await ctx.verifier.run_step(label, lambda spec=spec: ctx.sw.geometry("ext_sweep", spec),
-                                            Expect(bound_mm3=b, bodies=1))
+                                            Expect(bound_mm3=-b if self.operation == "cut" else b, bodies=1))
             res.verdicts.append(v)
             if not v.ok:
                 break
@@ -428,7 +428,7 @@ class SideProfileCut:
         return [one, {**one, "direction": [-v for v in one["direction"]]}]
 
     def expected(self) -> Expect:
-        return Expect(bound_mm3=self.removed_bound_mm3(), bodies=1)
+        return Expect(bound_mm3=-self.removed_bound_mm3(), bodies=1)       # negative: material removed
 
     def expected_delta_mm3(self) -> float:
         return -self.removed_bound_mm3()
