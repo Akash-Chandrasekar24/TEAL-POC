@@ -55,7 +55,7 @@ CAD_REASONING_EFFORT = os.getenv("CAD_REASONING_EFFORT", "high").strip().lower()
 EXTRACTION_SIMPLE_EFFORT = os.getenv("EXTRACTION_SIMPLE_EFFORT", "none").strip().lower() or "none"
 EXTRACTION_SIMPLE_MIN_OCR_LINES = int(os.getenv("EXTRACTION_SIMPLE_MIN_OCR_LINES", "8"))
 EXTRACTION_SIMPLE_MAX_OCR_LINES = int(os.getenv("EXTRACTION_SIMPLE_MAX_OCR_LINES", "20"))
-DOMO_MAX_IN_FLIGHT = max(1, int(os.getenv("DOMO_MAX_IN_FLIGHT", "2")))  # Domo calls at once per process: ~6 stalled for 10 min (measured 2026-11-03)
+DOMO_MAX_IN_FLIGHT = max(1, int(os.getenv("DOMO_MAX_IN_FLIGHT", "3")))  # Domo calls at once per process: ~6 stalled for 10 min (2026-11-03); 3 ran at full speed (2026-11-10: 3-page PDF 101 s vs 212 s at 2)
 
 
 def domo_token() -> str:

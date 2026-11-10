@@ -157,5 +157,18 @@ after 7 minutes it had not finished (the whole-page read takes about 3.5 minutes
 replies (about 2k output tokens) took 50 s when sent first and 200-310 s once many calls were in
 flight: Domo answers roughly one call every 15-30 s however many are sent, so what matters is the
 total tokens per page, and tiling added tokens (every tile spends about 2k tokens thinking).
-Removed. Two or three calls in flight (one per page) behaved normally in earlier runs.
+Removed. Correction (same day): the queue was mostly this app's own limit, DOMO_MAX_IN_FLIGHT=2 (set because about 6
+calls in flight stalled Domo for 10 minutes on 2026-11-03), so 24 calls ran 2 at a time. Either way tiling cannot win on Domo:
+more calls than about 2-4 at once are not served, and tiling adds tokens. For the same reason PAGE_WORKERS above 2 gains nothing
+while DOMO_MAX_IN_FLIGHT is 2.
 Also kept: PDF pages saved with PNG compress_level 6 instead of optimize (about 2.5 s a page faster).
+
+## 2026-11-10: three Domo calls at once
+
+Water Pump PDF, 3 pages, verbose R1, GPT-5.6 Sol, all three page calls sent together (DOMO_MAX_IN_FLIGHT=3):
+pages took 91.5 s, 100.7 s and 79.1 s, so the whole PDF took 100.7 s, against 212 s with the old cap of 2 (page 3 had waited
+for a free slot). Each call was as fast as with fewer calls in flight. The default is now 3; 4 or more is untested (about 6 stalled).
+
+Other models on this Domo instance, same page (Wankel page 1, 76 reviewed measurements), same prompt, medium effort:
+GPT-5.6 Sol 73 s, 76/76. Gemini 3.7 Flash 25-29 s but found 16 of 76 (it skips most of the sheet). Gemini 3.5 Flash 23 s, 5 found.
+GPT-5.4 mini 153 s and DomoGPT Medium v3 150 s, both slower (and returned nulls the schema rejects). Sol stays.
