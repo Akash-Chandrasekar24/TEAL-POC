@@ -907,6 +907,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("assembly.html", "text/html; charset=utf-8")
         if path == "/viewer.js":
             return self._static("viewer.js", "text/javascript; charset=utf-8")
+        if path == "/solidworks.js":
+            return self._static("solidworks.js", "text/javascript; charset=utf-8")
         if path == "/ui.js":
             return self._static("ui.js", "text/javascript; charset=utf-8")
         if path == "/ui.css":

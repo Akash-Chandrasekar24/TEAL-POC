@@ -30,14 +30,14 @@ function all(node, predicate) {
 async function main() {
   const fixture = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   const html = fs.readFileSync("app/web/index.html", "utf8");
-  const script = html.split("<script>")[1].split("</script>")[0].split("const drop = ")[0];
+  const script = fs.readFileSync("app/web/solidworks.js", "utf8") + ";\n" + html.split("<script>")[1].split("</script>")[0].split("const drop = ")[0].replace('"use strict";', "");
   const provider = new Element("select"); provider.value = "gemini";
   let request;
   const context = {
     document: { createElement: (tag) => new Element(tag), createElementNS: (_, tag) => new Element(tag),
       querySelector: (selector) => selector === "#llm" ? provider : null },
     fetch: async (path, options) => {
-      assert.equal(path, "/api/plan"); request = JSON.parse(options.body);
+      assert.equal(path, "/api/review", "the review page only saves the review: no planning, no build"); request = JSON.parse(options.body);
       return { ok: true, json: async () => fixture.response };
     },
   };
@@ -45,8 +45,8 @@ async function main() {
   const card = context.designCard(fixture.result);
   const build = () => all(card, (e) => e.tagName === "button" && e.textContent === "Approve features and build in SolidWorks");
   const download = () => all(card, (e) => e.tagName === "a" && e.attrs.download);
-  assert.equal(build().length, 1);
-  assert.equal(download().length, 0, "planning must not offer CAD exports");
+  assert.equal(build().length, 0, "building lives on the SolidWorks page, not in the review");
+  assert.equal(download().length, 0, "the review must not offer CAD exports");
   const correction = all(card, (e) => e.tagName === "input" && e.attrs["aria-label"] === "Correct P1.d1")[0];
   correction.value = "125";
   const save = all(card, (e) => e.attrs["aria-label"] === "Save value P1.d1")[0];
@@ -54,17 +54,14 @@ async function main() {
   assert.equal(all(card, (e) => e.attrs["data-reading-id"] === "P1.d1").length, 0, "a verified reading leaves the Needs review tab");
   const controls = all(card, (e) => e.tagName === "fieldset")[0];
   await controls.fire("input"); // browser input events bubble to the fieldset
-  assert.equal(build().length, 0, "editing must hide the previous plan's build approval");
-  const generate = all(card, (e) => e.tagName === "button" && e.textContent === "Review measurements and continue")[0];
+  const generate = all(card, (e) => e.tagName === "button" && e.textContent === "Save reviewed measurements")[0];
   await generate.fire("click");
   assert.equal(request.source_hash, fixture.result.drawing_model.source_hash);
   assert.equal(request.result_id, fixture.result.id);
   assert.equal(request.resolutions.dimensions[0].text, "125");
   assert.equal(controls.disabled, false);
-  assert.equal(build().length, 1);
+  assert.equal(build().length, 0);
   assert.equal(download().length, 0);
-  assert.ok(card.textContent.includes("125"));
-  assert.ok(card.textContent.includes("approval"));
   const reviewed = fixture.result;
   reviewed.workflowJob = {id:"abcdefabcdef", revision:2, phase:"awaiting_review", review_hash:"preview-1", questions:[], preview:{image:"/preview",mesh:"/mesh"}};
   reviewed.reviewDirty = false;
@@ -158,7 +155,7 @@ async function main() {
   assert.equal(JSON.parse(JSON.stringify(context.viewGroup({pages:[]},{views:[]}))).key,"none","a reading without a view gets its own group");
   const sec=context.viewGroup({pages:[{no:1,read:{views:[{no:2,type:"section",label:"SECTION A-A SCALE 1:1,5"}]}}]},{views:["P1.v2"]});
   assert.deepEqual(JSON.parse(JSON.stringify([sec.title,sec.scale,sec.kind,sec.key])),["SECTION A-A","scale 1:1,5","Section","1.2"],"sheet name, scale and kind are split out");
-  assert.equal(all(card,(e) => e.tagName==="button" && e.textContent==="Finish without a 3D build").length,1,"measurements can be saved without going on to a 3D build");
+  assert.ok(html.includes('<script src="/solidworks.js"></script>') && !html.includes("function workflowCard") && !html.includes("function partsPanel"),"all SolidWorks UI code lives in solidworks.js");
   const csv=context.measurementsCsv(context.measurementRows([
     {group:{title:"SECTION A-A",scale:"scale 1:1,5"},d:{id:"P1.d1",text:"Ø79",page:1},shown:() => 'Ø79 "x"',state:() => "ai",score:87},
     {group:{title:"01. PISTON",scale:""},d:{id:"P1.d2",text:"5",page:1},shown:() => "5",state:() => "open",score:null}]));
@@ -217,7 +214,8 @@ async function main() {
   const doneCard=context.designCard(doneR);
   const panel=all(doneCard,(e) => e.attrs.class==="review-done")[0];
   assert.equal(panel.hidden,false,"all approved and nothing to answer: the review says it is complete");
-  assert.ok(doneCard.textContent.includes("Review complete") && doneCard.textContent.includes("Before a 3D build"),"build notes are separate from questions");
+  assert.ok(doneCard.textContent.includes("Review complete") && doneCard.textContent.includes("Notes for the 3D build"),"build notes are separate from questions");
+  assert.equal(all(doneCard,(e) => e.tagName==="button" && e.textContent==="Go to SolidWorks →").length,1,"a complete review leads to the SolidWorks page");
   assert.equal(all(doneCard,(e) => (e.attrs.class||"").includes("m-qlink"))[0].hidden,true,"a build note is not counted as an open question");
   const showBody=html.slice(html.indexOf("function show(r)"),html.indexOf("function updateExtractionProgress"));
   assert.ok(!showBody.includes("assemblyCard(r)") && !showBody.includes("featureCard(r)") && !showBody.includes("assessmentCard(r)"),"review page omits the removed inspector sections");
