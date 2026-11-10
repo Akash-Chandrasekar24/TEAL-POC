@@ -141,7 +141,7 @@ def test_build_everything_prepares_lists_waits_for_one_approval_then_builds_each
             fn(*a)
     ready = {"ready": True, "detail": "Ready to build."}
     with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), patch.object(server, "WORKFLOW", FakeWorkflow()), \
-         patch.object(server, "_BATCH_POOL", Now()), patch.object(server, "create_part_list", fake_create), \
+         patch.object(server, "_BATCH_POOL", Now()), patch.object(server, "_PREP_POOL", Now()), patch.object(server, "_PREP_POOL", Now()), patch.object(server, "create_part_list", fake_create), \
          patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)):
         batch = server.start_batch("abcdef123456")
         batch = server.load_batch("abcdef123456")
@@ -169,7 +169,7 @@ def test_build_everything_prepares_lists_waits_for_one_approval_then_builds_each
 def test_approve_all_refuses_a_part_whose_gaps_were_not_accepted():
     result = {"id": "abcdef123456", "pages": [page(1, ["01. GEAR"])], "drawing_model": {"issues": []}}
     with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), \
-         patch.object(server, "_BATCH_POOL", type("N", (), {"submit": lambda self, fn, *a: None})()), \
+         patch.object(server, "_BATCH_POOL", type("N", (), {"submit": lambda self, fn, *a: None})()), patch.object(server, "_PREP_POOL", type("N", (), {"submit": lambda self, fn, *a: None})()), \
          patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)), \
          patch.object(parts, "solidworks_status", lambda: {"ready": True, "detail": ""}):
         parts.save_part_list(Path(d), "abcdef123456", {"id": "gear", "name": "Gear", "item": "", "quantity": 1},
@@ -235,7 +235,7 @@ def test_let_ai_handle_every_doubt_confirms_at_once_or_rewrites_in_the_backgroun
     class Now:
         def submit(self, fn, *a):
             fn(*a)
-    with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), patch.object(server, "_BATCH_POOL", Now()), \
+    with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), patch.object(server, "_BATCH_POOL", Now()), patch.object(server, "_PREP_POOL", Now()), patch.object(server, "_PREP_POOL", Now()), \
          patch.object(server, "create_part_list", fake_create), patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)):
         p = lambda pid: {"id": pid, "name": pid, "item": "", "quantity": 1}
         parts.save_part_list(Path(d), "abcdef123456", p("gear"), asked, "ai")                     # only doubts: confirmed, no model call

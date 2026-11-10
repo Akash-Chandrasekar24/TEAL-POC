@@ -663,6 +663,7 @@ def parts_overview(rid: str) -> dict:
 
 # ---------------- "Build everything": prepare every build list, ONE human approval, then build part after part
 _BATCH_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cad-batch")       # one SolidWorks session: one build at a time
+_PREP_POOL = ThreadPoolExecutor(max_workers=3, thread_name_prefix="build-lists")      # AI work for other drawings must not wait behind a build
 _BATCH_LOCK = threading.Lock()
 _PREP_WORKERS = 4                         # build lists are independent model calls (45-135 s each): write them side by side
 _ACTIVE = set()                           # batch ids running in THIS server process; a batch left "running" by a restart is interrupted
@@ -699,7 +700,7 @@ def start_batch(rid, llm_name=None):
         batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name}
         _save_batch(rid, batch)
         _ACTIVE.add(batch["id"])
-    _BATCH_POOL.submit(_prepare_batch, rid, batch["id"], llm_name)
+    _PREP_POOL.submit(_prepare_batch, rid, batch["id"], llm_name)
     return batch
 
 
@@ -748,7 +749,7 @@ def resolve_with_ai(rid, part_ids, llm_name=None):
         batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name}
         _save_batch(rid, batch)
         _ACTIVE.add(batch["id"])
-    _BATCH_POOL.submit(_prepare_batch, rid, batch["id"], llm_name)
+    _PREP_POOL.submit(_prepare_batch, rid, batch["id"], llm_name)
     return batch
 
 
