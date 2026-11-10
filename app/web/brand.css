@@ -491,3 +491,4 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 .m-qnav.m-qlink.on{color:#fff!important;background:#9d701f}
 .m-qnav.m-qlink{border-radius:10px;padding:7px 14px}
 #build-plan .q-list{overflow-x:hidden}
+.q-also{font-size:11.5px;color:var(--muted);margin:-2px 0 8px}

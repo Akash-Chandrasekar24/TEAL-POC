@@ -41,8 +41,29 @@ def open_questions(result: dict, model) -> list[dict]:
         for i, issue in enumerate(read.get("issues", []), 1):
             key = f"P{page['no']}.u{i}"
             if isinstance(issue, str) and key not in answered and is_question(issue, categories):
-                out.append({"key": key, "page": page["no"], "question": issue, "box": question_box(page, issue)})
+                twin = next((q for q in out if q["page"] == page["no"] and same_question(q["question"], issue)), None)
+                if twin:                                         # raised twice (page + feature): asked once, the answer goes to both
+                    twin["also"].append(key)
+                else:
+                    out.append({"key": key, "page": page["no"], "question": issue, "box": question_box(page, issue), "also": []})
     return out
+
+
+_Q_STOP = {"that", "this", "with", "from", "should", "exact", "verified", "source", "against", "drawing", "page", "view", "visually"}
+
+
+def same_question(a: str, b: str) -> bool:
+    """The same question raised twice: the same printed values and at least two shared words (mirrors sameQuestion in index.html)."""
+    def clean(text):
+        return re.sub(r"^[a-z]\d+:\s*", "", re.sub(r"^Page \d+: unreadable source callout: ", "", text), flags=re.I)
+
+    def dims(text):
+        return "|".join(sorted({x.replace(" ", "").lower() for x in re.findall(r"[Øø⌀R]?\s?\d+(?:[.,]\d+)?", clean(text))}))
+
+    def words(text):
+        return {w for w in re.findall(r"[a-z]{4,}", clean(text).lower()) if w not in _Q_STOP}
+
+    return bool(dims(a)) and dims(a) == dims(b) and len(words(a) & words(b)) >= 2
 
 
 _STOP = {"the", "and", "this", "that", "with", "from", "callout", "view", "drawing", "page", "exact", "should", "verified", "visually", "crowded",
@@ -152,7 +173,8 @@ def suggest(llm, page_no: int, png: bytes, questions: list[dict], views: list[di
     for start in range(0, len(rest), QUESTIONS_PER_CALL):
         out.extend(_suggest_batch(llm, page_no, png, rest[start:start + QUESTIONS_PER_CALL], views, dimensions))
     order = {q["key"]: i for i, q in enumerate(questions)}
-    return sorted(out, key=lambda x: order.get(x["key"], 0))
+    also = {q["key"]: q.get("also", []) for q in questions}
+    return [{**x, "also": also.get(x["key"], [])} for x in sorted(out, key=lambda x: order.get(x["key"], 0))]
 
 
 def _suggest_batch(llm, page_no: int, png: bytes, questions: list[dict], views: list[dict], dimensions: list[str], closeup: bool = False) -> list[dict]:

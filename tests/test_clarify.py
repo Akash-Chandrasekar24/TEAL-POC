@@ -149,3 +149,20 @@ def test_a_question_that_points_at_a_view_is_asked_with_its_close_up_one_picture
     out = suggest(llm, 1, png, qs, VIEWS, [])
     assert [(s["key"], s["answer"]) for s in out] == [("P1.u1", "close-up"), ("P1.u2", "whole page")]
     assert Image.open(io.BytesIO(llm.calls[0][1][0].data)).size == (840, 820)                               # the view + 120 margin (clipped at the top), full resolution
+
+
+def test_a_question_raised_twice_is_asked_once_and_answers_both():
+    from app.drawing.clarify import same_question
+    a = "The Ø20 callout on the coupling side section is legible but its exact referenced cylindrical surface is visually crowded."
+    b = "f8: The attachment of the Ø20 callout is crowded and should be verified against the source CAD if manufacturing-critical."
+    assert same_question(a, b)
+    assert not same_question(a, "The Ø30 callout on the coupling side section is crowded")                  # another value: another question
+    assert not same_question("Is 42 the hole depth?", "Is 42 a typo for 22 in the side view?")              # one shared value is not enough
+    result = drawing_result()
+    result["pages"][0]["read"]["issues"] = [a, "Is the projection symbol first angle?", b]
+    qs = open_questions(result, model())
+    assert [(q["key"], q["also"]) for q in qs] == [("P1.u1", ["P1.u3"]), ("P1.u2", [])]
+    out = suggest(Scripted({"suggestions": [{"key": "P1.u1", "can_answer": True, "answer": "Ø70", "measurement": None, "view": None, "basis": "b"},
+                                            {"key": "P1.u2", "can_answer": False, "answer": "", "measurement": None, "view": None, "basis": "b"}]}),
+                  1, b"png", qs, VIEWS, [])
+    assert out[0]["also"] == ["P1.u3"]

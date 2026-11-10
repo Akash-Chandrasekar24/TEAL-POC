@@ -170,6 +170,11 @@ async function main() {
   assert.equal(all(qlist,(e) => e.attrs["data-question"]==="P1.u1").length,1,"a clarification question gets an answer box");
   assert.equal(all(qlist,(e) => e.tagName==="textarea" && e.attrs["aria-label"]==="Answer P1.u1").length,1);
   assert.equal(all(qlist,(e) => e.tagName==="li").length,2,"a non-clarification blocker stays plain text");
+  const twinR={pages:[{no:2,read:{issues:["The Ø20 callout on the coupling side section is visually crowded.","f8: The attachment of the Ø20 callout is crowded."]}}]};
+  const twins=context.questionCards(twinR,twinR.pages[0].read.issues.map((q) => `Page 2: unreadable source callout: ${q}`));
+  assert.equal(twins.length,1,"the same question raised twice is one card");
+  assert.equal(JSON.stringify(twins[0].keys),JSON.stringify(["P2.u1","P2.u2"]),"and its answer goes to both");
+  assert.ok(twins[0].node.textContent.includes("Also answers P2.u2"),"the card says so");
   assert.equal(context.suggestPanel(qr,["Confirm projection: unreadable"]),null,"no AI option when nothing can be answered here");
   const sp=context.suggestPanel(qr,["Page 1: unreadable source callout: Scale label"]);
   assert.ok(all(sp,(e) => e.tagName==="button" && e.textContent==="Let AI suggest answers (1)").length===1,"the AI option is offered");

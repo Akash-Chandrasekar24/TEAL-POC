@@ -227,7 +227,7 @@ function updateExtractionProgress(r) {
   if (!host) return;
   host.replaceChildren();
   if (r.extraction_status === "processing") host.append(el("span", {class:"spinner"}), " Measurements are ready to review. Feature and component identification is continuing in the background.");
-  else if (r.extraction_status === "needs_attention") host.textContent = r.feature_extraction_error || "Some questions need your answer. They are listed under the measurements, where the AI can also draft answers for you to confirm.";
+  else if (r.extraction_status === "needs_attention") host.textContent = r.feature_extraction_error || "Some questions need your answer. Open them with the Open questions button on the Review page, where the AI can also draft answers for you to confirm.";
   else if (r.extraction_status === "complete") host.textContent = r.reviewDirty ? "Feature results are ready. Save your current measurement edits to refresh the remaining review sections." : "Feature and component extraction complete.";
 }
 
@@ -296,7 +296,7 @@ function agentChatBody(r) {
       reply.addEventListener("click",() => {draft.mode="correct";draft.target=question.target;draft.context=question.target==="note" ? question.text : "";renderAgentChat(r);$("#chat-reply")?.focus();});
       bubble.append(reply);return bubble;
     };
-    if(questions.length) messages.append(el("p",{class:"chat-pointer",text:"Open questions are listed on the Review page, under the measurements. Answer them there, or ask me about any of them here."}));
+    if(questions.length) messages.append(el("p",{class:"chat-pointer",text:"Open questions have their own button on the Review page, next to the page buttons. Answer them there, or ask me about any of them here."}));
     void questionBubble;
     for(const entry of r.chatHistory || []) {
       messages.append(message("You",entry.reply,true));
@@ -695,11 +695,13 @@ function designCard(r) {
     const p = artifact.plan;
     const asks = p.questions.filter((q) => clarificationKey(r, q)), notes = p.questions.filter((q) => !clarificationKey(r, q) && !/human review required|confirm this .*dimension/.test(q));
     openAsk = asks.length;
-    qBtn.hidden = !asks.length; qBtn.textContent = `Open questions (${asks.length})`;
+    const cards = asks.length ? questionCards(r, asks) : [];
+    qBtn.hidden = !asks.length; qBtn.textContent = `Open questions (${cards.length})`;
     gate();
     output.replaceChildren(el("h3", { text: asks.length ? "Open questions" : "Notes for the 3D build" }));
     if (asks.length) {
-      const sp = suggestPanel(r, asks), cards = questionCards(r, asks);
+      const drafted = (keys) => cards.forEach((c) => { if (c.keys.some((k) => keys.has(k))) c.node.hidden = true; });   // its draft card replaces it
+      const sp = suggestPanel(r, asks, drafted, cards.filter((c) => c.key).length);
       const pageOf = (c) => c.key ? c.key.slice(1).split(".")[0] : "";
       const pages = [...new Set(cards.map(pageOf).filter(Boolean))].sort((a, b) => a - b);
       qPage = pages.length ? Number(pages[0]) : null;
@@ -1027,25 +1029,42 @@ function questionCrop(r, key, text) {
   return wrap;
 }
 
-function answerCard(r, key, question) {
+// The same question raised twice (e.g. once for the page and once for a feature): the same printed values and two shared words.
+const Q_STOP = new Set(["that", "this", "with", "from", "should", "exact", "verified", "source", "against", "drawing", "page", "view", "visually"]);
+function sameQuestion(a, b) {
+  const clean = (t) => String(t).replace(/^Page \d+: unreadable source callout: /, "").replace(/^[a-z]\d+:\s*/i, "");
+  const dims = (t) => [...new Set((clean(t).match(/[Øø⌀R]?\s?\d+(?:[.,]\d+)?/g) || []).map((x) => x.replace(/\s/g, "").toLowerCase()))].sort().join("|");
+  const words = (t) => new Set((clean(t).toLowerCase().match(/[a-z]{4,}/g) || []).filter((w) => !Q_STOP.has(w)));
+  if (!dims(a) || dims(a) !== dims(b)) return false;
+  const wb = words(b);
+  return [...words(a)].filter((w) => wb.has(w)).length >= 2;
+}
+
+function answerCard(r, key, question, also = []) {
   const box = el("textarea", { class: "q-input", rows: "2", maxlength: 4000, placeholder: "Your answer: what is actually printed, or what it means", "aria-label": `Answer ${key}` });
   const status = el("p", { class: "hint", "aria-live": "polite" });
   const save = el("button", { type: "button", class: "btn secondary q-save", text: "Save answer", disabled: true });
   box.addEventListener("input", () => { save.disabled = !box.value.trim(); });
   save.addEventListener("click", async () => {
     save.disabled = true; status.textContent = "Saving…";
-    try { await submitCorrection(r, { target: key, text: box.value.trim() }); if (state.result === r) show(r); }
+    try { for (const k of [key, ...also]) await submitCorrection(r, { target: k, text: box.value.trim() }); if (state.result === r) show(r); }
     catch (error) { status.textContent = error.message; save.disabled = false; }
   });
   return el("li", { class: "q-card", "data-question": key }, el("small", { class: "q-where", text: `Page ${key.slice(1).split(".")[0]} · question ${key.split(".u")[1]}` }),
-    el("p", { class: "q-text", text: question }), questionCrop(r, key, question), box, el("div", { class: "q-actions" }, save), status);
+    el("p", { class: "q-text", text: question }),
+    also.length ? el("p", { class: "q-also", text: `Also answers ${also.join(", ")}: the same question was raised twice.` }) : null,
+    questionCrop(r, key, question), box, el("div", { class: "q-actions" }, save), status);
 }
 
 function questionCards(r, questions) {
-  return questions.map((q) => {
+  const groups = [];
+  for (const q of questions) {
     const key = clarificationKey(r, q);
-    return { key, node: key ? answerCard(r, key, q.replace(/^Page \d+: unreadable source callout: /, "")) : el("li", { text: q }) };
-  });
+    const twin = key && groups.find((g) => g.key && g.key.split(".")[0] === key.split(".")[0] && sameQuestion(g.q, q));
+    if (twin) twin.also.push(key); else groups.push({ key, q, also: [] });
+  }
+  return groups.map((g) => ({ key: g.key, keys: g.key ? [g.key, ...g.also] : [],
+    node: g.key ? answerCard(r, g.key, g.q.replace(/^Page \d+: unreadable source callout: /, ""), g.also) : el("li", { text: g.q }) }));
 }
 
 // The picture of one view of the drawing, so a draft can be checked against the evidence without leaving the card.
@@ -1069,7 +1088,7 @@ function summaryText(cards, items) {
     "Nothing is saved until you confirm. Edit or untick anything first."].filter(Boolean).join(" ");
 }
 
-function suggestionCards(r, res, host) {
+function suggestionCards(r, res, host, drafted) {
   const items = res.suggestions || [];
   const cards = items.map((sg) => {
     const answer = el("textarea", { class: "q-input", rows: "2", maxlength: 4000, "aria-label": `AI answer ${sg.key}` });
@@ -1106,28 +1125,32 @@ function suggestionCards(r, res, host) {
     try {
       for (const c of chosen) {
         status.textContent = `Saving ${saved + 1} of ${chosen.length}…`;
-        const body = { target: c.sg.key, text: `AI-suggested, confirmed by you: ${c.answer.value.trim()}` };
-        if (c.sg.measurement && c.withReading.checked) { body.measurement = c.sg.measurement; body.view = c.sg.view; }
-        await submitCorrection(r, body); saved++;
+        for (const key of [c.sg.key, ...(c.sg.also || [])]) {          // a question raised twice is answered once
+          const body = { target: key, text: `AI-suggested, confirmed by you: ${c.answer.value.trim()}` };
+          if (key === c.sg.key && c.sg.measurement && c.withReading.checked) { body.measurement = c.sg.measurement; body.view = c.sg.view; }
+          await submitCorrection(r, body);
+        }
+        saved++;
       }
     } catch (error) { status.textContent = `${error.message} (${saved} saved before this)`; confirm.disabled = false; }
     finally { if (saved && state.result === r) show(r); }
   });
+  if (drafted) drafted(new Set(items.filter((x) => x.can_answer).flatMap((x) => [x.key, ...(x.also || [])])));
   host.replaceChildren(
     el("h4", { text: `AI answered ${items.filter((x) => x.can_answer).length} of ${items.length} questions. Is this OK?` }),
     el("p", { class: "hint", text: summaryText(cards, items) }),
     el("ul", { class: "q-list" }, cards.map((c) => c.node)), el("div", { class: "q-actions" }, confirm, all, cancel), status);
 }
 
-function suggestPanel(r, questions) {
+function suggestPanel(r, questions, drafted, count) {
   const keys = questions.map((q) => clarificationKey(r, q)).filter(Boolean);
   if (!keys.length) return null;
   const host = el("div", { class: "ai-suggest" });
   const status = el("p", { class: "hint", "aria-live": "polite" });
-  const ask = el("button", { type: "button", class: "btn", text: `Let AI suggest answers (${keys.length})` });
+  const ask = el("button", { type: "button", class: "btn", text: `Let AI suggest answers (${count || keys.length})` });
   ask.addEventListener("click", async () => {
     ask.disabled = true; status.textContent = "The AI is reading the drawing and drafting answers. This can take a minute. Nothing is saved until you accept.";
-    try { suggestionCards(r, await workflowRequest("/api/clarify", { result_id: r.id, llm: ($("#llm") && $("#llm").value) || r.llm }), host); }
+    try { suggestionCards(r, await workflowRequest("/api/clarify", { result_id: r.id, llm: ($("#llm") && $("#llm").value) || r.llm }), host, drafted); }
     catch (error) { status.textContent = error.message; ask.disabled = false; }
   });
   host.append(el("p", { class: "hint", text: "The AI can draft an answer for each question from the drawing itself. You see every draft first and confirm it before anything is saved." }), ask, status);
