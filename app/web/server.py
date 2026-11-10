@@ -686,8 +686,7 @@ def start_batch(rid, llm_name=None):
         if current and current.get("phase") in ("preparing", "building") and current["id"] in _ACTIVE:
             return current
         lists = latest_lists(PART_LISTS, rid)
-        items = [{"part_id": p["id"], "name": p["name"], "status": "listed" if lists.get(p["id"]) else "to_prepare" if p["views"] else "no_views"}
-                 for p in detect_parts(result)]
+        items = [{"part_id": p["id"], "name": p["name"], "status": "listed" if lists.get(p["id"]) else "to_prepare"} for p in detect_parts(result)]
         batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name}
         _save_batch(rid, batch)
         _ACTIVE.add(batch["id"])
@@ -783,25 +782,31 @@ def _part(result: dict, part_id: str) -> dict:
     return part
 
 
-def create_part_list(rid: str, part_id: str, llm_name=None, client=None) -> dict:
-    """One model call: the part's views + the reviewed measurements -> a build list (full feature menu). Validated offline; nothing is built."""
+def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers=None, work_it_out=False) -> dict:
+    """One model call: the part's views (or, with none of its own, the assembly views) + the reviewed measurements + the designer's answers
+    -> a build list (full feature menu). work_it_out: the AI may infer unprinted sizes, each marked ASSUMED for the designer to confirm.
+    Validated offline; nothing is built."""
     from app.llm import make_client
     from app.llm.base import FilePart
     from app.menu import parse_reply
-    from app.web.parts import part_sheet, reader_context, save_part_list
+    from app.web.parts import assembly_views, part_sheet, reader_context, save_part_list
     from app.agent.prompts import reader_system
     result = result_with_design(rid)
     if any("human review required" in q or "confirm this" in q for q in result["drawing_model"].get("issues", [])):
         raise ValueError("Approve the measurements on the Review step first: the build list uses the reviewed values")
     part = _part(result, part_id)
     shas = {p["no"]: p["sha"] for p in result["pages"]}
-    png = part_sheet(result, part, lambda no: default_cache().get_blob(shas[no]))
+    shown = part if part["views"] else {**part, "views": assembly_views(result)}
+    if not shown["views"]:
+        raise ValueError(f"{part['name']} is not drawn anywhere on the sheet: describe it in an answer and let the AI work it out")
+    png = part_sheet(result, shown, lambda no: default_cache().get_blob(shas[no]))
+    work_it_out = work_it_out or not part["views"]                              # nothing printed for it: the AI must work its sizes out
     attempt = uuid.uuid4().hex[:12]
     with trace.run(attempt, RUNS / attempt, save_files=config.TRACE_FILES, workflow="part_build_list", drawing_result=rid, part=part_id):
         provider = llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER
         supervisor = Orchestrator(extraction=ExtractionAgent(client if client is not None else make_client(provider, reasoning_effort=config.CAD_REASONING_EFFORT)))
         try:
-            response = supervisor.read_list([FilePart(png, "image/png"), reader_context(result, part, result["drawing_model"])])
+            response = supervisor.read_list([FilePart(png, "image/png"), reader_context(result, part, result["drawing_model"], answers, work_it_out)])
         except LLMError as ex:
             ex.run_id = attempt
             raise
@@ -811,6 +816,14 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None) -> dict
     except ValueError:
         pass                                                                    # kept and reported by the check: the reviewer sees why it is not buildable
     return save_part_list(PART_LISTS, rid, part, draft, "ai", provider)
+
+
+def confirm_part_list(rid: str, part_id: str, answers=None) -> dict:
+    from app.web.parts import confirm_part_list as confirm, latest_lists
+    art = latest_lists(PART_LISTS, rid).get(part_id)
+    if not art:
+        raise ValueError("This part has no build list to confirm yet")
+    return confirm(PART_LISTS, rid, _part(result_with_design(rid), part_id), art, answers)
 
 
 def upload_part_list(rid: str, part_id: str, draft) -> dict:
@@ -1012,7 +1025,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/parts/build-all", "/api/parts/approve-all", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
+        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/parts/confirm", "/api/parts/build-all", "/api/parts/approve-all", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
             return self._json(404, {"error": "not found"})
         size = int(self.headers.get("Content-Length") or 0)
         if not 0 < size <= MAX_BODY:
@@ -1058,15 +1071,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, start_batch(rid, llm))
                 accepted = body.get("accepted_gaps") if isinstance(body.get("accepted_gaps"), dict) else {}
                 return self._json(200, approve_batch(rid, str(body.get("batch_id", "")), accepted))
-            if self.path in ("/api/parts/create", "/api/parts/upload"):
+            if self.path in ("/api/parts/create", "/api/parts/upload", "/api/parts/confirm"):
                 if not self._same_origin_json():
                     return self._json(403, {"error": "Create build lists from this drawing workspace"})
                 if not _PLAN_LOCK.acquire(blocking=False):
                     return self._json(409, {"error": "A review or plan is running. Wait for it to finish."})
                 try:
                     rid, pid = str(body.get("result_id", "")), str(body.get("part_id", ""))
+                    answers = body.get("answers") if isinstance(body.get("answers"), list) else None
                     if self.path.endswith("/create"):
-                        return self._json(200, create_part_list(rid, pid, llm))
+                        return self._json(200, create_part_list(rid, pid, llm, answers=answers, work_it_out=body.get("work_it_out") is True))
+                    if self.path.endswith("/confirm"):
+                        return self._json(200, confirm_part_list(rid, pid, answers))
                     return self._json(200, upload_part_list(rid, pid, body.get("list")))
                 finally:
                     _PLAN_LOCK.release()

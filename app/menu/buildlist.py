@@ -94,6 +94,7 @@ class BuildList(Strict):
     needs_human: list[str] = []
     accepted_gaps: list[str] = []
     expected_final: ExpectedFinal | None = None                      # added by a human at approval, never by the reader
+    designer_answers: list[dict[str, str]] = []                      # the designer's answers to needs_human, kept when they confirm the list
 
 
 class Stopped(Strict):

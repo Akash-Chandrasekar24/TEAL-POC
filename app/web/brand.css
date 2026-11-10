@@ -496,3 +496,18 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 @keyframes qpulse{50%{stroke-opacity:.35}}
 .q-crop{height:260px}
 @media(prefers-reduced-motion:reduce){.q-crop-mark.exact{animation:none}}
+
+/* SolidWorks page: a blocked part's way forward */
+.resolve-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.resolve-part{border:1px solid var(--line);border-radius:10px;background:#fff}
+.resolve-part>summary{display:flex;gap:10px;align-items:baseline;padding:8px 12px;cursor:pointer;list-style:none}
+.resolve-part>summary::-webkit-details-marker{display:none}
+.resolve-part>summary::before{content:"▸";color:var(--muted);font-size:11px}
+.resolve-part[open]>summary::before{content:"▾"}
+.resolve-part>summary span{color:var(--muted);font-size:12.5px}
+.resolve{padding:4px 12px 12px;display:flex;flex-direction:column;gap:8px}
+.resolve-why{margin:0;padding-left:18px;font-size:13px}
+.resolve-qs{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px}
+.resolve-qs p{margin:0 0 4px;font-size:13px}
+.resolve .part-actions{margin:0}
+.resolve>small{font-size:11px}

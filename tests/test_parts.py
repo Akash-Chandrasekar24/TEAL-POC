@@ -185,3 +185,39 @@ def test_a_material_column_read_into_the_name_is_split_off():
     found = {p["id"]: p for p in parts.detect_parts({"pages": [page(1, ["01. PUMP CASING (FRONT VIEW)", "SECTION A-A (PUMP CASING)"], bom=bom)]})}
     assert found["pump-casing"]["material"] == "Cast Iron (FC250)" and len(found["pump-casing"]["views"]) == 2
     assert "kind" not in found["mechanical-seal"]                                                          # built in 3D like every part
+
+
+def test_a_part_with_no_view_is_read_from_the_assembly_views_and_the_designer_can_answer_or_let_the_ai_work_it_out():
+    bom = [{"item": "9", "description": "Stator", "quantity": 1}, {"item": "2", "description": "Motor Housing", "quantity": 1}]
+    result = {"id": "abcdef123456", "pages": [page(1, ["02. MOTOR HOUSING (SIDE VIEW)", "01. SECTION D-D (LONGITUDINAL SECTION THROUGH ASSEMBLED PUMP MOTOR)"], bom=bom)],
+              "drawing_model": {"issues": [], "unit": "mm", "projection": "third", "dimensions": [{"text": "Ø120", "views": ["P1.v1"]}]}}
+    stator = next(p for p in parts.detect_parts(result) if p["id"] == "stator")
+    assert stator["views"] == [] and [v["no"] for v in parts.assembly_views(result)] == [2]
+    text = parts.reader_context(result, stator, result["drawing_model"], [{"question": "How long is it?", "answer": "168"}], True)
+    assert "assembly and section views" in text and "Ø120" in text and '"answer": "168"' in text and "ASSUMED:" in text and "never stop" in text
+    seen = []
+    class Model(FakeModel):
+        def generate_json(self, system, prts):
+            seen.append(prts[1])
+            data = {**good(), "needs_human": ["Stator length: assumed 168 (the housing body). Confirm?"]}
+            data["items"][0]["uncertain"] = True
+            return LLMResponse(json.dumps(data), data, "fake", 0, {})
+    blank = io.BytesIO()
+    from PIL import Image
+    Image.new("RGB", (400, 300), "white").save(blank, "PNG")
+    class Cache:
+        def get_blob(self, sha):
+            return blank.getvalue()
+    with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), patch.object(server, "default_cache", lambda: Cache()), \
+         patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)):
+        art = server.create_part_list("abcdef123456", "stator", client=Model())
+        assert "ASSUMED:" in seen[0]                                                   # no view of its own: the AI works it out
+        assert art["check"]["status"] == "needs_information"
+        done = server.confirm_part_list("abcdef123456", "stator", [{"question": "Stator length: assumed 168 (the housing body). Confirm?", "answer": "170"}])
+        assert done["source"] == "designer" and done["check"]["status"] == "ready", done["check"]
+        assert done["draft"]["designer_answers"][0]["answer"] == "170" and not any(i["uncertain"] for i in done["draft"]["items"])
+        empty = parts.save_part_list(Path(d), "abcdef123456", stator, {"list_version": "1", "unit": "mm", "projection": "third", "items": []}, "ai")
+        try:
+            server.confirm_part_list("abcdef123456", "stator"); assert False
+        except ValueError as ex:
+            assert "no 3D steps" in str(ex)

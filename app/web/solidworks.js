@@ -12,11 +12,11 @@ function solidworksPage(r) {
 
 // ---- "Build everything in SolidWorks": one button -> build lists for every part -> ONE approval -> every part built in turn
 const BATCH_ITEM = { to_prepare: "Waiting for its build list", preparing: "Writing its build list…", listed: "Build list ready", list_failed: "Build list failed",
-  no_views: "No views on the sheet", queued: "Queued", building: "Building in SolidWorks…", awaiting_review: "Built: compare it with the drawing",
+  no_views: "Read from the assembly views", queued: "Queued", building: "Building in SolidWorks…", awaiting_review: "Built: compare it with the drawing",
   accepted: "Accepted", exported: "Exported", awaiting_fix_approval: "Needs your OK for a fix", awaiting_approval: "Stopped before SolidWorks", needs_human: "Needs your attention",
   llm_failed: "Model unavailable: retry", build_failed: "Build failed", not_buildable: "Not buildable yet", not_approved: "Not approved" };
 
-function batchBox(r, data, reload, status) {
+function batchBox(r, data, reload, status, partPost) {
   const batch = data.batch, sw = data.solidworks || {};
   const post = async (path, body) => {
     try { await workflowRequest(path, { result_id: r.id, llm: ($("#llm") && $("#llm").value) || r.llm, ...body }); await reload(); }
@@ -74,10 +74,52 @@ function batchBox(r, data, reload, status) {
     el("ul", { class: "batch-ready" }, ready.map((p) => el("li", {}, el("b", { text: p.name }), ` · ${(p.list.draft.items || []).length} features`))),
     gaps.length ? el("div", { class: "part-gaps" }, el("b", { text: `Not modelled (${gaps.length})` }), el("ul", {}, gaps.map(({ part, u }) => el("li", { text: `${part.name}: ${u.text}` }))),
       el("label", {}, accept, " I accept every not-modelled item listed above")) : null,
-    blocked.length ? el("details", { class: "part-features" }, el("summary", { text: `${blocked.length} part${blocked.length === 1 ? "" : "s"} will not be built yet` }),
-      el("ul", {}, blocked.map((p) => el("li", { text: `${p.name}: ${p.list ? (p.list.check.blocking || []).join("; ") || p.list.check.status : p.views.length ? "no build list" : "no views on the sheet"}` })))) : null,
+    blocked.length ? el("details", { class: "part-features", open: true }, el("summary", { text: `${blocked.length} part${blocked.length === 1 ? "" : "s"} need${blocked.length === 1 ? "s" : ""} your answer or the AI before they can be built` }),
+      el("div", { class: "resolve-list" }, blocked.map((p) => el("details", { class: "resolve-part" },
+        el("summary", {}, el("b", { text: p.name }), el("span", { text: blockedReasons(p)[0] })), resolvePanel(r, p, partPost))))) : null,
     el("div", { class: "part-actions" }, approve, why),
     el("div", { class: "part-actions" }, el("button", { type: "button", class: "m-link", text: "Start again", onclick: () => post("/api/parts/build-all", {}) })));
+}
+
+// ---- A part that cannot be built yet: why, in plain words, and the way forward: answer the AI's questions, or let the AI work the sizes out
+function blockedReasons(part) {
+  const list = part.list, check = list?.check || {}, draft = list?.draft || {};
+  if (!list) return [part.views.length ? "No build list has been written yet." : "This part is not drawn on its own on the sheet: it only appears inside the assembly views."];
+  if (check.status === "stopped") return [`The AI stopped: ${check.blocking?.[0] || "it could not list the part"}.`];
+  const out = [];
+  for (const b of check.blocking || []) {
+    if (/^needs_human is not empty/.test(b)) { const n = (draft.needs_human || []).length; out.push(`The AI has ${n} question${n === 1 ? "" : "s"} for you.`); }
+    else if (/^uncertain items/.test(b)) { const n = (draft.items || []).filter((i) => i.uncertain).length; out.push(`${n} step${n === 1 ? " uses" : "s use"} sizes that are not printed and need your confirmation.`); }
+    else if (/the list has no items/.test(b)) out.push("The AI could not write any 3D steps from what is printed.");
+    else if (/projection is unknown/.test(b)) out.push("The drawing's projection is not known.");
+    else if (/not in seen_dimensions/.test(b)) out.push(`A number is not printed on the sheet: ${b.split(" is not")[0]}.`);
+    else out.push(b);
+  }
+  return [...new Set(out)];
+}
+
+function resolvePanel(r, part, post) {
+  const list = part.list, draft = list?.draft || {}, questions = draft.needs_human || [];
+  const boxes = questions.map((q) => ({ q, box: el("textarea", { class: "q-input", rows: "2", maxlength: 600, placeholder: "Your answer (leave empty to let the AI decide)", "aria-label": `Answer: ${q}` }) }));
+  const free = el("textarea", { class: "q-input", rows: "2", maxlength: 600, "aria-label": `Sizes or notes for ${part.name}`,
+    placeholder: questions.length ? "Anything else the AI should know (optional)" : "Main sizes or a short description, e.g. \"fits the Ø120 cavity, 168 long\" (optional)" });
+  const answers = () => [...boxes.map(({ q, box }) => ({ question: q, answer: box.value.trim() })),
+    ...(free.value.trim() ? [{ question: `About ${part.name}`, answer: free.value.trim() }] : [])].filter((a) => a.answer);
+  const send = el("button", { type: "button", class: "btn secondary", text: "Send my answers", disabled: true,
+    onclick: () => post("/api/parts/create", { part_id: part.id, answers: answers() }, `Rewriting the build list for ${part.name} with your answers`) });
+  const ai = el("button", { type: "button", class: "btn", text: "Let AI work it out",
+    onclick: () => post("/api/parts/create", { part_id: part.id, answers: answers(), work_it_out: true }, `The AI is working out the sizes of ${part.name}`) });
+  const canConfirm = (draft.items || []).length > 0 && list?.check?.status === "needs_information"
+    && (list.check.blocking || []).every((b) => /^needs_human is not empty|^uncertain items/.test(b));
+  const confirm = canConfirm ? el("button", { type: "button", class: "m-link", text: "Confirm as written",
+    onclick: () => post("/api/parts/confirm", { part_id: part.id, answers: answers() }, `Confirming the build list for ${part.name}`) }) : null;
+  [...boxes.map((b) => b.box), free].forEach((t) => t.addEventListener("input", () => { send.disabled = !answers().length; }));
+  return el("div", { class: "resolve" },
+    el("ul", { class: "resolve-why" }, blockedReasons(part).map((t) => el("li", { text: t }))),
+    questions.length ? el("ol", { class: "resolve-qs" }, boxes.map(({ q, box }) => el("li", {}, el("p", { text: q }), box))) : null,
+    free,
+    el("div", { class: "part-actions" }, ai, send, confirm),
+    el("small", { class: "hint", text: "The AI marks every size it works out as ASSUMED. Nothing is built until you approve the build." }));
 }
 
 // ---- Parts on this sheet: a build list per part, then the existing approval / build / review / export path
@@ -127,12 +169,11 @@ function partsPanel(r) {
       const create = el("button", { type: "button", class: list ? "m-link" : "btn secondary", text: list ? "Create again with AI" : "Create build list with AI",
         onclick: () => post("/api/parts/create", { part_id: part.id }, `Writing the build list for ${part.name}`) });
       const upload = el("button", { type: "button", class: "m-link", text: list ? "Load another file" : "Load build list file", onclick: () => file.click() });
-      if (!part.views.length) body.append(el("p", { class: "hint", text: "No view of this part was located on the sheet, so the AI has nothing to read. Load a prepared build list file instead." }));
       if (list) {
         const features = (list.draft.items || []).map((it) => `${it.id} ${it.feature}${it.printed ? " · " + it.printed : ""}`);
         body.append(el("p", { class: "part-summary", text: `${(list.draft.items || []).length} feature${(list.draft.items || []).length === 1 ? "" : "s"} · from ${list.source === "ai" ? "the AI" : "a file"} · ${new Date(list.created).toLocaleString()}` }),
           el("details", { class: "part-features" }, el("summary", { text: "Features in this build list" }), el("ol", {}, features.map((t) => el("li", { text: t })))));
-        if (check.blocking?.length) body.append(el("div", { class: "part-blocking" }, el("b", { text: "Before it can be built:" }), el("ul", {}, check.blocking.map((t) => el("li", { text: t })))));
+        if (check.status !== "ready") body.append(el("div", { class: "part-blocking" }, el("b", { text: "Before it can be built:" }), resolvePanel(r, part, post)));
         const gaps = (check.unsupported || []).map((u) => ({ u, box: el("input", { type: "checkbox", "aria-label": `Accept ${u.id}` }) }));
         if (gaps.length) body.append(el("div", { class: "part-gaps" }, el("b", { text: "Not modelled: tick each one you accept" }),
           gaps.map(({ u, box }) => el("label", {}, box, ` ${u.id}: ${u.text}`))));
@@ -157,12 +198,13 @@ function partsPanel(r) {
           body.append(el("div", { class: "part-actions" }, build, why));
         }
       }
+      if (!list) body.append(el("div", { class: "part-blocking" }, resolvePanel(r, part, post)));
       body.append(el("div", { class: "part-actions" }, create, upload, file));
       return el("article", { class: "part-card", "data-part": part.id }, head, body);
     });
     host.replaceChildren(el("div", { class: "parts-head" }, el("h3", { text: "Parts on this sheet" }),
       el("p", { class: "hint", text: "Each part gets a build list: the 3D steps the AI worked out from its views and your reviewed measurements. Approve, SolidWorks builds, you compare each model with the drawing below, then export." })),
-      batchBox(r, data, () => load(true), status), swLine, el("div", { class: "part-list" }, rows), status);
+      batchBox(r, data, () => load(true), status, post), swLine, el("div", { class: "part-list" }, rows), status);
   };
   host.load = load;
   return host;

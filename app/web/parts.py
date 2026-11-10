@@ -215,11 +215,56 @@ def latest_lists(root: Path, rid: str) -> dict:
     return out
 
 
-def reader_context(result: dict, part: dict, model: dict) -> str:
-    """Text beside the picture: which part, the drawing's unit/projection, and the measurements the human approved for these views."""
+WORK_IT_OUT = ("The designer asked YOU to work out what the sheet does not print. Use, in this order: the sizes of the parts it fits on this sheet "
+               "(a bore, cavity, shaft or seat it sits in or on), the assembly and section views, and the standard catalogue sizes of a standard part "
+               "named on the sheet (e.g. a 6306 bearing, an M10 bolt). Write EVERY number you worked out with derived: true and derived_from starting "
+               "'ASSUMED:' (say where it came from), mark that item uncertain, and add one needs_human question per assumption so the designer can confirm it. "
+               "Do not stop and do not return an empty list: write the best complete build list you can.")
+
+
+def reader_context(result: dict, part: dict, model: dict, answers: list | None = None, work_it_out: bool = False) -> str:
+    """Text beside the picture: which part, the drawing's unit/projection, the measurements the human approved for these views, the designer's
+    answers to earlier questions, and (on request) leave to work out unprinted sizes as marked assumptions."""
     views = {f"P{v['page']}.v{v['no']}" for v in part["views"]}
     dims = [d.get("corrected_text") or d["text"] for d in model.get("dimensions", []) if set(d.get("views") or []) & views]
-    return (f"Write the build list for ONE part only: {part['name']}"
-            f"{' (item ' + part['item'] + ')' if part.get('item') else ''}. The picture shows only the views of this part, each with its caption.\n"
+    if not part["views"]:                                                  # not drawn on its own: every reviewed value on the sheet may help
+        dims = [d.get("corrected_text") or d["text"] for d in model.get("dimensions", [])][:300]
+    text = (f"Write the build list for ONE part only: {part['name']}"
+            f"{' (item ' + part['item'] + ')' if part.get('item') else ''}"
+            f"{'. The picture shows only the views of this part, each with its caption' if part['views'] else '. The part has no view of its own: the picture shows the assembly and section views where it appears'}.\n"
+            "Model it as ONE solid part even when it is a standard or multi-piece component (a bearing, a seal, a bolt): never stop for that.\n"
             f"Drawing unit: {model.get('unit')}; projection: {model.get('projection')}.\n"
             f"Measurements the human reviewed for these views (use only printed values, as always): {json.dumps(dims, ensure_ascii=False)}")
+    answered = [a for a in (answers or []) if isinstance(a, dict) and str(a.get("answer", "")).strip()]
+    if answered:
+        text += ("\nThe designer answered these questions. Treat each answer as a printed value, list the numbers in seen_dimensions, and do not ask them again: "
+                 + json.dumps([{"question": str(a.get("question", ""))[:600], "answer": str(a["answer"])[:600]} for a in answered], ensure_ascii=False))
+    if work_it_out:
+        text += "\n" + WORK_IT_OUT
+    return text
+
+
+def assembly_views(result: dict) -> list[dict]:
+    """The assembly / section / exploded views of the sheet: where a part with no view of its own is still drawn."""
+    out = []
+    for p in result.get("pages") or []:
+        for i, v in enumerate((p.get("read") or {}).get("views") or []):
+            no, boxes = v.get("no", i + 1), p.get("boxes") or []
+            label = v.get("label") or ""
+            if (_ASSEMBLY_VIEW.search(label) or re.search(r"\bsection\b", label, re.I)) and no - 1 < len(boxes):
+                out.append({"page": p["no"], "no": no, "label": label, "box": boxes[no - 1]})
+    return out
+
+
+def confirm_part_list(root: Path, rid: str, part: dict, art: dict, answers: list | None = None) -> dict:
+    """The designer confirms the list AS WRITTEN (the AI's assumptions included): the questions are closed with their answers, the uncertain
+    readings are confirmed. A human decision; the check still has to pass, and the build still waits for the approval."""
+    draft = json.loads(json.dumps(art["draft"]))
+    if not draft.get("items"):
+        raise ValueError("This build list has no 3D steps to confirm: send answers or let the AI work it out first")
+    given = {str(a.get("question", "")): str(a.get("answer", "")).strip() for a in (answers or []) if isinstance(a, dict)}
+    draft["designer_answers"] = [{"question": q, "answer": given.get(q) or "Confirmed as written"} for q in draft.get("needs_human", [])]
+    draft["needs_human"] = []
+    for it in draft.get("items", []):
+        it["uncertain"] = False
+    return save_part_list(root, rid, part, draft, "designer", art.get("llm"))
