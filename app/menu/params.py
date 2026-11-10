@@ -439,6 +439,12 @@ class ShellParams(Strict):
         min_length=1, description="faces left open: front / back / top / bottom / left / right of a box base; start / end (u = 0 / far end) of a turned base")
 
 
+class SideProfileCutParams(Strict):
+    outline: Annotated[Union[Polygon, Segments], Field(discriminator="shape")] = Field(
+        description="the part's outline in the SIDE view (elevation): x along the part exactly as in the top view, measured from the LEFT edge of the base "
+                    "outline; y = height above the back face of the base. Closed, frame base_lower_left. Everything of the base outside it is cut away")
+
+
 class AngledBossParams(Strict):
     position: Pos = Field(description="where the boss axis meets the FRONT face")
     diameter: float = Field(gt=0, description="boss diameter")

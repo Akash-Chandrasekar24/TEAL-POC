@@ -30,7 +30,7 @@ from app.features.revolve_base import RevolveBase, turned_base_info
 from app.features.revolve_on_face import RevolveOnFace
 from app.features.blades import RadialBlades, TurnedKeyway
 from app.features.standalone import Loft, Section, SheetMetalBase, SweptTube
-from app.features.ext_features import AngledBoss, Shell, SweptPassage
+from app.features.ext_features import AngledBoss, Shell, SideProfileCut, SweptPassage
 from app.features.turned_ops import MM3_PER_UNIT3 as _MM3
 from app.features.turned_ops import CrossHole, TurnedAxial
 from app.features.outline_helpers import round_polygon_corners, rounded_rectangle
@@ -539,6 +539,18 @@ def build_shell(p: P.ShellParams, ctx: BuildContext, label: str) -> Shell:
     return Shell(ctx.unit, p.thickness, tuple(p.open_faces), "box", (W, H, ctx.thickness), label=label)
 
 
+def build_side_profile_cut(p: P.SideProfileCutParams, ctx: BuildContext, label: str) -> SideProfileCut:
+    ctx.need_base("a side profile cut")
+    if ctx.turned:
+        raise FeatureRequestError("a side profile cut shapes an extruded base (a turned part already has its side outline)")
+    if p.outline.frame != "base_lower_left":
+        raise FeatureRequestError("the side outline is written with frame base_lower_left: x from the left edge of the base outline, y = height above its back face")
+    W, H = ctx.outline_wh
+    segs = round_polygon_corners([tuple(pt) for pt in p.outline.points], p.outline.corner_radius) if isinstance(p.outline, P.Polygon) \
+        else [s.model_dump() for s in p.outline.segments]
+    return SideProfileCut(ctx.unit, tuple(_shift(segs, W / 2, 0.0)), (W, H, ctx.thickness), label=label)
+
+
 def build_angled_boss(p: P.AngledBossParams, ctx: BuildContext, label: str) -> AngledBoss:
     ctx.need_base("an angled boss")
     if ctx.turned:
@@ -590,7 +602,7 @@ class MenuEntry:
                 "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole,
                 "radial_blades": RadialBlades, "turned_keyway": TurnedKeyway,
                 "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase,
-                "swept_passage": SweptPassage, "shell": Shell, "angled_boss": AngledBoss}[self.name]
+                "swept_passage": SweptPassage, "shell": Shell, "angled_boss": AngledBoss, "side_profile_cut": SideProfileCut}[self.name]
 
 
 _COMMON = frozenset({"unit", "plane", "label", "regression_delta_mm3", "outline_wh"})
@@ -776,4 +788,16 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
          "the boss foot must stay on the face and the plate be thick enough to seat it"),
         {"position": {"x": 0, "y": 0}, "diameter": 20, "height": 25, "tilt_deg": 20, "lean": "up", "hole_diameter": 10, "hole_depth": 15},
         build_angled_boss, _COMMON),
+    MenuEntry(
+        "side_profile_cut", P.SideProfileCutParams,
+        "Right after an extruded base: give the part's outline in the SIDE view (elevation) and everything of the base outside it is cut away, "
+        "through the part's whole width. Top outline x side outline = the true shape of a part that rises, steps or slopes in elevation "
+        "(a triple clamp raised in the middle, a bracket with sloped arms, a casting thinner at the ends).",
+        "Extrude the base from the TOP-view outline to the part's FULL height (the tallest point in the side view), then give the side outline: "
+        "x from the left edge of the base outline, y = height above its back face, as a polygon (corner radii allowed) or lines + arcs.",
+        ("the base must be an extruded top-view outline extruded to the full height", "the side outline lies within the base's length and height",
+         "one side outline (the shape is the same across the width)", "the volume is checked as an upper bound"),
+        {"outline": {"shape": "polygon", "frame": "base_lower_left", "points": [[0, 0], [120, 0], [120, 5], [80, 5], [70, 10], [50, 10], [40, 5], [0, 5]],
+                     "corner_radius": 0}},
+        build_side_profile_cut, _COMMON),
 ]}

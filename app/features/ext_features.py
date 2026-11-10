@@ -368,3 +368,66 @@ class AngledBoss:
             res.verdicts.append(await ctx.verifier.run_step(self.label + " hole", lambda: ctx.sw.geometry("ext_sketch_extrude", self.hole_spec(plane, sign)),
                                                             self.hole_expected()))
         return res
+
+
+@dataclass(frozen=True)
+class SideProfileCut:
+    """The part's outline in the SIDE view (x along the part as in the top view, z = height above the back face): everything of the
+    base outside it is cut away, right through the part's width. Top outline x side outline = the real shape of a part that rises,
+    steps or slopes (a triple clamp raised in the middle, a bracket with sloped arms). One ext_sketch_extrude cut on the Top datum:
+    the base's side box and the outline as two loops, so SolidWorks removes the region between them."""
+    unit: str
+    outline: tuple                       # closed lines / arcs, drawing unit, x centred on the base outline, z from the back face
+    size: tuple                          # the base's (W, H, T)
+    label: str = "side profile cut"
+
+    NAME = "side_profile_cut"
+    MARGIN = 5.0
+
+    def validate(self) -> None:
+        from app.geometry import profile_bounds
+        factor(self.unit)
+        W, H, T = self.size
+        if not self.outline:
+            raise FeatureRequestError("give the side outline")
+        x0, x1, z0, z1 = profile_bounds(list(self.outline))
+        tol = 1e-6 * max(W, T)
+        if x0 < -W / 2 - tol or x1 > W / 2 + tol:
+            raise FeatureRequestError(f"the side outline runs {x0:g}..{x1:g} along x, outside the base outline (-{W / 2:g}..{W / 2:g})")
+        if z0 < -tol or z1 > T + tol:
+            raise FeatureRequestError(f"the side outline reaches height {z1:g}, the base is only {T:g} tall: extrude the base to the part's FULL height first")
+
+    def removed_bound_mm3(self) -> float:
+        from app.geometry import profile_area
+        W, H, T = self.size
+        return max(0.0, W * T - profile_area(list(self.outline))) * H * MM3_PER_UNIT3[self.unit]
+
+    def spec(self) -> dict:
+        self.validate()
+        from .extrude_profile_boss import datum_normal, ext_entities
+        from .base import PlaneFrame
+        f = factor(self.unit)
+        W, H, T = self.size
+        m = self.MARGIN
+        y0 = -(H / 2 + m) * f                                                   # the Top datum moved just below the part: cut up through it
+        box = [(-W / 2 - m, -m), (W / 2 + m, -m), (W / 2 + m, T + m), (-W / 2 - m, T + m)]
+        loop = [{"kind": "line", "x1": a[0], "y1": a[1], "x2": b[0], "y2": b[1]} for a, b in zip(box, box[1:] + box[:1])]
+        # the Top datum's sketch y runs along world -Z: heights z go in as -z, and an arc's turning sense flips with that mirror
+        flip = lambda seg: {**seg, **{k: seg[k] * f for k in ("x1", "x2", "cx") if k in seg}, **{k: -seg[k] * f for k in ("y1", "y2", "cy") if k in seg},
+                            **({"dir": -seg["dir"]} if "dir" in seg else {})}
+        frame = PlaneFrame("top")
+        ents = ext_entities([flip(seg) for seg in loop + list(self.outline)], frame, y0)
+        return {"operation": "cut", "plane": {"datum": "top", "offset": y0}, "entities": ents, "direction": datum_normal(frame),
+                "end": "through_all", "depth": 0.0}
+
+    def expected(self) -> Expect:
+        return Expect(bound_mm3=self.removed_bound_mm3(), bodies=1, expect_doc="at most the base's side box minus the side outline, times its width")
+
+    def expected_delta_mm3(self) -> float:
+        return -self.removed_bound_mm3()
+
+    async def apply(self, ctx: FeatureContext) -> FeatureResult:
+        spec = self.spec()
+        res = FeatureResult(self.NAME)
+        res.verdicts.append(await ctx.verifier.run_step(self.label, lambda: ctx.sw.geometry("ext_sketch_extrude", spec), self.expected()))
+        return res
