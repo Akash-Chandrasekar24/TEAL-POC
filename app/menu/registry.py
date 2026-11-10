@@ -590,7 +590,7 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
         "closed outline in (u, r): u along the axis, r the radius measured from the axis (r >= 0), frame base_lower_left (u from one end of the part, r from the axis). "
         "A bore is part of the outline (it stays away from the axis). `axis` says whether the axis is horizontal or vertical in the plate view. Exactly the outline's edges "
         "become the faces; at most one outline edge may lie on the axis.",
-        ("it can only be the FIRST item; after it NO other item can be built yet (cross holes, flats and end-face features are `unsupported`)",
+        ("it can only be the FIRST item; after it only the turned-part items can follow: turned_axial, cross_hole, radial_blades, turned_keyway (flats, end-face patterns and other flat-part items are `unsupported`)",
          "full 360 degrees only; a groove or bore is drawn into the half-section, never cut afterwards",
          "the part spans z = 0 .. 2 x the largest radius (the pipeline's back face is z = 0)"),
         {"profile": {"shape": "polygon", "points": [[0, 0], [40, 0], [40, 25], [0, 25]]}, "axis": "horizontal"},
