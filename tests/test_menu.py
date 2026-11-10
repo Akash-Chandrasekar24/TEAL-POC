@@ -32,7 +32,7 @@ def test_every_menu_example_is_valid_and_buildable():
         item = {"id": "F9", "feature": name, "params": copy.deepcopy(entry.example)}
         turned = {"id": "F1", "feature": "revolve_base", "params": copy.deepcopy(MENU["revolve_base"].example)}     # features that build on a turned part
         lst = (single({**item, "id": "F1"}, base=None) if name in BASE_FEATURES
-               else single(item, base=turned) if name in ("turned_axial", "cross_hole") else single(item))
+               else single(item, base=turned) if name in ("turned_axial", "cross_hole", "radial_blades", "turned_keyway") else single(item))
         reasons = validate_list(parse_reply(lst))
         if reasons:
             bad[name] = reasons

@@ -163,7 +163,7 @@ def custom_graph_checks() -> dict:
     for name, entry in MENU.items():
         is_base = name in BASE_FEATURES
         item = {"id": "F1" if is_base else "F2", "feature": name, "params": copy.deepcopy(entry.example)}
-        first = turned_base if name in ("turned_axial", "cross_hole") else base
+        first = turned_base if name in ("turned_axial", "cross_hole", "radial_blades", "turned_keyway") else base
         data = {"list_version": "1", "unit": "mm", "projection": "third", "items": [item] if is_base else [first, item]}
         feature = prepare(parse_reply(data))[-1].feature
         method = getattr(feature, "graph", None)

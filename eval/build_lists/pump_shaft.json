@@ -9,7 +9,7 @@
  "unsupported": [
   {
    "id": "U1",
-   "text": "KEYWAY 10x4.5 in the Ø50 impeller seat: no keyway feature on a turned part yet (its length is not clear either: 50 is printed under the 38-long seat)."
+   "text": "KEYWAY 10x4.5 in the Ø50 impeller seat: the turned_keyway feature can build it, but its length is not clear (the key is 40 long, the Ø50 seat only 38; 50 is printed under the seat). Give the keyway length to add it."
   },
   {
    "id": "U2",

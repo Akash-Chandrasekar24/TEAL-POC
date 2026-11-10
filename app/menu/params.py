@@ -332,6 +332,36 @@ class CrossHoleParams(Strict):
     thread_note: str | None = Field(None, description="e.g. 'M8'. Informational: no thread is modelled")
 
 
+class RadialBladesParams(Strict):
+    count: int = Field(ge=1, description="number of equal blades / fins round the axis, as printed (e.g. '7 BLADES', '12x')")
+    inner_diameter: float = Field(gt=0, description="where the blades start: the hub (or body) diameter they stand on, as printed")
+    outer_diameter: float = Field(gt=0, description="where the blades end: the tip diameter, as printed")
+    thickness: float = Field(gt=0, description="blade / fin thickness, as printed")
+    from_u: float = Field(description=STATION_DOC + ": where the blades start along the axis (e.g. the inside face of a shroud)")
+    to_u: float = Field(description=STATION_DOC + ": where they end")
+    shape: Literal["straight", "arc"] = Field("straight", description="straight = radial blades or fins; arc = curved impeller vanes (textbook single-arc blade)")
+    inlet_angle_deg: float | None = Field(None, gt=0, lt=90, description="arc only: blade angle at the inner diameter, from the tangent (beta 1), as printed")
+    outlet_angle_deg: float | None = Field(None, gt=0, lt=90, description="arc only: blade angle at the outer diameter, from the tangent (beta 2), as printed")
+    hand: Literal["counter_clockwise", "clockwise"] = Field("counter_clockwise", description="arc only: which way the blade leans going outward, seen from the u = 0 end")
+    start_angle_deg: float = Field(0, description="where the first blade starts on the hub, seen from the u = 0 end, counter-clockwise from 'toward the viewer' (horizontal axis) / from +x (vertical axis)")
+
+    @model_validator(mode="after")
+    def _arc(self):
+        if self.shape == "arc" and (self.inlet_angle_deg is None or self.outlet_angle_deg is None):
+            raise ValueError("an arc blade needs inlet_angle_deg and outlet_angle_deg (the printed blade angles)")
+        if self.inner_diameter >= self.outer_diameter:
+            raise ValueError("inner_diameter must be smaller than outer_diameter")
+        return self
+
+
+class TurnedKeywayParams(Strict):
+    width: float = Field(gt=0, description="keyway width, as printed (e.g. 10 in 'KEYWAY 10x4.5')")
+    depth: float = Field(gt=0, description="keyway depth into the shaft, as printed (e.g. 4.5)")
+    from_u: float = Field(description=STATION_DOC + ": where the keyway starts")
+    to_u: float = Field(description=STATION_DOC + ": where it ends (its full length including round ends)")
+    ends: Literal["round", "square"] = Field("round", description="round = end-milled keyway (rounded ends), square = straight ends")
+
+
 class RibParams(Strict):
     axis: Pos = Field(description="the axis of the round boss the rib leans on, as a position on the plate")
     boss_diameter: float = Field(gt=0, description="outer diameter of that boss")

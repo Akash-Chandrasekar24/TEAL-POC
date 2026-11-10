@@ -28,6 +28,7 @@ from app.features.hole import Hole
 from app.features.rib import Rib
 from app.features.revolve_base import RevolveBase, turned_base_info
 from app.features.revolve_on_face import RevolveOnFace
+from app.features.blades import RadialBlades, TurnedKeyway
 from app.features.turned_ops import CrossHole, TurnedAxial
 from app.features.outline_helpers import round_polygon_corners, rounded_rectangle
 from app.geometry import profile_bounds
@@ -455,6 +456,17 @@ def build_cross_hole(p: P.CrossHoleParams, ctx: BuildContext, label: str) -> Cro
     return CrossHole(ctx.unit, ctx.turned_axis, ctx.turned_profile, p.diameter, p.at_u, p.direction, p.thread_note, label=label)
 
 
+def build_radial_blades(p: P.RadialBladesParams, ctx: BuildContext, label: str) -> RadialBlades:
+    _need_turned(ctx, "radial blades")
+    return RadialBlades(ctx.unit, ctx.turned_axis, ctx.turned_profile, p.count, p.inner_diameter, p.outer_diameter, p.thickness, p.from_u, p.to_u,
+                        p.shape, p.inlet_angle_deg or 0.0, p.outlet_angle_deg or 0.0, 1 if p.hand == "counter_clockwise" else -1, p.start_angle_deg, label=label)
+
+
+def build_turned_keyway(p: P.TurnedKeywayParams, ctx: BuildContext, label: str) -> TurnedKeyway:
+    _need_turned(ctx, "a keyway")
+    return TurnedKeyway(ctx.unit, ctx.turned_axis, ctx.turned_profile, p.width, p.depth, p.from_u, p.to_u, p.ends, label=label)
+
+
 def build_rib(p: P.RibParams, ctx: BuildContext, label: str) -> Rib:
     if ctx.turned:
         raise FeatureRequestError("a rib after a turned base (revolve_base) is not built: needs_human")
@@ -493,7 +505,8 @@ class MenuEntry:
     def feature_class(self) -> type:
         return {"extrude_profile_boss": ExtrudeProfileBoss, "cut": CutFeature, "hole": Hole, "circle_boss": ExtrudeCircleBoss,
                 "profile_cut": ExtrudeProfileCut, "rib": Rib, "fillet_chamfer_edges": FilletChamferEdges,
-                "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole}[self.name]
+                "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole,
+                "radial_blades": RadialBlades, "turned_keyway": TurnedKeyway}[self.name]
 
 
 _COMMON = frozenset({"unit", "plane", "label", "regression_delta_mm3", "outline_wh"})
@@ -610,4 +623,20 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
          "the hole must stay between the ends of the part"),
         {"diameter": 8, "at_u": 20, "direction": "toward_viewer"},
         build_cross_hole, _COMMON | {"axis", "profile"}),
+    MenuEntry(
+        "radial_blades", P.RadialBladesParams,
+        "After a turned base: equal blades or fins round the axis (impeller vanes, fan blades, cooling fins), standing on a hub or between two shrouds.",
+        "Give the blade count, the diameters they run between (inner = the hub they stand on, outer = the tip), the thickness and the two stations "
+        "along the axis. Straight for radial fins and fan blades; arc for curved impeller vanes, with the printed inlet and outlet blade angles.",
+        ("only after a revolve_base", "blades go in EMPTY space: inner diameter = the hub surface, or the blades span between two shrouds",
+         "equal blades only, all the same; no twist, no taper, no variable thickness (no airfoil)", "neighbouring blades must not overlap"),
+        {"count": 6, "inner_diameter": 50, "outer_diameter": 80, "thickness": 3, "from_u": 10, "to_u": 30, "shape": "straight"},
+        build_radial_blades, _COMMON | {"axis", "profile"}),
+    MenuEntry(
+        "turned_keyway", P.TurnedKeywayParams,
+        "After a turned base: a keyway along the top of a round section of the shaft (e.g. 'KEYWAY 10x4.5'), round or square ended.",
+        "Give width x depth as printed and the two stations of its ends along the axis. It must lie on one diameter of the shaft.",
+        ("only after a revolve_base with a horizontal axis", "on the top of the shaft as drawn; one diameter along its whole length"),
+        {"width": 8, "depth": 4, "from_u": 10, "to_u": 30, "ends": "round"},
+        build_turned_keyway, _COMMON | {"axis", "profile"}),
 ]}
