@@ -29,6 +29,7 @@ from app.features.rib import Rib
 from app.features.revolve_base import RevolveBase, turned_base_info
 from app.features.revolve_on_face import RevolveOnFace
 from app.features.blades import RadialBlades, TurnedKeyway
+from app.features.standalone import Loft, Section, SheetMetalBase, SweptTube
 from app.features.turned_ops import CrossHole, TurnedAxial
 from app.features.outline_helpers import round_polygon_corners, rounded_rectangle
 from app.geometry import profile_bounds
@@ -255,6 +256,17 @@ def base_info(params: Any, unit: str) -> tuple[tuple[float, float], tuple[float,
     """((W, H), frame_shift, thickness) of a base item (a plate outline, or a turned part)."""
     if isinstance(params, P.RevolveBaseParams):
         return turned_base_info(_half_section(params.profile), params.axis)
+    if isinstance(params, P.SweptTubeParams):                             # a standalone part: nothing builds on it; its footprint for reports
+        xs, ys = [p[0] for p in params.path], [p[1] for p in params.path]
+        wh = (max(xs) - min(xs) + params.outer_diameter, max(ys) - min(ys) + params.outer_diameter)
+        return wh, (wh[0] / 2, wh[1] / 2), params.outer_diameter
+    if isinstance(params, P.LoftParams):
+        size = lambda s: (s.diameter, s.diameter) if s.shape == "circle" else (s.width, s.height)
+        (w0, h0), (w1, h1) = size(params.bottom), size(params.top)
+        wh = (max(w0, w1 + 2 * abs(params.top_offset_x)), max(h0, h1 + 2 * abs(params.top_offset_y)))
+        return wh, (wh[0] / 2, wh[1] / 2), params.height
+    if isinstance(params, P.SheetMetalBaseParams):
+        return (params.width, params.height), (params.width / 2, params.height / 2), params.thickness
     ctx = BuildContext(unit)
     segs, centred = _raw_outline(params.profile, ctx)
     x0, x1, y0, y1 = profile_bounds(segs)
@@ -467,6 +479,32 @@ def build_turned_keyway(p: P.TurnedKeywayParams, ctx: BuildContext, label: str) 
     return TurnedKeyway(ctx.unit, ctx.turned_axis, ctx.turned_profile, p.width, p.depth, p.from_u, p.to_u, p.ends, label=label)
 
 
+def _standalone(ctx: BuildContext, what: str) -> None:
+    if ctx.has_base:
+        raise FeatureRequestError(f"{what} makes a whole part: it must be the only item")
+
+
+def build_swept_tube(p: P.SweptTubeParams, ctx: BuildContext, label: str) -> SweptTube:
+    _standalone(ctx, "a swept tube")
+    radii = p.bend_radius if isinstance(p.bend_radius, list) else [p.bend_radius]
+    return SweptTube(ctx.unit, tuple(tuple(pt) for pt in p.path), tuple(radii), p.outer_diameter, p.inner_diameter, label=label)
+
+
+def _section(s: P.LoftSectionParams, cx: float = 0.0, cy: float = 0.0) -> Section:
+    return Section(s.shape, s.diameter or 0.0, s.width or 0.0, s.height or 0.0, s.corner_radius, cx, cy)
+
+
+def build_loft(p: P.LoftParams, ctx: BuildContext, label: str) -> Loft:
+    _standalone(ctx, "a loft")
+    return Loft(ctx.unit, _section(p.bottom), _section(p.top, p.top_offset_x, p.top_offset_y), p.height, label=label)
+
+
+def build_sheet_metal_base(p: P.SheetMetalBaseParams, ctx: BuildContext, label: str) -> SheetMetalBase:
+    _standalone(ctx, "a sheet-metal part")
+    return SheetMetalBase(ctx.unit, p.width, p.height, p.thickness, p.bend_radius, tuple((f.edge, f.length, f.angle_deg) for f in p.flanges),
+                          p.k_factor, label=label)
+
+
 def build_rib(p: P.RibParams, ctx: BuildContext, label: str) -> Rib:
     if ctx.turned:
         raise FeatureRequestError("a rib after a turned base (revolve_base) is not built: needs_human")
@@ -506,7 +544,8 @@ class MenuEntry:
         return {"extrude_profile_boss": ExtrudeProfileBoss, "cut": CutFeature, "hole": Hole, "circle_boss": ExtrudeCircleBoss,
                 "profile_cut": ExtrudeProfileCut, "rib": Rib, "fillet_chamfer_edges": FilletChamferEdges,
                 "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole,
-                "radial_blades": RadialBlades, "turned_keyway": TurnedKeyway}[self.name]
+                "radial_blades": RadialBlades, "turned_keyway": TurnedKeyway,
+                "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase}[self.name]
 
 
 _COMMON = frozenset({"unit", "plane", "label", "regression_delta_mm3", "outline_wh"})
@@ -639,4 +678,30 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
         ("only after a revolve_base with a horizontal axis", "on the top of the shaft as drawn; one diameter along its whole length"),
         {"width": 8, "depth": 4, "from_u": 10, "to_u": 30, "ends": "round"},
         build_turned_keyway, _COMMON | {"axis", "profile"}),
+    MenuEntry(
+        "swept_tube", P.SweptTubeParams,
+        "A WHOLE PART: a round bar or tube along a path of straight runs and bends (a handle, a bent rod, a pipe spool), drawn in the front view.",
+        "Give the centre line as the points where the straight runs meet, the centreline bend radius, the outside diameter and, for a tube, the "
+        "inside diameter. It is the only item of the list.",
+        ("the only item: nothing can be added to it", "a flat path in the front view; the first run horizontal or vertical",
+         "round sections only, the same all along (no reducer, no flattening)", "every bend radius larger than the outside radius; the tube must not touch itself"),
+        {"path": [[0, 0], [100, 0], [100, 80]], "bend_radius": 30, "outer_diameter": 20, "inner_diameter": 16},
+        build_swept_tube, _COMMON),
+    MenuEntry(
+        "loft", P.LoftParams,
+        "A WHOLE PART: a solid that blends one section into another on a parallel plane (a reducer, a square-to-round transition, a tapered post).",
+        "Give the bottom and top sections (circle, or rectangle with an optional corner radius), the distance between them and any sideways shift of the "
+        "top. It is the only item of the list.",
+        ("the only item: nothing can be added to it", "two sections on parallel planes; solid (no wall, no hollow)",
+         "circle -> circle and sharp rectangle -> rectangle are checked exactly; other pairs as a volume range"),
+        {"bottom": {"shape": "rectangle", "width": 60, "height": 60, "corner_radius": 6}, "top": {"shape": "circle", "diameter": 40}, "height": 50},
+        build_loft, _COMMON),
+    MenuEntry(
+        "sheet_metal_base", P.SheetMetalBaseParams,
+        "A WHOLE PART in sheet metal: a flat rectangular blank with square or angled flanges on its edges (a bracket, a cover, a tray).",
+        "Give the flat face (width x height), the sheet thickness, the inside bend radius and each flange (edge, length, angle). It is the only item of the list.",
+        ("the only item: nothing can be added to it", "a rectangular blank; at most one flange per edge, no flange on a flange",
+         "no holes, cut-outs or reliefs yet", "the volume is checked as a range (SolidWorks' own flange-length convention)"),
+        {"width": 120, "height": 80, "thickness": 2, "bend_radius": 3, "flanges": [{"edge": "top", "length": 30}, {"edge": "bottom", "length": 30}]},
+        build_sheet_metal_base, _COMMON),
 ]}

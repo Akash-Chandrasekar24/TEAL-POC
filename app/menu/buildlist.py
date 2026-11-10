@@ -19,7 +19,8 @@ from .numbers import numbers_in
 from .registry import MENU
 
 BASE_FEATURE = "extrude_profile_boss"
-BASE_FEATURES = (BASE_FEATURE, "revolve_base")                      # the items that may be the FIRST one (the base)
+STANDALONE_FEATURES = ("swept_tube", "loft", "sheet_metal_base")       # one item that is the WHOLE part: nothing may follow
+BASE_FEATURES = (BASE_FEATURE, "revolve_base", *STANDALONE_FEATURES)   # the items that may be the FIRST one (the base)
 _UNCHECKED = frozenset({"expect_count", "dir", "tol", "countersink_angle_deg", "angle_deg",
                         "count", "count_x", "count_y", "start_angle_deg", "sweep_deg"})     # counts, enums and fixed angles are not dimensions
 
@@ -181,8 +182,10 @@ def list_gate(bl: BuildList) -> list[str]:
         return isinstance(params, dict) and (params.get("face") is not None or params.get("on") is not None)
 
     if first.feature not in BASE_FEATURES or (first.feature == BASE_FEATURE and placed(first.params)):
-        reasons.append(f"the first item must be the base: {BASE_FEATURE} without a face, or revolve_base (got {first.id}: {first.feature})")
-    if any((it.feature == BASE_FEATURE and not placed(it.params)) or it.feature == "revolve_base" for it in bl.items[1:]):
+        reasons.append(f"the first item must be the base: {BASE_FEATURE} without a face, revolve_base or a whole-part item {STANDALONE_FEATURES} (got {first.id}: {first.feature})")
+    if first.feature in STANDALONE_FEATURES and len(bl.items) > 1:
+        reasons.append(f"{first.feature} makes the whole part: it must be the only item")
+    if any((it.feature == BASE_FEATURE and not placed(it.params)) or it.feature in ("revolve_base", *STANDALONE_FEATURES) for it in bl.items[1:]):
         reasons.append("only the first item may be a base (an extrude_profile_boss without a face, or a revolve_base)")
     reasons += seen_violations(bl)
     return reasons

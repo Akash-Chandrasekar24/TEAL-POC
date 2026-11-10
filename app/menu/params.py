@@ -362,6 +362,51 @@ class TurnedKeywayParams(Strict):
     ends: Literal["round", "square"] = Field("round", description="round = end-milled keyway (rounded ends), square = straight ends")
 
 
+class SweptTubeParams(Strict):
+    path: list[Annotated[list[float], Field(min_length=2, max_length=2)]] = Field(min_length=2, description="the tube's CENTRE LINE in the front view: "
+                                                                                     "the points where its straight runs meet ([x, y], in order); the first run must be horizontal or vertical")
+    bend_radius: Union[float, list[float]] = Field(description="centreline bend radius at the corners: one for all, or one per corner (as printed, e.g. 'R40 CL')")
+    outer_diameter: float = Field(gt=0, description="outside diameter of the bar or tube")
+    inner_diameter: float | None = Field(None, gt=0, description="inside diameter of a tube (outside minus twice the wall); omit for a solid bar")
+
+
+class LoftSectionParams(Strict):
+    shape: Literal["circle", "rectangle"]
+    diameter: float | None = Field(None, gt=0, description="circle")
+    width: float | None = Field(None, gt=0, description="rectangle: along x")
+    height: float | None = Field(None, gt=0, description="rectangle: along y")
+    corner_radius: float = Field(0, ge=0, description="rectangle: all four corners; 0 = sharp")
+
+    @model_validator(mode="after")
+    def _size(self):
+        if (self.shape == "circle" and self.diameter is None) or (self.shape == "rectangle" and (self.width is None or self.height is None)):
+            raise ValueError("a circle needs diameter; a rectangle needs width and height")
+        return self
+
+
+class LoftParams(Strict):
+    bottom: LoftSectionParams = Field(description="the section on the back plane (z = 0), centred on the origin")
+    top: LoftSectionParams = Field(description="the section on the parallel plane `height` in front")
+    height: float = Field(gt=0, description="distance between the two section planes (the part's length / height), as printed")
+    top_offset_x: float = Field(0, description="how far the top section's centre is shifted along x from the bottom's (0 = coaxial)")
+    top_offset_y: float = Field(0, description="the same along y")
+
+
+class FlangeParams(Strict):
+    edge: Literal["top", "bottom", "left", "right"] = Field(description="the edge of the blank, as seen in the front view")
+    length: float = Field(gt=0, description="flange length, as printed")
+    angle_deg: float = Field(90, gt=0, le=135, description="bend angle (90 = square)")
+
+
+class SheetMetalBaseParams(Strict):
+    width: float = Field(gt=0, description="blank width along x (the flat face before flanges)")
+    height: float = Field(gt=0, description="blank height along y")
+    thickness: float = Field(gt=0, description="sheet thickness, as printed (e.g. 't = 2')")
+    bend_radius: float = Field(gt=0, description="inside bend radius, as printed")
+    k_factor: float | None = Field(None, gt=0, lt=1, description="only if printed")
+    flanges: list[FlangeParams] = Field(default_factory=list, description="flanges on the blank's edges, at most one per edge")
+
+
 class RibParams(Strict):
     axis: Pos = Field(description="the axis of the round boss the rib leans on, as a position on the plate")
     boss_diameter: float = Field(gt=0, description="outer diameter of that boss")
