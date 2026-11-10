@@ -166,6 +166,12 @@ def repair_package(state: JobState) -> dict:
 
 
 # ------------------------------------------------------------------ the graph
+def _plain(value):
+    """numpy numbers (volumes, bounding boxes) -> Python numbers: the graph checkpoint (msgpack) cannot store numpy types."""
+    import json
+    return json.loads(json.dumps(value, default=lambda v: v.item() if hasattr(v, "item") else str(v)))
+
+
 def build_graph(deps: Deps, checkpointer=None):
     supervisor = deps.workers or Orchestrator(ExtractionAgent(deps.llm), SolidWorksAgent(deps.llm, build=deps.build))
     supervisor.solidworks.build = deps.build  # retain the graph's existing build dependency, including injected/offline builders
@@ -289,7 +295,7 @@ def build_graph(deps: Deps, checkpointer=None):
         approved = state["approved"]
         if list_hash(approved) != state["approved_hash"]:
             return {"status": "needs_human", "detail": "the approved list changed after approval: refusing to build", "events": _events(state, "hash mismatch: build refused")}
-        out = supervisor.build_part(approved, Path(state["job_dir"]))
+        out = _plain(supervisor.build_part(approved, Path(state["job_dir"])))      # checkpointed state: plain Python only
         report, finish = out["report"], out.get("finish")
         _save(state["job_dir"], f"report_{state.get('versions', 1)}_{len(state.get('events', []))}.json", {"report": report, "finish": finish})
         base = {"report": report, "finish": finish, "failure": report.get("failure"), "proposal": None}

@@ -240,6 +240,14 @@ class SolidWorksClient(ToolsMixin):
         if self.tool_names and tool not in self.tool_names:
             raise ValueError(f"unknown tool: {tool}")
         args = args or {}
+        # Face / edge listings take 10-60 s on a real part and were asked twice at the same model state. Cached until any
+        # other tool is called (any other tool may change the model); a listing that failed is never cached.
+        listing = tool == "analyze_model" and set(args) == {"analysis_type"} and args["analysis_type"] in ("faces", "edges")
+        cache = self.__dict__.setdefault("_listing_cache", {})
+        if listing and args["analysis_type"] in cache:
+            return cache[args["analysis_type"]]
+        if tool not in ("analyze_model", "verify_state"):
+            cache.clear()
         limit = timeout if timeout is not None else TOOL_TIMEOUTS.get(tool, DEFAULT_TIMEOUT)
         started = time.monotonic()
         try:
@@ -261,6 +269,8 @@ class SolidWorksClient(ToolsMixin):
         self._log({"event": "call", "tool": tool, "args": _short(args), "seconds": round(result.seconds, 3),
                    "outcome": "OK" if result.ok else "FAILED", "is_error": result.is_error,
                    "result_chars": len(text), "result_head": text[:_LOG_RESULT_CHARS]})
+        if listing and result.ok:
+            cache[args["analysis_type"]] = result
         return result
 
     # ---- typed helpers (names/params follow the adapter's server.py)

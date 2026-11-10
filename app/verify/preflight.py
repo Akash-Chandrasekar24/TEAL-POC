@@ -7,6 +7,7 @@ nothing. Closing leftover scratch parts goes through the MCP (activate_document 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -24,7 +25,15 @@ class OpenDoc:
 
     @property
     def is_scratch(self) -> bool:
-        return not self.path and bool(SCRATCH.match(self.title))
+        """An untitled Part1, or a part an earlier build job of this app saved in its own job folder (a failed job can leave one open;
+        it must not block every later part). A saved file anywhere else may be someone's work: never closed."""
+        if not self.path:
+            return bool(SCRATCH.match(self.title))
+        from app import config
+        try:
+            return Path(self.path).resolve().is_relative_to((config.PROJECT_ROOT / "storage" / "workflow" / "jobs").resolve())
+        except (OSError, ValueError):
+            return False
 
 
 @dataclass
@@ -39,14 +48,19 @@ class PreflightReport:
 
 
 def list_open_documents() -> list[OpenDoc]:
-    """Titles and saved paths of every open document (COM, read-only)."""
+    """Titles and saved paths of every open document (COM, read-only). Builds run on worker threads, so COM is initialised here, per call."""
+    import pythoncom
     import win32com.client
-    app = win32com.client.Dispatch("SldWorks.Application")
-    docs, d = [], app.GetFirstDocument
-    while d is not None:
-        docs.append(OpenDoc(str(d.GetTitle), str(d.GetPathName or "")))
-        d = d.GetNext
-    return docs
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("SldWorks.Application")
+        docs, d = [], app.GetFirstDocument
+        while d is not None:
+            docs.append(OpenDoc(str(d.GetTitle), str(d.GetPathName or "")))
+            d = d.GetNext
+        return docs
+    finally:
+        pythoncom.CoUninitialize()
 
 
 def split_unexpected(docs: Iterable[OpenDoc], expected: Iterable[str] = ()) -> list[OpenDoc]:
