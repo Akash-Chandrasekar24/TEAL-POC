@@ -155,6 +155,39 @@ function resolvePanel(r, part, post) {
   return panel;
 }
 
+// ---- One SolidWorks file for the whole sheet: the built parts, placed by the AI from the assembly views, approved once, then built
+const AXIS_WORD = (rot) => {
+  const names = ["X", "Y", "Z"], row = (i) => rot.slice(3 * i, 3 * i + 3), name = (v) => { const k = v.findIndex((c) => Math.abs(c) > 0.5); return `${v[k] < 0 ? "−" : "+"}${names[k]}`; };
+  return `x→${name(row(0))}, y→${name(row(1))}`;
+};
+
+function assemblyBox(r, data, post) {
+  const asm = data.assembly, batch = data.batch || {}, state = batch.assembly || {};
+  const built = (batch.items || []).filter((i) => ["awaiting_review", "accepted", "exported"].includes(i.job?.phase || i.status));
+  if (!built.length && !asm) return null;
+  const head = el("div", { class: "asm-head" }, el("div", {}, el("h4", { text: "One SolidWorks file for the whole drawing" }),
+    el("small", { class: "hint", text: "The parts built above become the components; the AI places each one from the assembly and section views. You approve the placement once, then SolidWorks builds the assembly." })));
+  const prepare = el("button", { type: "button", class: asm ? "m-link" : "btn", text: asm ? "Place the parts again" : `Prepare the assembly (${built.length} built part${built.length === 1 ? "" : "s"})`,
+    onclick: () => post("/api/parts/assemble", {}, "The AI is placing the parts from the assembly views") });
+  if (!asm || !asm.frame) return el("div", { class: "asm-box" }, head, el("div", { class: "part-actions" }, prepare));
+  const plan = asm.plan || {}, names = Object.fromEntries((plan.bom || []).map((b) => [b.id, b.description]));
+  const rows = (plan.occurrences || []).map((o) => el("tr", {}, el("td", { text: names[o.bom_id] || o.bom_id }), el("td", { text: o.id.split("-").pop() }),
+    el("td", { text: (o.placement?.translation || []).map((v) => Math.round(v * 10) / 10).join(", ") }), el("td", { text: o.placement ? AXIS_WORD(o.placement.rotation) : "" }),
+    el("td", { class: "asm-ev", text: o.placement?.evidence || "" })));
+  const status = state.status === "building" ? "Building the assembly in SolidWorks…" : state.status ? `Assembly: ${BATCH_ITEM[asm.job?.phase || state.status] || asm.job?.phase || state.status}` : "";
+  const approve = el("button", { type: "button", class: "btn", text: "Approve and build the assembly", disabled: state.status === "building" || !data.solidworks?.ready,
+    onclick: () => post("/api/parts/assemble-approve", { attempt: asm.id }, "Starting the assembly build") });
+  return el("div", { class: "asm-box" }, head,
+    el("p", { class: "hint", text: `Assembly frame: ${asm.frame}` }),
+    el("div", { class: "asm-table-wrap" }, el("table", { class: "asm-table" }, el("thead", {}, el("tr", {}, ["Part", "Copy", "Position (mm)", "Orientation", "From the drawing"].map((t) => el("th", { text: t })))), el("tbody", {}, rows))),
+    (asm.problems || []).length ? el("ul", { class: "asm-notes" }, asm.problems.map((t) => el("li", { text: t }))) : null,
+    (asm.left_out || []).length ? el("p", { class: "hint", text: `Left out (not built): ${asm.left_out.map((t) => t.split(":")[0]).join(", ")}` }) : null,
+    plan.expected?.size ? el("p", { class: "hint", text: `Expected overall size: ${plan.expected.size.join(" × ")} mm (${plan.expected.size_evidence})` }) : null,
+    el("div", { class: "part-actions" }, approve, prepare, status ? el("small", { class: "part-why", text: status }) : null),
+    state.detail ? el("p", { class: "part-why-line", text: state.detail }) : null,
+    asm.job ? el("button", { type: "button", class: "m-link", text: "Open the assembly job", onclick: () => { r.workflowJob = asm.job; window.dispatchEvent(new CustomEvent("studio:job", { detail: { job: asm.job } })); show(r); pollJob(r); } }) : null);
+}
+
 // ---- Parts on this sheet: a build list per part, then the existing approval / build / review / export path
 const PART_STATUS = { ready: ["ok", "Build list ready"], needs_information: ["warn", "Needs information"], invalid: ["warn", "Build list not valid"], stopped: ["warn", "Not buildable yet"] };
 
@@ -167,7 +200,7 @@ function partsPanel(r) {
       const data = await (await fetch(`/api/parts/${r.id}`)).json();
       render(data);
       clearTimeout(timer);
-      if (["preparing", "building"].includes(data.batch?.phase) && state.result === r) timer = setTimeout(() => load(true), 2500);   // live progress
+      if ((["preparing", "building"].includes(data.batch?.phase) || data.batch?.assembly?.status === "building") && state.result === r) timer = setTimeout(() => load(true), 2500);   // live progress
     }
     catch (error) { host.replaceChildren(el("p", { class: "hint", text: `Could not list the parts: ${error.message}` })); }
   };
@@ -237,7 +270,7 @@ function partsPanel(r) {
     });
     host.replaceChildren(el("div", { class: "parts-head" }, el("h3", { text: "Parts on this sheet" }),
       el("p", { class: "hint", text: "Each part gets a build list: the 3D steps the AI worked out from its views and your reviewed measurements. Approve, SolidWorks builds, you compare each model with the drawing below, then export." })),
-      batchBox(r, data, () => load(true), status, post), swLine, el("div", { class: "part-list" }, rows), status);
+      batchBox(r, data, () => load(true), status, post), assemblyBox(r, data, post), swLine, el("div", { class: "part-list" }, rows), status);
   };
   host.load = load;
   return host;

@@ -27,6 +27,60 @@ namespace DrawingToSolidworks
         [HttpPost, Route("api/ext/sketch_extrude")]
         public IHttpActionResult SketchExtrude([FromBody] JObject body) { return Run(() => DoSketchExtrude(body)); }
 
+        // Nothing selected before a save / export: SolidWorks writes an STL of the SELECTED body only (measured: a shaft exported as its lobe).
+        [HttpPost, Route("api/ext/clear_selection")]
+        public IHttpActionResult ClearSelection([FromBody] JObject body)
+        {
+            return Run(() =>
+            {
+                var model = App().IActiveDoc2 as IModelDoc2;
+                if (model == null) throw new InvalidOperationException("No active document");
+                model.ClearSelection2(true);
+                return new JObject { ["ok"] = true, ["selected"] = ((ISelectionMgr)model.SelectionManager).GetSelectedObjectCount2(-1) };
+            });
+        }
+
+        // ISldWorks.CommandInProgress: SolidWorks serves an out-of-process caller's COM calls at once instead of between its idle cycles.
+        // Measured on this machine: 56-75 ms per call off, 2.3 ms on. Switched on for a build and OFF at its end (the UI waits while it is on).
+        [HttpPost, Route("api/ext/command_in_progress")]
+        public IHttpActionResult CommandInProgress([FromBody] JObject body)
+        {
+            return Run(() =>
+            {
+                bool on = body != null && body.Value<bool?>("on") == true;
+                App().CommandInProgress = on;
+                return new JObject { ["ok"] = true, ["on"] = on };
+            });
+        }
+
+        // The EXACT world bounding box of the part's solid bodies: the extreme point of every body along +-X, +-Y, +-Z (6 calls per body).
+        // Before: every face and edge was listed to compute it (a 42-tooth gear: ~850 faces, over 120 s).
+        [HttpPost, Route("api/ext/bbox")]
+        public IHttpActionResult BBox([FromBody] JObject body)
+        {
+            return Run(() =>
+            {
+                var model = Part();
+                var bodies = ((IPartDoc)model).GetBodies2((int)swBodyType_e.swSolidBody, true) as object[];
+                if (bodies == null || bodies.Length == 0) return new JObject { ["ok"] = true, ["bodies"] = 0 };
+                double[] lo = { double.MaxValue, double.MaxValue, double.MaxValue }, hi = { double.MinValue, double.MinValue, double.MinValue };
+                foreach (object o in bodies)
+                {
+                    var b = (IBody2)o;
+                    for (int axis = 0; axis < 3; axis++)
+                        foreach (int sign in new[] { -1, 1 })
+                        {
+                            double[] d = { 0, 0, 0 }; d[axis] = sign;
+                            double x, y, z;
+                            if (!b.GetExtremePoint(d[0], d[1], d[2], out x, out y, out z)) throw new InvalidOperationException("GetExtremePoint failed");
+                            double v = axis == 0 ? x : axis == 1 ? y : z;
+                            if (sign < 0) lo[axis] = Math.Min(lo[axis], v); else hi[axis] = Math.Max(hi[axis], v);
+                        }
+                }
+                return new JObject { ["ok"] = true, ["bodies"] = bodies.Length, ["lo"] = new JArray(lo[0], lo[1], lo[2]), ["hi"] = new JArray(hi[0], hi[1], hi[2]) };
+            });
+        }
+
         private IHttpActionResult Run(Func<JObject> work)
         {
             try { return Ok(StaExecutor.Instance.Run(work)); }
@@ -130,6 +184,9 @@ namespace DrawingToSolidworks
             if (sketch == null) throw new InvalidOperationException("could not open a sketch on the plane");
             var frame = new Frame(sketch);
             model.SketchManager.AddToDB = true;                        // exact coordinates: no snapping or inferred relations
+            model.SketchManager.DisplayWhenAdded = false;              // no redraw per entity (a gear outline is 840 entities)
+            var view = model.ActiveView as IModelView;
+            if (view != null) view.EnableGraphicsUpdate = false;
             try
             {
                 foreach (JObject e in entities)
@@ -160,7 +217,12 @@ namespace DrawingToSolidworks
                     if (made == null) throw new InvalidOperationException("SolidWorks refused a sketch " + kind);
                 }
             }
-            finally { model.SketchManager.AddToDB = false; }
+            finally
+            {
+                model.SketchManager.AddToDB = false;
+                model.SketchManager.DisplayWhenAdded = true;
+                if (view != null) view.EnableGraphicsUpdate = true;
+            }
             string name = ((IFeature)sketch).Name;
             model.SketchManager.InsertSketch(true);
             return name;

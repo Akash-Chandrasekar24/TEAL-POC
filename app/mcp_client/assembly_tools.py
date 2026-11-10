@@ -30,6 +30,21 @@ def register(mcp):
             return json.dumps(response.json())
 
     @mcp.tool()
+    def ext_command_in_progress(on: bool) -> str:
+        """Tell SolidWorks a program is driving it (on=true: COM calls ~30x faster; the SolidWorks window waits). Always switch it off after."""
+        return geometry("/api/ext/command_in_progress", {"on": bool(on)}, 60)
+
+    @mcp.tool()
+    def ext_bbox() -> str:
+        """Exact world bounding box (metres) of the active part's solid bodies: {lo, hi, bodies}."""
+        return geometry("/api/ext/bbox", {}, 120)
+
+    @mcp.tool()
+    def ext_clear_selection() -> str:
+        """Clear the selection in the active document (before a save / export: an STL is otherwise written for the selected body only)."""
+        return geometry("/api/ext/clear_selection", {}, 60)
+
+    @mcp.tool()
     def ext_sweep(spec: dict) -> str:
         """Sweep a profile sketch along a path sketch, as a boss or a CUT. spec: {operation: boss|cut, path: {plane, entities}, profile: {plane, entities}};
         plane = {datum: front|top|right, offset?} or {name, offset?}; entities in MODEL coordinates (metres): line {p1,p2}, arc {center,p1,p2,mid}, circle {center,radius}."""

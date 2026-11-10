@@ -29,3 +29,22 @@ def test_face_and_edge_listings_are_reused_until_the_model_may_change():
     a, b, c, d, e = asyncio.run(run())
     assert a is b is c and d is not a and e is not d
     assert [t for t in sent if t[1] == "faces"] == [("analyze_model", "faces")] * 3
+
+
+def test_fast_mode_goes_on_after_ensure_ready_and_off_when_the_session_closes():
+    sent = []
+
+    class Session:
+        async def call_tool(self, tool, args, read_timeout_seconds=None):
+            sent.append((tool, args.get("on")))
+            return SimpleNamespace(content=[SimpleNamespace(text=f"COMPLETED | {tool}")], is_error=False)
+
+    sw = SolidWorksClient.__new__(SolidWorksClient)
+    sw._session, sw.tool_names, sw._log, sw._stack = Session(), ["ensure_ready", "ext_command_in_progress", "analyze_model"], lambda *a: None, None
+
+    async def run():
+        await sw.ensure_ready(); await sw.ensure_ready()
+        await sw.__aexit__(None, None, None)
+
+    asyncio.run(run())
+    assert sent == [("ensure_ready", None), ("ext_command_in_progress", True), ("ensure_ready", None), ("ext_command_in_progress", False)]

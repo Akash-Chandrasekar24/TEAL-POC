@@ -281,8 +281,11 @@ class Runner:
         snap = await verifier.current()
         final = {"volume_mm3": round(snap.volume * 1e9, 2), "faces": snap.faces, "edges": snap.edges, "bodies": snap.bodies, "document": snap.doc}
         try:
-            faces, edges = await read_geometry(self.sw)
-            bb = exact_bbox(faces, edges)
+            from app.features.base import fast_bbox
+            bb = await fast_bbox(self.sw)
+            if bb is None:
+                faces, edges = await read_geometry(self.sw)
+                bb = exact_bbox(faces, edges)
             final["bbox_mm"] = [[round(v * 1000, 3) for v in bb.lo], [round(v * 1000, 3) for v in bb.hi]]
             if bb.uncertain:
                 report.warnings.append(f"bounding box uncertain for: {bb.uncertain}")

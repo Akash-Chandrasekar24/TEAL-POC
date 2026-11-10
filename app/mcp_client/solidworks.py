@@ -43,6 +43,9 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "inspect_assembly": 200.0,
     "inspect_drawing": 150.0,
     "ext_sweep": 250.0,
+    "ext_clear_selection": 60.0,
+    "ext_bbox": 120.0,
+    "ext_command_in_progress": 60.0,
     "ext_shell": 250.0,
     "ext_angled_plane": 250.0,
     "ext_sketch_extrude": 250.0,
@@ -227,6 +230,12 @@ class SolidWorksClient(ToolsMixin):
         return self
 
     async def __aexit__(self, *exc) -> None:
+        if self.__dict__.get("_fast") and self._session is not None:            # never leave the SolidWorks window frozen
+            try:
+                await self.call("ext_command_in_progress", {"on": False})
+            except Exception:                                                  # noqa: BLE001 - closing anyway
+                pass
+            self._fast = False
         if self._stack is not None:
             await self._stack.aclose()
         self._stack = self._session = None
@@ -271,6 +280,9 @@ class SolidWorksClient(ToolsMixin):
                    "result_chars": len(text), "result_head": text[:_LOG_RESULT_CHARS]})
         if listing and result.ok:
             cache[args["analysis_type"]] = result
+        if tool == "ensure_ready" and result.ok and not self.__dict__.get("_fast") and "ext_command_in_progress" in self.tool_names:
+            on = await self.call("ext_command_in_progress", {"on": True})        # COM ~30x faster while this session drives SolidWorks
+            self._fast = on.ok
         return result
 
     # ---- typed helpers (names/params follow the adapter's server.py)

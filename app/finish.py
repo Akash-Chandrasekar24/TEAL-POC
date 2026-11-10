@@ -65,6 +65,8 @@ async def finish_part(sw: SolidWorksClient, out_dir: Path, name: str, unit: str,
         report.checks.append({"name": label, "ok": ok, "detail": detail})
         return ok
 
+    if "ext_clear_selection" in (getattr(sw, "tool_names", None) or []):       # an STL is written for the SELECTED body only otherwise
+        await sw.call("ext_clear_selection")
     saved = await sw.save_document(paths["SLDPRT"])
     check("save SLDPRT", saved.ok and paths["SLDPRT"].is_file(), saved.text[:120])
     if not review_only:

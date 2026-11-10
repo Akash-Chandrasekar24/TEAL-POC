@@ -22,7 +22,7 @@ class BackendUnavailable(RuntimeError):
 
 
 APPLICATION_TOOL_PARAMETERS = {"inspect_assembly": {"inspection_type"}, "inspect_drawing": set(),
-                               "ext_sweep": {"spec"}, "ext_shell": {"spec"}, "ext_angled_plane": {"spec"}, "ext_sketch_extrude": {"spec"}}
+                               "ext_sweep": {"spec"}, "ext_shell": {"spec"}, "ext_clear_selection": set(), "ext_bbox": set(), "ext_command_in_progress": {"on"}, "ext_angled_plane": {"spec"}, "ext_sketch_extrude": {"spec"}}
 
 
 def extension_hashes() -> dict[str, str]:
@@ -147,6 +147,9 @@ def catalog(tools: list | None = None) -> dict:
                                   {"name": "inspect_drawing", "kind": "read", "layer": "application_mcp",
                                    "purpose": "Native sheet, model references, view layout/scale and dimension readback"},
                                   {"name": "ext_sweep", "kind": "model", "layer": "application_mcp", "purpose": "Swept boss or swept CUT along a path sketch"},
+                                  {"name": "ext_bbox", "kind": "read", "layer": "application_mcp", "purpose": "Exact part bounding box (extreme points)"},
+                                  {"name": "ext_clear_selection", "kind": "model", "layer": "application_mcp", "purpose": "Clear the selection before save / export"},
+                                  {"name": "ext_command_in_progress", "kind": "model", "layer": "application_mcp", "purpose": "Fast COM while a build runs (off at the end)"},
                                   {"name": "ext_shell", "kind": "model", "layer": "application_mcp", "purpose": "Shell the part, removing chosen faces"},
                                   {"name": "ext_angled_plane", "kind": "model", "layer": "application_mcp", "purpose": "Reference plane at an angle through an axis, direction checked"},
                                   {"name": "ext_sketch_extrude", "kind": "model", "layer": "application_mcp", "purpose": "Sketch + extrude (one or both ways) on any plane, direction by vector"}],

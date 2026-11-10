@@ -11,10 +11,13 @@ from dataclasses import dataclass
 from app.geometry import profile_area, profile_bounds
 from app.verify import Expect
 from .face_sketch import sketch_profile_on_face
-from .base import (probe_cylinders, probe_planar_face, probe_segments, Probe, FeatureContext, FeatureRequestError, FeatureResult, PlaneFrame, check_closed, factor, graph_of,
+from .base import (bbox_probe, probe_cylinders, probe_planar_face, probe_segments, Probe, FeatureContext, FeatureRequestError, FeatureResult, PlaneFrame, check_closed, factor, graph_of,
                    probe_bbox, profile_to_graph, read_geometry, sketch_node)
 
 MM3_PER_UNIT3 = {"mm": 1.0, "inch": 25.4 ** 3}
+BULK_SEGMENTS = 24          # more segments than this on a datum plane: one add_sketch_entities call instead of the checklist graph, which sends
+                            # every segment as its own bridge call (~1.7 s each, measured: a 192-segment rotor flank timed out at 240 s)
+DATUM_NAMES = {"front": "Front Plane", "top": "Top Plane", "right": "Right Plane"}
 
 
 @dataclass(frozen=True)
@@ -93,6 +96,45 @@ class ExtrudeProfileBoss:
         out.append(probe_planar_face(faces, frame.normal_axis, cap_m, profile_area(self.profile) * f * f, f"boss end cap at {cap_m * 1000:.3f} mm"))
         return out
 
+    def bulk(self) -> bool:
+        """A large outline (gear, trochoid, rotor flank) on a datum plane, grown forward from it: sketched with ONE bulk call."""
+        return (self.target == "plane" and self.mode == "blind" and not self.reversed and abs(self.offset) < 1e-12 and self.plane in DATUM_NAMES
+                and len(profile_to_graph(self.profile, self.unit, self.origin)) > BULK_SEGMENTS)
+
+    def ext_spec(self, frame: PlaneFrame) -> dict:
+        """The whole sketch + extrude as ONE call of our own ext_sketch_extrude (model coordinates, metres; no redraw per entity)."""
+        from .ext_features import _mid
+        f = factor(self.unit)
+        W = lambda x, y: list(frame.to_world(x, y, 0.0))
+        ents = []
+        for s in profile_to_graph(self.profile, self.unit, self.origin):       # graph segments are already in metres, datum sketch frame
+            if s["kind"] == "line":
+                ents.append({"kind": "line", "p1": W(s["x1"], s["y1"]), "p2": W(s["x2"], s["y2"])})
+            elif s["kind"] == "arc":
+                mx, my = _mid(s)
+                ents.append({"kind": "arc", "center": W(s["cx"], s["cy"]), "p1": W(s["x1"], s["y1"]), "p2": W(s["x2"], s["y2"]), "mid": W(mx, my)})
+            elif s["kind"] == "circle":
+                ents.append({"kind": "circle", "center": W(s["cx"], s["cy"]), "radius": s["diameter"] / 2})
+            else:
+                raise FeatureRequestError(f"segment kind {s['kind']!r} cannot be sketched")
+        normal = [0.0, 0.0, 0.0]
+        normal[frame.normal_axis] = 1.0                                         # every datum's normal points along +X / +Y / +Z (see PlaneFrame)
+        return {"operation": "boss", "plane": {"datum": self.plane}, "entities": ents, "direction": normal, "end": "blind", "depth": self.depth * f}
+
+    async def _bulk_action(self, ctx: FeatureContext, frame: PlaneFrame):
+        if "ext_sketch_extrude" in (getattr(ctx.sw, "tool_names", None) or []):
+            return await ctx.sw.geometry("ext_sketch_extrude", self.ext_spec(frame))
+        from .face_sketch import FaceFrame
+        from .cut_feature import CutFeature
+        sk = await ctx.sw.create_sketch(plane=DATUM_NAMES[self.plane])
+        if not sk.ok:
+            return sk
+        origin, xdir, ydir = CutFeature.parse_frame(sk.text)                   # the sketch's real frame: positions and arc senses mapped, never assumed
+        seg = profile_to_graph(self.profile, self.unit, self.origin)
+        import json as _json
+        r = await ctx.sw.add_sketch_entities(_json.dumps(FaceFrame(origin, xdir, ydir, frame, 0.0).records(seg)))
+        return r if not r.ok else await ctx.sw.extrude_feature(feature_type="boss", depth=self.depth * factor(self.unit))
+
     # ---- run
     async def apply(self, ctx: FeatureContext) -> FeatureResult:
         frame = frame_ = self.validate()
@@ -105,6 +147,9 @@ class ExtrudeProfileBoss:
                 r, idx = await sketch_profile_on_face(ctx, frame_, self.offset * factor(self.unit), -1 if self.reversed else 1, seg)
                 res.notes.append(f"sketched on face {idx}")
                 return r if not r.ok else await ctx.sw.extrude_feature(feature_type="boss", depth=self.depth * factor(self.unit))
+            if self.bulk():
+                res.notes.append("large outline: sketched with one add_sketch_entities call")
+                return await self._bulk_action(ctx, frame_)
             return await ctx.sw.submit_feature_graph(graph, fresh_document=False)
 
         v = await ctx.verifier.run_step(self.label, action, Expect(delta_mm3=self.expected_delta_mm3(),
@@ -113,10 +158,10 @@ class ExtrudeProfileBoss:
         if not v.ok:
             return res
         # position probe: exact world bounding box (arc edges are recovered from the cylinder faces)
-        faces, edges = await read_geometry(ctx.sw)
         lo_n, hi_n = self.normal_extent_m()
         seg = profile_to_graph(self.profile, self.unit, self.origin)
         if not self.is_base:
+            faces, edges = await read_geometry(ctx.sw)
             res.probes += self.boss_probes(faces, edges, seg, frame, lo_n if self.reversed else hi_n)
             return res
         x0, x1, y0, y1 = profile_bounds(seg)
@@ -126,5 +171,5 @@ class ExtrudeProfileBoss:
         lo[a_ax], hi[a_ax] = (x0, x1) if sx > 0 else (-x1, -x0)
         lo[b_ax], hi[b_ax] = (y0, y1) if sy > 0 else (-y1, -y0)
         lo[frame.normal_axis], hi[frame.normal_axis] = lo_n, hi_n
-        res.probes.append(probe_bbox(faces, edges, tuple(lo), tuple(hi), "exact bounding box"))
+        res.probes.append(await bbox_probe(ctx.sw, tuple(lo), tuple(hi), "exact bounding box"))
         return res

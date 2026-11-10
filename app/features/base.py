@@ -207,11 +207,32 @@ def probe_axis_extent_range(edges: list[dict], axis: int, seen_lo: float, seen_h
                            f"max in [{seen_hi * 1000:.3f}, {full_hi * 1000:.3f}] mm")
 
 
+async def fast_bbox(sw):
+    """The exact bounding box from the bridge's extreme points (one call), or None when the bridge has no ext_bbox."""
+    if "ext_bbox" not in (getattr(sw, "tool_names", None) or []):
+        return None
+    r = await sw.call("ext_bbox")
+    data = r.json() if r.ok else {}
+    if not data.get("lo"):
+        return None
+    from app.verify.bbox import BBox
+    return BBox(tuple(data["lo"]), tuple(data["hi"]))
+
+
+async def bbox_probe(sw, lo_m, hi_m, name: str, tol_m: float = POS_TOL_M) -> Probe:
+    """probe_bbox with the fast exact box when the bridge has it; else from the full face / edge lists."""
+    bb = await fast_bbox(sw)
+    if bb is not None:
+        return probe_bbox([], [], lo_m, hi_m, name, tol_m, bb=bb)
+    faces, edges = await read_geometry(sw)
+    return probe_bbox(faces, edges, lo_m, hi_m, name, tol_m)
+
+
 def probe_bbox(faces: list[dict], edges: list[dict], lo_m: tuple[float, float, float], hi_m: tuple[float, float, float],
-               name: str, tol_m: float = POS_TOL_M) -> Probe:
-    """Exact world bounding box (edges + cylinder faces, see app.verify.bbox) against the expected corners."""
+               name: str, tol_m: float = POS_TOL_M, bb=None) -> Probe:
+    """Exact world bounding box (edges + cylinder faces, see app.verify.bbox; or the bridge's extreme points) against the expected corners."""
     from app.verify.bbox import exact_bbox
-    bb = exact_bbox(faces, edges)
+    bb = bb if bb is not None else exact_bbox(faces, edges)
     bad = [f"{'xyz'[i]}: {bb.lo[i] * 1000:.3f}..{bb.hi[i] * 1000:.3f} mm, expected {lo_m[i] * 1000:.3f}..{hi_m[i] * 1000:.3f} mm"
            for i in range(3) if abs(bb.lo[i] - lo_m[i]) > tol_m or abs(bb.hi[i] - hi_m[i]) > tol_m]
     note = f" (uncertain faces: {bb.uncertain})" if bb.uncertain else ""

@@ -649,7 +649,16 @@ def parts_overview(rid: str) -> dict:
                     item["job"] = WORKFLOW.status(item["job_id"])
                 except (OSError, ValueError):
                     pass
-    return {"result_id": rid, "parts": parts, "solidworks": solidworks_status(), "batch": batch}
+    assembly = None
+    latest_asm = ASSEMBLIES / rid / "latest.json"
+    if latest_asm.is_file():
+        assembly = json.loads(latest_asm.read_text(encoding="utf-8"))
+        if (batch or {}).get("assembly", {}).get("job_id"):
+            try:
+                assembly["job"] = WORKFLOW.status(batch["assembly"]["job_id"])
+            except (OSError, ValueError):
+                pass
+    return {"result_id": rid, "parts": parts, "solidworks": solidworks_status(), "batch": batch, "assembly": assembly}
 
 
 # ---------------- "Build everything": prepare every build list, ONE human approval, then build part after part
@@ -833,6 +842,89 @@ def _build_each(rid):
     _save_batch(rid, batch)
 
 
+def assemble_parts(rid: str, llm_name=None, client=None) -> dict:
+    """"Assemble into one file": the parts the last batch built become the components; the AI drafts where each copy goes from the assembly
+    views. Saved as the drawing's assembly plan, NOTHING confirmed: the designer approves it (approve_assembly) before it is built."""
+    from app.assembly.assets import import_model
+    from app.assembly.from_parts import built_part, draft_placements, plan_from_parts
+    from app.llm import make_client
+    from app.web.parts import assembly_views, detect_parts, part_sheet
+    result = result_with_design(rid)
+    batch = load_batch(rid) or {}
+    known = {p["id"]: p for p in detect_parts(result)}
+    built, left_out = [], []
+    for item in batch.get("items", []):
+        found = built_part(WORKFLOW.root / "jobs", item["job_id"]) if item.get("job_id") else None
+        part = known.get(item["part_id"])
+        if not (found and part):
+            left_out.append(f"{item['name']}: {'not built' if part else 'not on the sheet'}")
+            continue
+        asset = import_model(found["path"].name, found["path"].read_bytes(), MODELS)
+        qty = part.get("quantity") if isinstance(part.get("quantity"), int) and part["quantity"] > 0 else 1
+        built.append({"id": part["id"], "name": part["name"], "item": part.get("item", ""), "quantity": qty, "bbox_mm": found["bbox_mm"],
+                      "sha256": asset["sha256"], "source_name": asset["source_name"], "job": item["job_id"]})
+    if not built:
+        raise ValueError("No part has been built yet: build the parts first, then assemble them")
+    views = assembly_views(result)
+    if not views:
+        raise ValueError("The sheet has no assembly or section view to place the parts from")
+    shas = {pg["no"]: pg["sha"] for pg in result["pages"]}
+    picture = part_sheet(result, {"name": "assembly", "views": views}, lambda no: default_cache().get_blob(shas[no]))
+    attempt = uuid.uuid4().hex[:12]
+    with trace.run(attempt, RUNS / attempt, save_files=config.TRACE_FILES, drawing_result=rid, workflow="assembly_from_parts"):
+        llm = client if client is not None else make_client(llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER, reasoning_effort=config.CAD_REASONING_EFFORT)
+        draft = draft_placements(llm, picture, built)
+    unit = (result.get("drawing_model") or {}).get("unit") if (result.get("drawing_model") or {}).get("unit") in ("mm", "inch") else "mm"
+    name = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(str(result.get("name") or rid)).stem)[:60].strip("_") or "assembly"
+    plan, problems = plan_from_parts(name, digest(assembly_source(rid)), unit, built, draft)
+    artifact = save_assembly(rid, plan, {"draft": draft.model_dump(), "frame": draft.frame}, review_notes=None)
+    artifact.update(left_out=left_out, problems=problems, frame=draft.frame)
+    write_json(ASSEMBLIES / rid / f"{artifact['id']}.json", artifact)
+    write_json(ASSEMBLIES / rid / "latest.json", artifact)
+    return artifact
+
+
+def approve_assembly(rid: str, attempt: str) -> dict:
+    """The designer approved the assembly plan: confirm it and build it in SolidWorks (background; progress in the batch file)."""
+    from app.assembly.from_parts import approve
+    from app.web.parts import solidworks_status
+    art = assembly_artifact(rid, attempt)
+    latest = json.loads((ASSEMBLIES / rid / "latest.json").read_text(encoding="utf-8"))
+    if latest["id"] != attempt:
+        raise ValueError("The assembly plan changed. Refresh it before approving.")
+    sw = solidworks_status()
+    if not sw["ready"]:
+        raise ValueError(f"SolidWorks is not ready: {sw['detail']}")
+    plan = approve(AssemblyPlan.model_validate(art["plan"]))
+    saved = save_assembly(rid, plan, art.get("extracted", {}), art.get("harness"), art.get("review_notes"))
+    for key in ("left_out", "problems", "frame"):
+        if key in latest:
+            saved[key] = latest[key]
+    write_json(ASSEMBLIES / rid / f"{saved['id']}.json", saved)
+    write_json(ASSEMBLIES / rid / "latest.json", saved)
+    if saved["blockers"]:
+        raise ValueError("The assembly cannot be built yet: " + "; ".join(saved["blockers"][:6]))
+    with _BATCH_LOCK:
+        batch = load_batch(rid) or {"id": uuid.uuid4().hex[:12], "result_id": rid, "items": [], "phase": "done"}
+        batch["assembly"] = {"status": "building", "attempt": saved["id"]}
+        _save_batch(rid, batch)
+    _BATCH_POOL.submit(_build_assembly, rid, saved["id"])
+    return saved
+
+
+def _build_assembly(rid, attempt):
+    try:
+        job = WORKFLOW.create(rid, attempt)
+        job = WORKFLOW.action(job["id"], job["revision"], "build")
+        done = {"status": job["phase"], "job_id": job["id"], "detail": "; ".join(job.get("questions") or [])[:2000]}
+    except Exception as ex:                                                      # noqa: BLE001 - recorded for the page
+        done = {"status": "build_failed", "detail": f"{type(ex).__name__}: {ex}"[:2000]}
+    with _BATCH_LOCK:
+        batch = load_batch(rid)
+        batch["assembly"] = {**batch.get("assembly", {}), **done}
+        _save_batch(rid, batch)
+
+
 def _part(result: dict, part_id: str) -> dict:
     from app.web.parts import detect_parts
     part = next((p for p in detect_parts(result) if p["id"] == part_id), None)
@@ -860,16 +952,30 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
         raise ValueError(f"{part['name']} is not drawn anywhere on the sheet: describe it in an answer and let the AI work it out")
     png = part_sheet(result, shown, lambda no: default_cache().get_blob(shas[no]))
     work_it_out = work_it_out or not part["views"]                              # nothing printed for it: the AI must work its sizes out
+    from app.web.parts import latest_lists
+    previous = latest_lists(PART_LISTS, rid).get(part_id)
+    context = reader_context(result, part, result["drawing_model"], answers, work_it_out)
+    effort = config.CAD_REASONING_EFFORT
+    if answers and previous and previous["draft"].get("items"):
+        # An EDIT, not a new list: the earlier list + the designer's answers. Measured on a connecting rod: a full rewrite at high effort
+        # thought for 14,850 tokens (220 s); writing a list from scratch at lower effort returned no 3D steps, so only edits run at medium.
+        keep = {k: previous["draft"][k] for k in ("items", "seen_dimensions", "unsupported", "needs_human") if k in previous["draft"]}
+        context += ("\nYour previous build list for this part is below. Apply the designer's answers to it: change only the items, numbers and "
+                    "questions the answers affect, keep every other item exactly as it is, and return the COMPLETE list in the same format.\n"
+                    + json.dumps(keep, ensure_ascii=False))
+        effort = "medium"
     attempt = uuid.uuid4().hex[:12]
     with trace.run(attempt, RUNS / attempt, save_files=config.TRACE_FILES, workflow="part_build_list", drawing_result=rid, part=part_id):
         provider = llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER
-        supervisor = Orchestrator(extraction=ExtractionAgent(client if client is not None else make_client(provider, reasoning_effort=config.CAD_REASONING_EFFORT)))
+        supervisor = Orchestrator(extraction=ExtractionAgent(client if client is not None else make_client(provider, reasoning_effort=effort)))
         try:
-            response = supervisor.read_list([FilePart(png, "image/png"), reader_context(result, part, result["drawing_model"], answers, work_it_out)])
+            response = supervisor.read_list([FilePart(png, "image/png"), context])
         except LLMError as ex:
             ex.run_id = attempt
             raise
     draft = response.data if isinstance(response.data, dict) else {}
+    if effort == "medium" and previous and draft.get("items"):                  # an edit: the format fields it was not shown come from the earlier list
+        draft = {**{k: v for k, v in previous["draft"].items() if k not in ("accepted_gaps", "designer_answers")}, **draft}
     try:
         parse_reply(draft)
     except ValueError:
@@ -1084,7 +1190,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/parts/confirm", "/api/parts/ai-resolve", "/api/parts/build-all", "/api/parts/approve-all", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
+        if self.path not in ("/api/read", "/api/reread", "/api/chat", "/api/review", "/api/plan", "/api/assess", "/api/clarify", "/api/parts/create", "/api/parts/upload", "/api/parts/confirm", "/api/parts/ai-resolve", "/api/parts/assemble", "/api/parts/assemble-approve", "/api/parts/build-all", "/api/parts/approve-all", "/api/assembly/read", "/api/assembly/review", "/api/assembly/model", "/api/workflow/start", "/api/workflow/decision"):
             return self._json(404, {"error": "not found"})
         size = int(self.headers.get("Content-Length") or 0)
         if not 0 < size <= MAX_BODY:
@@ -1122,6 +1228,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, job)
                 decision = {key: body[key] for key in ("review_hash", "compared_drawing", "checked_measurements", "message", "params", "accepted_gaps") if key in body}
                 return self._json(200, WORKFLOW.action(str(body.get("job_id", "")), body.get("revision"), str(body.get("action", "")), **decision))
+            if self.path in ("/api/parts/assemble", "/api/parts/assemble-approve"):
+                if not self._same_origin_json():
+                    return self._json(403, {"error": "Start this from the drawing workspace"})
+                rid = str(body.get("result_id", ""))
+                if self.path.endswith("/assemble"):
+                    if not _PLAN_LOCK.acquire(blocking=False):
+                        return self._json(409, {"error": "A plan is already running. Wait for it to finish."})
+                    try:
+                        return self._json(200, assemble_parts(rid, llm))
+                    finally:
+                        _PLAN_LOCK.release()
+                return self._json(200, approve_assembly(rid, str(body.get("attempt", ""))))
             if self.path == "/api/parts/ai-resolve":
                 if not self._same_origin_json():
                     return self._json(403, {"error": "Start this from the drawing workspace"})

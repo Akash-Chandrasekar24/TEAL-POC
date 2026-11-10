@@ -535,3 +535,14 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 .resolve .part-actions .btn{width:auto;padding:7px 16px}
 .part-why-line{font-size:12.5px;color:#9d701f;margin:6px 0}
 @media(max-width:640px){.doubt-line{flex-direction:column;align-items:flex-start}.doubt-head{flex-direction:column}}
+
+/* one assembly for the whole drawing */
+.asm-box{margin-top:12px;border:1px solid var(--line);border-radius:12px;background:#fff;padding:12px;display:flex;flex-direction:column;gap:8px}
+.asm-head h4{margin:0 0 2px}
+.asm-table-wrap{overflow-x:auto}
+.asm-table{border-collapse:collapse;width:100%;font-size:12px}
+.asm-table th{text-align:left;color:var(--muted);font-weight:600;border-bottom:1px solid var(--line);padding:5px 6px}
+.asm-table td{border-bottom:1px solid #f0f0ea;padding:5px 6px;vertical-align:top;white-space:nowrap}
+.asm-table td.asm-ev{white-space:normal;color:var(--muted);min-width:220px}
+.asm-notes{margin:0;padding-left:18px;font-size:12px;color:#9d701f}
+.asm-box .part-actions .btn{width:auto}
