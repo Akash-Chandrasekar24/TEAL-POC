@@ -143,12 +143,15 @@ def projection_reading(title_block: dict) -> str:
 #  - an OCR cross-check flag on a NOTE, label, part title or symbol: low-resolution text recognition noise, not an engineering question
 #  - a plain statement such as "No tolerances are printed on this sheet." (no question asked)
 _OCR_FLAG = re.compile(r"^(o\d+): (?:conflict:|OCR text does not support the complete callout|claimed OCR agreement has no OCR evidence)")
+_PIPELINE = re.compile(r"\bOCR\b")
 _STATEMENT = re.compile(r"^no\b[^?]*\b(?:printed|visible|visibly|shown)\b[^?]*$", re.I)
 
 
 def is_question(text: str, categories: dict) -> bool:
     flag = _OCR_FLAG.match(text)
     if flag and categories.get(flag.group(1)):        # any categorised callout: OCR could not confirm the text, which is not a question about it
+        return False
+    if _PIPELINE.search(text) and "?" not in text:   # a note about our own text reader (OCR), not about the drawing: nothing to answer
         return False
     return not _STATEMENT.match(text.strip())
 

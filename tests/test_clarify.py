@@ -121,3 +121,31 @@ def test_the_ai_is_asked_only_the_questions_the_page_shows():
     asked = open_questions(result, m)
     shown = [q for q in m.issues if "unreadable source callout" in q]
     assert [q["question"] for q in asked] == ["Is the bore blind or through?"] and len(asked) == len(shown) == 1
+
+
+def test_a_question_that_points_at_a_view_is_asked_with_its_close_up_one_picture_per_call():
+    import io
+    from PIL import Image
+    from app.drawing.clarify import question_box
+    from app.drawing.model import is_question
+    buf = io.BytesIO(); Image.new("RGB", (2000, 1000), "white").save(buf, "PNG"); png = buf.getvalue()
+    page = {"no": 1, "width": 2000, "height": 1000, "boxes": [[0, 0, 900, 900], [1000, 100, 1600, 700]],
+            "read": {"views": [{"no": 1, "label": "07. COUPLING HALF FRONT"}, {"no": 2, "label": "07. COUPLING HALF SIDE SECTION"}],
+                     "evidence": {"extraction": {"features": [{"id": "f8", "views": ["v2"]}], "callouts": [{"id": "o3", "box": [100, 100, 200, 200]}]}}}}
+    assert question_box(page, "f8: the callout is crowded") == [1000, 100, 1600, 700]
+    assert question_box(page, "o3: which surface?") == [200, 100, 400, 200]                                   # 0..1000 -> page pixels
+    assert question_box(page, "The Ø20 callout on the coupling side section is crowded") == [1000, 100, 1600, 700]   # by the view title
+    assert question_box(page, "Is the projection first angle?") is None
+    assert not is_question("OCR omitted several small dimensions and misread degree symbols", {})             # a note about our reader
+    qs = [{"key": "P1.u1", "question": "f8: crowded", "box": [1000, 100, 1600, 700]}, {"key": "P1.u2", "question": "projection?", "box": None}]
+    class Echo(Scripted):
+        def generate_json(self, system, parts):
+            assert sum(1 for p in parts if not isinstance(p, str)) == 1                                     # Domo takes one picture per call
+            ctx = json.loads(parts[1])
+            self.data = {"suggestions": [{"key": q["key"], "can_answer": True, "answer": ctx["picture"], "measurement": None, "view": None, "basis": "b"}
+                                         for q in ctx["questions"]]}
+            return super().generate_json(system, parts)
+    llm = Echo({})
+    out = suggest(llm, 1, png, qs, VIEWS, [])
+    assert [(s["key"], s["answer"]) for s in out] == [("P1.u1", "close-up"), ("P1.u2", "whole page")]
+    assert Image.open(io.BytesIO(llm.calls[0][1][0].data)).size == (840, 820)                               # the view + 120 margin (clipped at the top), full resolution
