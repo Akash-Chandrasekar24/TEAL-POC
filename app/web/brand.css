@@ -394,3 +394,18 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 #agent-chat .chat-modes button{padding:6px 10px!important;font-size:12px}
 #agent-chat .chat-send{min-height:38px!important;padding:8px 16px!important;margin-top:8px!important}
 #agent-chat .chat-composer textarea{min-height:40px!important}
+
+/* review complete: the clear end of the Review step */
+.review-done{margin:4px 0 18px;padding:18px 20px;border-radius:18px;background:linear-gradient(135deg,#eaf6ee,#f3ecf7);border:1px solid #cfe6d8;box-shadow:var(--lift)}
+.review-done[hidden]{display:none!important}
+.review-done-head{display:flex;gap:14px;align-items:center}
+.review-done-tick{flex:none;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:#2e7d50;color:#fff;font-size:20px;font-weight:700}
+.review-done h3{margin:0;font-size:18px;color:#1d5c3a}
+.review-done-head p{margin:2px 0 0;font-size:12.5px;color:#3c6b51}
+.review-done-next{margin:12px 0;font-size:13px;color:var(--ink)}
+.review-done-actions .btn{width:auto;margin:0;text-decoration:none}
+.build-notes{margin-top:14px;padding:12px 14px;border-radius:12px;background:#faf9f6;border:1px dashed var(--line)}
+.build-notes h4{margin:0 0 6px;font-size:12px;color:var(--muted)}
+.build-notes ul{margin:0;padding-left:18px;font-size:12px;color:var(--muted)}
+/* nothing to approve and nothing to undo: the whole approve row goes */
+.m-approve-row:has(.m-approve[hidden]):has(.m-link[hidden]){display:none}

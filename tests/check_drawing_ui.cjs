@@ -210,6 +210,15 @@ async function main() {
   assert.deepEqual(spot("The cutting plane of SECTION D-D is not visible").box,[500,0,1000,500],"a section name finds its view");
   assert.equal(spot("No tolerance is printed").whole,true,"no spot named: the whole page");
   assert.equal(context.questionSpot(pageR,"bad","x"),null);
+  const doneR=JSON.parse(JSON.stringify(fixture.result));
+  doneR.drawing_model.dimensions.forEach((d) => { d.confirmed=true; });
+  doneR.reviewDirty=false;                                           // an earlier case left unsaved edits on the shared fixture
+  doneR.design={id:"x",model:doneR.drawing_model,plan:{status:"needs_review",questions:["19 readings hold several values or none in one callout (e.g. P1.d5)."],draft:null,provenance:{},calls:0},seconds:0};
+  const doneCard=context.designCard(doneR);
+  const panel=all(doneCard,(e) => e.attrs.class==="review-done")[0];
+  assert.equal(panel.hidden,false,"all approved and nothing to answer: the review says it is complete");
+  assert.ok(doneCard.textContent.includes("Review complete") && doneCard.textContent.includes("Before a 3D build"),"build notes are separate from questions");
+  assert.equal(all(doneCard,(e) => (e.attrs.class||"").includes("m-qlink"))[0].hidden,true,"a build note is not counted as an open question");
   const showBody=html.slice(html.indexOf("function show(r)"),html.indexOf("function updateExtractionProgress"));
   assert.ok(!showBody.includes("assemblyCard(r)") && !showBody.includes("featureCard(r)") && !showBody.includes("assessmentCard(r)"),"review page omits the removed inspector sections");
   console.log("Drawing review UI smoke test passed");

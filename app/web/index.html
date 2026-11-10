@@ -640,20 +640,26 @@ function designCard(r) {
   };
   controls.append(review, el("div", {class:"m-save-row"}, btn, finishBtn));
   const issues = (questions) => el("ul", {}, questions.map((q) => el("li", { text: q })));
+  let openAsk = 0;                                                  // answerable questions still open (drives "Review complete")
   const renderPlan = (artifact) => {
     const p = artifact.plan;
     const ready = p.status === "ready_for_approval";
-    qBtn.hidden = !p.questions.length; qBtn.textContent = `Open questions (${p.questions.length}) ↓`;
+    const asks = p.questions.filter((q) => clarificationKey(r, q)), notes = p.questions.filter((q) => !clarificationKey(r, q) && !/human review required|confirm this .*dimension/.test(q));
+    openAsk = asks.length;
+    qBtn.hidden = !asks.length; qBtn.textContent = `Open questions (${asks.length}) ↓`;
     gate();
-    output.replaceChildren(el("h3", { text: ready ? "Draft ready for your approval" : "Open questions before a 3D build" }));
+    output.replaceChildren(el("h3", { text: ready ? "Draft ready for your approval" : asks.length ? "Open questions" : "Before a 3D build" }));
     if (!ready) output.append(el("p", { class: "hint", text: isAssembly(r)
       ? "This sheet is an assembly drawing. The part builder makes one part at a time (today: plates with holes and round bosses), so it cannot build the whole sheet from here. Your reviewed measurements are saved. You can finish here, or use the assembly planner for the parts."
       : "Something is missing, or the sheet has geometry the part builder cannot make yet. Your reviewed measurements are saved; building is optional." }));
-    if (p.questions.length) {
-      const sp = suggestPanel(r, p.questions), list = questionList(r, p.questions);
+    if (asks.length) {
+      const sp = suggestPanel(r, asks), list = questionList(r, asks);
       if (sp) output.append(sp);
-      output.append(p.questions.length > 4 ? el("details", { open: true }, el("summary", { text: `${p.questions.length} things to resolve before a build` }), list) : list);
+      output.append(asks.length > 4 ? el("details", { open: true }, el("summary", { text: `${asks.length} questions to answer` }), list) : list);
     }
+    if (notes.length) output.append(el("div", { class: "build-notes" }, el("h4", { text: "Before a 3D build (nothing to answer here)" }),
+      el("ul", {}, notes.map((n) => el("li", { text: n.replace(/\s*\n\s*/g, " ") })))));
+    done();
     if (p.draft) {
       output.append(el("p", { class: "hint", text: "This is a proposal. Review the geometry, feature order, derived calculations and omitted details against the drawing." }),
         el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, ["Item", "Feature", "Printed sources", "Parameters"].map((text) => el("th", { text })))),
@@ -678,8 +684,25 @@ function designCard(r) {
   };
   // Open questions come after the measurements: they stay hidden while any reading is still to verify.
   const gateNote = el("p", {class:"m-gate"});
+  const donePanel = el("div", { class: "review-done", hidden: true });
+  const done = () => {
+    const finished = count("open") === 0 && openAsk === 0 && !r.reviewDirty;
+    donePanel.hidden = !finished;
+    if (!finished) return;
+    const csv = typeof Blob === "undefined" ? null : el("a", { class: "btn", download: "reviewed-measurements.csv",
+      href: URL.createObjectURL(new Blob([measurementsCsv(measurementRows(inputs))], { type: "text/csv;charset=utf-8" })), text: "Download reviewed measurements (CSV)" });
+    const next = r.design?.plan?.status === "ready_for_approval"
+      ? "Next: approve the feature plan below to build it in SolidWorks. Build & Verify opens once the build starts."
+      : isAssembly(r)
+        ? "This drawing is an assembly of several parts. The browser cannot plan a 3D build of the whole sheet yet (the next step we are building: a build list per part, then the assembly). Your review is saved; reopen it any time from Recent drawings."
+        : "Next: press “Save reviewed measurements” to plan the 3D build; Build & Verify opens once a build starts.";
+    donePanel.replaceChildren(el("div", { class: "review-done-head" }, el("span", { class: "review-done-tick", text: "✓", "aria-hidden": "true" }),
+      el("div", {}, el("h3", { text: "Review complete" }), el("p", { text: `All ${inputs.length} measurements are approved and every question is answered.` }))),
+      el("p", { class: "review-done-next", text: next }), el("div", { class: "review-done-actions" }, csv));
+  };
   gate = () => {
     const open = count("open"), pass = open === 0;
+    done();
     output.hidden = !pass; gateNote.hidden = pass;
     gateNote.textContent = `Open questions appear here once every measurement is approved (${open} still to verify). Use “Approve all measurements” or verify them one by one.`;
     if (!pass) qBtn.hidden = true;
@@ -752,7 +775,7 @@ function designCard(r) {
   btn.addEventListener("click", () => save(false));
   finishBtn.addEventListener("click", () => save(true));
   return el("section", { class: "card pad", id: "design" }, el("div",{class:"review-title"},el("span",{class:"eyebrow",text:"EXTRACTION REVIEW"}),el("h2", { text: "Measurements, made clear." })),
-    el("p", { class: "hint", text: "The agent handles confident readings. You resolve the rest." }), controls, status, gateNote, output);
+    el("p", { class: "hint", text: "The agent handles confident readings. You resolve the rest." }), donePanel, controls, status, gateNote, output);
 }
 
 async function workflowRequest(path, body) {
