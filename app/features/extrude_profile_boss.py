@@ -20,6 +20,30 @@ BULK_SEGMENTS = 24          # more segments than this on a datum plane: one add_
 DATUM_NAMES = {"front": "Front Plane", "top": "Top Plane", "right": "Right Plane"}
 
 
+def datum_normal(frame: PlaneFrame) -> list[float]:
+    n = [0.0, 0.0, 0.0]
+    n[frame.normal_axis] = 1.0                                                  # every datum's normal points along +X / +Y / +Z (see PlaneFrame)
+    return n
+
+
+def ext_entities(segments: list[dict], frame: PlaneFrame, height_m: float) -> list[dict]:
+    """Graph segments (metres, the datum's sketch frame) -> model-space entities for ext_sketch_extrude / ext_sweep."""
+    from .ext_features import _mid
+    W = lambda x, y: list(frame.to_world(x, y, height_m))
+    ents = []
+    for s in segments:
+        if s["kind"] == "line":
+            ents.append({"kind": "line", "p1": W(s["x1"], s["y1"]), "p2": W(s["x2"], s["y2"])})
+        elif s["kind"] == "arc":
+            mx, my = _mid(s)
+            ents.append({"kind": "arc", "center": W(s["cx"], s["cy"]), "p1": W(s["x1"], s["y1"]), "p2": W(s["x2"], s["y2"]), "mid": W(mx, my)})
+        elif s["kind"] == "circle":
+            ents.append({"kind": "circle", "center": W(s["cx"], s["cy"]), "radius": s["diameter"] / 2})
+        else:
+            raise FeatureRequestError(f"segment kind {s['kind']!r} cannot be sketched")
+    return ents
+
+
 @dataclass(frozen=True)
 class ExtrudeProfileBoss:
     """All numbers in the drawing's unit. `profile`: closed lines/arcs, coordinates as printed. `origin`: 'centre' = measured
@@ -103,23 +127,8 @@ class ExtrudeProfileBoss:
 
     def ext_spec(self, frame: PlaneFrame) -> dict:
         """The whole sketch + extrude as ONE call of our own ext_sketch_extrude (model coordinates, metres; no redraw per entity)."""
-        from .ext_features import _mid
-        f = factor(self.unit)
-        W = lambda x, y: list(frame.to_world(x, y, 0.0))
-        ents = []
-        for s in profile_to_graph(self.profile, self.unit, self.origin):       # graph segments are already in metres, datum sketch frame
-            if s["kind"] == "line":
-                ents.append({"kind": "line", "p1": W(s["x1"], s["y1"]), "p2": W(s["x2"], s["y2"])})
-            elif s["kind"] == "arc":
-                mx, my = _mid(s)
-                ents.append({"kind": "arc", "center": W(s["cx"], s["cy"]), "p1": W(s["x1"], s["y1"]), "p2": W(s["x2"], s["y2"]), "mid": W(mx, my)})
-            elif s["kind"] == "circle":
-                ents.append({"kind": "circle", "center": W(s["cx"], s["cy"]), "radius": s["diameter"] / 2})
-            else:
-                raise FeatureRequestError(f"segment kind {s['kind']!r} cannot be sketched")
-        normal = [0.0, 0.0, 0.0]
-        normal[frame.normal_axis] = 1.0                                         # every datum's normal points along +X / +Y / +Z (see PlaneFrame)
-        return {"operation": "boss", "plane": {"datum": self.plane}, "entities": ents, "direction": normal, "end": "blind", "depth": self.depth * f}
+        return {"operation": "boss", "plane": {"datum": self.plane}, "entities": ext_entities(profile_to_graph(self.profile, self.unit, self.origin), frame, 0.0),
+                "direction": datum_normal(frame), "end": "blind", "depth": self.depth * factor(self.unit)}
 
     async def _bulk_action(self, ctx: FeatureContext, frame: PlaneFrame):
         if "ext_sketch_extrude" in (getattr(ctx.sw, "tool_names", None) or []):

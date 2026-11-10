@@ -136,7 +136,19 @@ class ExtrudeProfileCut:
             refuse_mirrored_frame(faces, frame, self.offset * f, self.label)
         res = FeatureResult(self.NAME)
 
+        seg_all = profile_to_graph(self.profile, self.unit, self.origin)
+        bulk = (self.target == "plane" and self.end in ("blind", "through") and len(seg_all) > 24
+                and "ext_sketch_extrude" in (getattr(ctx.sw, "tool_names", None) or []))
+
         async def action():
+            if bulk:                                                            # a toothed / curved outline: ONE call (the graph sends one per segment)
+                from .extrude_profile_boss import datum_normal, ext_entities
+                n = datum_normal(frame)
+                spec = {"operation": "cut", "plane": {"datum": self.plane, "offset": self.offset * f}, "entities": ext_entities(seg_all, frame, self.offset * f),
+                        "direction": n if self.into == "positive" else [-v for v in n], "end": "through_all" if self.end == "through" else "blind",
+                        "depth": 0.0 if self.end == "through" else self.depth * f}
+                res.notes.append(f"large outline ({len(seg_all)} segments): sketched and cut with one ext_sketch_extrude call")
+                return await ctx.sw.geometry("ext_sketch_extrude", spec)
             if self.target == "face":
                 seg = profile_to_graph(self.profile, self.unit, self.origin)
                 r, idx = await sketch_profile_on_face(ctx, frame, self.offset * f, 1 if self.into == "negative" else -1, seg)

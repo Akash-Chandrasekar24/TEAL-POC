@@ -258,6 +258,8 @@ class SolidWorksClient(ToolsMixin):
         if tool not in ("analyze_model", "verify_state"):
             cache.clear()
         limit = timeout if timeout is not None else TOOL_TIMEOUTS.get(tool, DEFAULT_TIMEOUT)
+        if listing and timeout is None:
+            limit = max(limit, 420.0)        # a whole-part face / edge list grows with the part: a 42-tooth gear (~850 faces) took 37-120+ s
         started = time.monotonic()
         try:
             raw = await asyncio.wait_for(
