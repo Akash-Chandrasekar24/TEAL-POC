@@ -12,11 +12,13 @@ from __future__ import annotations
 import io
 import json
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 ID = re.compile(r"^[0-9a-f]{12}$")
+_LATEST = threading.Lock()                                                   # build lists are written in parallel: one writer of latest.json
 _ASSEMBLY_VIEW = re.compile(r"\b(assembly|assembled|exploded|parts list|projection symbol)\b", re.I)
 _BUY = re.compile(r"\b(bolt|screw|nut|washer|dowel|oil seal|bearing|o-ring|circlip|key)\b", re.I)
 _VIEW_WORDS = re.compile(r"\b(front|side|top|end|rear|plan|section|detail|view|isometric|partial|scale)\b.*$", re.I)
@@ -187,9 +189,10 @@ def save_part_list(root: Path, rid: str, part: dict, draft: dict, source: str, l
     folder.mkdir(parents=True, exist_ok=True)
     (folder / f"{attempt}.json").write_text(json.dumps(artifact, ensure_ascii=False, indent=1), encoding="utf-8")
     index = folder / "latest.json"
-    latest = json.loads(index.read_text(encoding="utf-8")) if index.is_file() else {}
-    latest[part["id"]] = attempt
-    index.write_text(json.dumps(latest, indent=1), encoding="utf-8")
+    with _LATEST:
+        latest = json.loads(index.read_text(encoding="utf-8")) if index.is_file() else {}
+        latest[part["id"]] = attempt
+        index.write_text(json.dumps(latest, indent=1), encoding="utf-8")
     return artifact
 
 

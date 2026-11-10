@@ -1437,10 +1437,12 @@ function batchBox(r, data, reload, status) {
     return row;
   });
   const list = items.length ? el("ol", { class: "batch-list" }, items) : null;
-  if (!batch || batch.phase === "done") {
+  if (!batch || batch.phase === "done" || batch.phase === "interrupted") {
     const done = batch?.phase === "done";
+    if (batch?.phase === "interrupted") start.textContent = "Continue: build everything in SolidWorks";
     return el("div", { class: "batch-box" },
-      el("p", { class: "hint", text: done ? "Last run finished. Open each built part to compare it with the drawing; start again after changing build lists." :
+      el("p", { class: "hint", text: batch?.phase === "interrupted" ? "The last run stopped when the server restarted. Build lists already written are kept; continue to write the rest." :
+        done ? "Last run finished. Open each built part to compare it with the drawing; start again after changing build lists." :
         "One button: the AI writes a build list for every part that has none, you approve all of them once, then SolidWorks builds the parts one after another." }),
       el("div", { class: "part-actions" }, start), list);
   }
@@ -1451,7 +1453,7 @@ function batchBox(r, data, reload, status) {
     const doneN = batch.items.filter((it) => batch.phase === "preparing" ? ["listed", "list_failed"].includes(it.status) && it.kind !== "buy" : it.list_id && it.status !== "queued" && it.status !== "building").length;
     return el("div", { class: "batch-box running" }, el("div", { class: "batch-progress" }, el("span", { class: "spinner", "aria-hidden": "true" }),
       el("b", { text: batch.phase === "preparing" ? `Writing build lists: ${doneN} of ${total}` : `Building in SolidWorks: ${doneN} of ${total}` }),
-      now ? el("span", { text: ` · ${now.name}` }) : null), list);
+      el("span", { text: batch.phase === "preparing" ? " · up to 4 at a time, about 1–2 min each" : now ? ` · ${now.name}` : "" })), list);
   }
   // awaiting_approval: the single human approval for the whole sheet
   const ready = (data.parts || []).filter((p) => p.kind !== "buy" && p.list?.check?.status === "ready");

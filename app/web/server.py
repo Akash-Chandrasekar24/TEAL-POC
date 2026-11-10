@@ -640,6 +640,8 @@ def parts_overview(rid: str) -> dict:
     parts = [{**{k: v for k, v in p.items() if k != "views"}, "views": [{"page": v["page"], "no": v["no"], "label": v["label"]} for v in p["views"]],
               "list": lists.get(p["id"])} for p in detect_parts(result)]
     batch = load_batch(rid)
+    if batch and batch["phase"] in ("preparing", "building") and batch["id"] not in _ACTIVE:
+        batch["phase"] = "interrupted"                                            # the server restarted mid-run: offer to start again
     if batch:                                                                     # live status of every part job the batch started
         for item in batch["items"]:
             if item.get("job_id"):
@@ -653,6 +655,8 @@ def parts_overview(rid: str) -> dict:
 # ---------------- "Build everything": prepare every build list, ONE human approval, then build part after part
 _BATCH_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cad-batch")       # one SolidWorks session: one build at a time
 _BATCH_LOCK = threading.Lock()
+_PREP_WORKERS = 4                         # build lists are independent model calls (45-135 s each): write them side by side
+_ACTIVE = set()                           # batch ids running in THIS server process; a batch left "running" by a restart is interrupted
 
 
 def _batch_path(rid):
@@ -679,32 +683,41 @@ def start_batch(rid, llm_name=None):
         raise ValueError("Approve the measurements on the Review step first")
     with _BATCH_LOCK:
         current = load_batch(rid)
-        if current and current.get("phase") in ("preparing", "building"):
+        if current and current.get("phase") in ("preparing", "building") and current["id"] in _ACTIVE:
             return current
         lists = latest_lists(PART_LISTS, rid)
         items = [{"part_id": p["id"], "name": p["name"], "kind": p["kind"], "status": "bought" if p["kind"] == "buy" else
                   ("listed" if lists.get(p["id"]) else "to_prepare" if p["views"] else "no_views")} for p in detect_parts(result)]
         batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name}
         _save_batch(rid, batch)
+        _ACTIVE.add(batch["id"])
     _BATCH_POOL.submit(_prepare_batch, rid, batch["id"], llm_name)
     return batch
 
 
 def _prepare_batch(rid, bid, llm_name):
     batch = load_batch(rid)
-    for item in batch["items"]:
-        if item["status"] != "to_prepare":
-            continue
-        item["status"] = "preparing"
-        _save_batch(rid, batch)
+
+    def one(item):
+        with _BATCH_LOCK:
+            item["status"] = "preparing"
+            _save_batch(rid, batch)
         try:
             create_part_list(rid, item["part_id"], llm_name)
-            item["status"] = "listed"
+            done = {"status": "listed"}
         except Exception as ex:                                                  # noqa: BLE001 - recorded per part; the batch goes on
-            item.update(status="list_failed", detail=f"{type(ex).__name__}: {ex}")
-        _save_batch(rid, batch)
-    batch["phase"] = "awaiting_approval"
-    _save_batch(rid, batch)
+            done = {"status": "list_failed", "detail": f"{type(ex).__name__}: {ex}"}
+        with _BATCH_LOCK:
+            item.update(done)
+            _save_batch(rid, batch)
+    try:
+        with ThreadPoolExecutor(max_workers=_PREP_WORKERS, thread_name_prefix="build-list") as pool:
+            list(pool.map(one, [it for it in batch["items"] if it["status"] == "to_prepare"]))
+        with _BATCH_LOCK:
+            batch["phase"] = "awaiting_approval"
+            _save_batch(rid, batch)
+    finally:
+        _ACTIVE.discard(bid)
 
 
 def approve_batch(rid, bid, accepted):
@@ -732,11 +745,19 @@ def approve_batch(rid, bid, accepted):
             item.update(status="queued", list_id=art["id"], accepted_gaps=gaps)
         batch["phase"] = "building"
         _save_batch(rid, batch)
+        _ACTIVE.add(bid)
     _BATCH_POOL.submit(_build_batch, rid, bid)
     return batch
 
 
 def _build_batch(rid, bid):
+    try:
+        _build_each(rid)
+    finally:
+        _ACTIVE.discard(bid)
+
+
+def _build_each(rid):
     batch = load_batch(rid)
     for item in batch["items"]:
         if item["status"] != "queued":
