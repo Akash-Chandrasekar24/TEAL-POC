@@ -735,10 +735,21 @@ function designCard(r) {
   const gateNote = el("p", {class:"m-gate"});
   const donePanel = el("div", { class: "review-done", hidden: true });
   const done = () => {
-    const finished = count("open") === 0 && openAsk === 0 && !r.reviewDirty;
-    donePanel.hidden = !finished;
-    if (typeof window !== "undefined" && window.dispatchEvent) window.dispatchEvent(new CustomEvent("studio:reviewed", { detail: { done: finished } }));
-    if (!finished) return;
+    // Open questions are OPTIONAL: once every measurement is approved the drawing may go to SolidWorks, with a warning while questions are open.
+    const approved = count("open") === 0 && !r.reviewDirty, finished = approved && openAsk === 0;
+    r.openQuestions = approved ? openAsk : 0;
+    donePanel.hidden = !approved;
+    if (typeof window !== "undefined" && window.dispatchEvent) window.dispatchEvent(new CustomEvent("studio:reviewed", { detail: { done: approved, openQuestions: r.openQuestions } }));
+    if (!approved) return;
+    if (!finished) {
+      donePanel.replaceChildren(el("div", { class: "review-done-head warn" }, el("span", { class: "review-done-tick", text: "!", "aria-hidden": "true" }),
+        el("div", {}, el("h3", { text: `Measurements approved · ${openAsk} question${openAsk === 1 ? "" : "s"} not answered` }),
+          el("p", { text: "You can go to SolidWorks now. Unanswered questions are left to the AI, so the final model may not match the drawing's measurements where they apply." }))),
+        el("div", { class: "review-done-actions" },
+          el("button", { type: "button", class: "btn secondary", text: "Answer the questions", onclick: () => { view.navPage = "questions"; r.reviewNav = "questions"; redraw(); } }),
+          el("button", { type: "button", class: "btn", text: "Go to SolidWorks anyway →", onclick: () => window.studioNavigate?.(3) })));
+      return;
+    }
     const csv = typeof Blob === "undefined" ? null : el("a", { class: "btn", download: "reviewed-measurements.csv",
       href: URL.createObjectURL(new Blob([measurementsCsv(measurementRows(inputs))], { type: "text/csv;charset=utf-8" })), text: "Download reviewed measurements (CSV)" });
     const next = "Next: go to the SolidWorks page. It builds every part of this drawing in 3D after one approval from you.";
@@ -1379,6 +1390,6 @@ renderAgentChat(null);
 loadConfig().catch((error) => { $("#status").textContent = error.message; });
 openFromHash().catch((error) => { $("#main").textContent = `Could not load drawing: ${error.message}`; });
 </script>
-<script src="/ui.js?v=2"></script>
+<script src="/ui.js?v=3"></script>
 </body>
 </html>

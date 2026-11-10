@@ -63,7 +63,10 @@ function flowBox(r, data, reload, status) {
     : el("p", { class: "hint", text: !sw.ready ? `SolidWorks is not ready: ${sw.detail || ""}` : batch?.flow === "one_button" && batch.phase === "done"
       ? `Done: ${built.length} of ${items.length} part${items.length === 1 ? "" : "s"} built.${batch.error ? " " + batch.error : ""}`
       : "One click builds the whole drawing: the build steps for every part, the parts in SolidWorks and, for several parts, one assembly. No further questions: the doubts were settled on the Review page." });
-  return el("div", { class: `batch-box flow${running ? " running" : ""}` }, head, el("div", { class: "part-actions" }, start),
+  const unanswered = r.openQuestions || 0;
+  const warn = unanswered && !running ? el("p", { class: "flow-warn", text: `${unanswered} open question${unanswered === 1 ? " was" : "s were"} not answered on the Review page. ` +
+    "The AI will decide them, so the final model may not match the drawing's measurements there." }) : null;
+  return el("div", { class: `batch-box flow${running ? " running" : ""}` }, head, warn, el("div", { class: "part-actions" }, start),
     rows.length ? el("ol", { class: "batch-list" }, rows) : null, asmLine);
 }
 

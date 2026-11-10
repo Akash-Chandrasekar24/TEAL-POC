@@ -102,7 +102,7 @@ function App() {
         <div className="stage-grid review-stage"><div id="extract-slot" className="stage-slot" ref={extract}/><aside className="stage-slot" ref={reviewChat}/></div>
         {phaseError && step === 2 && <div className="msg err" role="alert">{phaseError}</div>}
         <div hidden ref={statistics}/>
-        <div className="step-footer"><span className="step-footnote">Approve the measurements, then answer the AI's questions. SolidWorks opens when the review is complete.</span><div className="actions"><button className="btn secondary" type="button" onClick={() => move(1)}>Back</button>{(reviewed || building) && <button className="btn" type="button" onClick={() => move(3)}>Go to SolidWorks <span aria-hidden="true">→</span></button>}</div></div>
+        <div className="step-footer"><span className="step-footnote">Approve the measurements to open SolidWorks. Answering the AI's questions is optional but keeps the model true to the drawing.</span><div className="actions"><button className="btn secondary" type="button" onClick={() => move(1)}>Back</button>{(reviewed || building) && <button className="btn" type="button" onClick={() => move(3)}>Go to SolidWorks <span aria-hidden="true">→</span></button>}</div></div>
       </section>
 
       <section className={`studio-page${step === 3 ? " active" : ""}`} aria-label="SolidWorks: build, check and export">

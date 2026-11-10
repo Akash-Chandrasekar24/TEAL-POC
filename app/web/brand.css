@@ -559,3 +559,8 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 .flow-asm.ok{color:#2e7d50}.flow-asm.bad{color:#9d701f}.flow-asm.busy{color:var(--muted)}
 .part-details{margin-top:12px}
 .part-details>summary{cursor:pointer;color:var(--muted);font-size:12.5px}
+
+/* open questions are optional: the warning */
+.review-done-head.warn .review-done-tick{background:#fff4df;color:#9d701f;border-color:#e9c98a}
+.review-done-head.warn h3{color:#7a5716}
+.flow-warn{margin:4px 0 8px;padding:8px 12px;border-radius:10px;background:#fff8ea;border:1px solid #e9c98a;color:#7a5716;font-size:12.5px}
