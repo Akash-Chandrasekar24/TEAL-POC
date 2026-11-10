@@ -1,0 +1,179 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Water pump 01 PUMP CASING (sheet 1, section A-A; sheet 3 section E-E)",
+ "seen_dimensions": [
+  "230",
+  "155",
+  "75",
+  "215",
+  "132",
+  "18",
+  "Ø140 (IMPELLER CHAMBER)",
+  "72",
+  "134",
+  "Ø50 (INLET)",
+  "8x Ø10.5 (THRU) PCD Ø170",
+  "t8"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "230 wide (155 + 75), 134 deep (section A-A)",
+   "params": {
+    "profile": {
+     "shape": "segments",
+     "frame": "centre",
+     "segments": [
+      {
+       "kind": "arc",
+       "cx": 0,
+       "cy": 0,
+       "x1": 105.0,
+       "y1": 0.0,
+       "x2": -52.5,
+       "y2": 90.932667397,
+       "dir": 1
+      },
+      {
+       "kind": "arc",
+       "cx": 0,
+       "cy": 0,
+       "x1": -52.5,
+       "y1": 90.932667397,
+       "x2": -52.5,
+       "y2": -90.932667397,
+       "dir": 1
+      },
+      {
+       "kind": "arc",
+       "cx": 0,
+       "cy": 0,
+       "x1": -52.5,
+       "y1": -90.932667397,
+       "x2": 105.0,
+       "y2": 0.0,
+       "dir": 1
+      }
+     ]
+    },
+    "depth": 134
+   },
+   "derived": true,
+   "derived_from": "body Ø210: the left edge is 230 - 155 - 75 + 105 ... read as 105 from the inlet axis (feet 25 + 160 + 25 = 210 centred on it); ASSUMED round body: the volute outline is not dimensioned",
+   "uncertain": true
+  },
+  {
+   "id": "I2",
+   "feature": "cut",
+   "printed": "Ø140 (IMPELLER CHAMBER), 72 wide",
+   "params": {
+    "shapes": [
+     {
+      "kind": "circle",
+      "position": {
+       "x": 0,
+       "y": 0
+      },
+      "diameter": 140
+     }
+    ],
+    "face": "back",
+    "depth": 72
+   },
+   "derived": true,
+   "derived_from": "ASSUMED open to the back (motor side), as drawn in section A-A",
+   "uncertain": true
+  },
+  {
+   "id": "I3",
+   "feature": "hole",
+   "printed": "Ø50 (INLET)",
+   "params": {
+    "positions": [
+     {
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "diameter": 50,
+    "face": "front",
+    "depth": "through",
+    "material_length": 62
+   },
+   "derived": true,
+   "derived_from": "material crossed = 134 - 72 = 62 (the front wall up to the chamber)"
+  },
+  {
+   "id": "I4",
+   "feature": "swept_passage",
+   "printed": "VOLUTE PASSAGE (sheet 3 section E-E, not dimensioned)",
+   "params": {
+    "operation": "cut",
+    "diameter": 16,
+    "end_diameter": 28,
+    "plane_z": 36,
+    "path": {
+     "kind": "spiral",
+     "centre": {
+      "x": 0,
+      "y": 0
+     },
+     "start_radius": 75,
+     "end_radius": 85,
+     "sweep_deg": 270,
+     "start_angle_deg": 0,
+     "hand": "counter_clockwise"
+    }
+   },
+   "derived": true,
+   "derived_from": "ASSUMED: cutwater at r 75 (just outside the Ø140 chamber), throat at r 85, section Ø16 widening to Ø28, 270 degrees round, in the middle of the chamber (72 / 2 = 36 from the back)",
+   "uncertain": true
+  },
+  {
+   "id": "I5",
+   "feature": "hole",
+   "printed": "8x Ø10.5 (THRU) PCD Ø170",
+   "params": {
+    "pattern": {
+     "kind": "circular",
+     "centre": {
+      "x": 0,
+      "y": 0
+     },
+     "pitch_diameter": 170,
+     "count": 8,
+     "start_angle_deg": 0
+    },
+    "diameter": 10.5,
+    "face": "back",
+    "depth": 18
+   },
+   "derived": true,
+   "derived_from": "ASSUMED the holes go through an 18 thick motor-side flange (18 as the feet); first hole on +x",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "The volute is not dimensioned: give its start / end radius, section size at the cutwater and at the throat, and how far round it winds (assumed r 75 -> 85, Ø16 -> Ø28, 270 degrees).",
+  "The casing outline is not dimensioned: is a Ø210 round body acceptable for the model, or give the volute's outer outline?",
+  "8x Ø10.5 PCD Ø170: how thick is the flange they pass through, and where is the first hole? (assumed 18, on +x)"
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "Discharge neck: Ø70 neck with the Ø40 passage rising 100 above the axis, Ø110 x 12 flange (not on the menu: a neck at the side of the volute)."
+  },
+  {
+   "id": "U2",
+   "text": "Feet: 18 high, 25 / 160 / 25, cast with the body."
+  },
+  {
+   "id": "U3",
+   "text": "Cast walls t8 are modelled as solid material outside the chamber and volute."
+  }
+ ]
+}

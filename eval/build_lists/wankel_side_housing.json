@@ -1,0 +1,143 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Wankel 02 SIDE HOUSING, intake side (sheet 1)",
+ "seen_dimensions": [
+  "198",
+  "205",
+  "102.5",
+  "38",
+  "Ø45 H7",
+  "10x Ø10.5 (THRU) PCD Ø170",
+  "INTAKE PORT 64 x 22 R6 (4x)",
+  "EXHAUST PORT 50 x 28 R8 (4x)",
+  "57",
+  "26",
+  "146"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "198 x 205 outline, 38 thick (section B-B)",
+   "params": {
+    "profile": {
+     "shape": "rectangle",
+     "width": 198,
+     "height": 205
+    },
+    "depth": 38
+   },
+   "derived": true,
+   "derived_from": "the lobed outline is not dimensioned: modelled as its 198 x 205 envelope",
+   "uncertain": true
+  },
+  {
+   "id": "I2",
+   "feature": "hole",
+   "printed": "Ø45 H7, 102.5 / 102.5",
+   "params": {
+    "positions": [
+     {
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "diameter": 45,
+    "face": "front",
+    "depth": "through",
+    "material_length": 38
+   },
+   "derived": true,
+   "derived_from": "centred: 205 = 102.5 + 102.5",
+   "note": "H7 is a fit note; the nominal Ø45 is modelled."
+  },
+  {
+   "id": "I3",
+   "feature": "hole",
+   "printed": "10x Ø10.5 (THRU) PCD Ø170",
+   "params": {
+    "pattern": {
+     "kind": "circular",
+     "centre": {
+      "x": 0,
+      "y": 0
+     },
+     "pitch_diameter": 170,
+     "count": 10,
+     "start_angle_deg": 0
+    },
+    "diameter": 10.5,
+    "face": "front",
+    "depth": "through",
+    "material_length": 38
+   },
+   "derived": true,
+   "derived_from": "ASSUMED first hole on +x (10 at 36 degrees)",
+   "uncertain": true
+  },
+  {
+   "id": "I4",
+   "feature": "profile_cut",
+   "printed": "INTAKE PORT 22 x 64, R6 (4x)",
+   "params": {
+    "profile": {
+     "shape": "rectangle",
+     "width": 22,
+     "height": 64,
+     "corner_radius": 6,
+     "position": {
+      "x": -50,
+      "y": 25
+     }
+    },
+    "face": "front",
+    "depth": "through",
+    "material_length": 38
+   },
+   "derived": true,
+   "derived_from": "ASSUMED position (-50, 25) from the centre: not dimensioned; modelled straight through",
+   "uncertain": true
+  },
+  {
+   "id": "I5",
+   "feature": "profile_cut",
+   "printed": "EXHAUST PORT 28 x 50, R8 (4x), 57 from the bottom",
+   "params": {
+    "profile": {
+     "shape": "rectangle",
+     "width": 28,
+     "height": 50,
+     "corner_radius": 8,
+     "position": {
+      "x": 45,
+      "y": -45.5
+     }
+    },
+    "face": "front",
+    "depth": "through",
+    "material_length": 38
+   },
+   "derived": true,
+   "derived_from": "y = -102.5 + 57 = -45.5 (57 read to the port centre); ASSUMED x = 45; modelled straight through",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "Port positions are not fully dimensioned: where are the intake (22 x 64) and exhaust (28 x 50) port centres? (assumed (-50, 25) and (45, -45.5))",
+  "Section B-B shows the ports turning out of the top / bottom edge, not straight through: confirm modelling them through the plate.",
+  "10x Ø10.5 PCD Ø170: where is the first hole? (assumed on +x)"
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "Lobed outer outline (not dimensioned)."
+  },
+  {
+   "id": "U2",
+   "text": "Ports turning to the edge (section B-B, 18 deep from the top) are modelled straight through."
+  }
+ ]
+}

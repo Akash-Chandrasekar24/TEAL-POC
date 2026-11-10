@@ -1,0 +1,73 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Water pump 08 COOLING FAN (sheet 2)",
+ "seen_dimensions": [
+  "Ø160",
+  "Ø60",
+  "Ø28 H7",
+  "32"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "hub Ø60 x 32 with a Ø28 H7 bore",
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       14
+      ],
+      [
+       0,
+       30
+      ],
+      [
+       32,
+       30
+      ],
+      [
+       32,
+       14
+      ]
+     ]
+    }
+   },
+   "derived": true,
+   "derived_from": "radii are half the printed diameters (30, 14)",
+   "note": "H7 is a fit note; the nominal Ø28 bore is modelled."
+  },
+  {
+   "id": "I2",
+   "feature": "radial_blades",
+   "printed": "12 blades (drawn) from the Ø60 hub to Ø160",
+   "params": {
+    "count": 12,
+    "inner_diameter": 60,
+    "outer_diameter": 160,
+    "thickness": 3,
+    "from_u": 0,
+    "to_u": 32,
+    "shape": "straight"
+   },
+   "derived": true,
+   "derived_from": "ASSUMED 3 thick, full hub width",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "Fan blades: how thick are they, and do they run the full 32 width (the side view shows them tapering)? (assumed 3 thick, full width, 12 blades as drawn)"
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "The blades' taper toward the tip (side view) is not modelled."
+  }
+ ]
+}

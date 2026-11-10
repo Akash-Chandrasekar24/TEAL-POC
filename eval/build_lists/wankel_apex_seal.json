@@ -1,0 +1,35 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Wankel 08 APEX SEAL (sheet 2)",
+ "seen_dimensions": [
+  "38.00",
+  "3.00",
+  "3.00",
+  "30°"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "38.00 x 3.00, 3.00",
+   "params": {
+    "profile": {
+     "shape": "rectangle",
+     "width": 38,
+     "height": 3
+    },
+    "depth": 3
+   }
+  }
+ ],
+ "needs_human": [],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "The 30° tip chamfer is not modelled (a chamfer with two different setbacks)."
+  }
+ ]
+}

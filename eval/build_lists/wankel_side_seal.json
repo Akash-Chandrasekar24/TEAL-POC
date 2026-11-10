@@ -1,0 +1,29 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Wankel 09 SIDE SEAL (sheet 2)",
+ "seen_dimensions": [
+  "32.00",
+  "2.50",
+  "2.50"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "32.00 x 2.50, 2.50",
+   "params": {
+    "profile": {
+     "shape": "rectangle",
+     "width": 32,
+     "height": 2.5
+    },
+    "depth": 2.5
+   }
+  }
+ ],
+ "needs_human": [],
+ "accepted_gaps": [],
+ "unsupported": []
+}

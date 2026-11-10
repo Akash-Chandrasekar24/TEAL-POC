@@ -1,0 +1,49 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Wankel 11 DOWEL (sheet 1 detail 06)",
+ "seen_dimensions": [
+  "Ø8 H7 (DOWEL)",
+  "12"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "Ø8 dowel; the hole is 12 deep (detail 06)",
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       24,
+       0
+      ],
+      [
+       24,
+       4
+      ],
+      [
+       0,
+       4
+      ]
+     ]
+    }
+   },
+   "derived": true,
+   "derived_from": "radius 4 = Ø8 / 2; ASSUMED length 24 = 12 into each housing",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "The dowel's length is not printed: 24 (12 into each of the two housings)?"
+ ],
+ "accepted_gaps": [],
+ "unsupported": []
+}

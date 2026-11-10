@@ -1,0 +1,145 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Wankel 01 ROTOR HOUSING (sheet 1)",
+ "seen_dimensions": [
+  "220",
+  "30",
+  "160",
+  "205",
+  "37.5",
+  "130",
+  "68",
+  "R65.000 (TROCHOID)",
+  "e = 15.00",
+  "12x Ø10.5 (THRU) PCD Ø190",
+  "30° (TYP.)",
+  "Ø16 COOLANT",
+  "48",
+  "18"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "220 x 205 outline, 68 wide (section A-A)",
+   "params": {
+    "profile": {
+     "shape": "rectangle",
+     "width": 220,
+     "height": 205
+    },
+    "depth": 68
+   },
+   "derived": true,
+   "derived_from": "the lobed outer outline is not dimensioned: modelled as its 220 x 205 envelope",
+   "uncertain": true
+  },
+  {
+   "id": "I2",
+   "feature": "profile_cut",
+   "printed": "R65.000 (TROCHOID), e = 15.00 (sheet 2 eccentric shaft)",
+   "params": {
+    "profile": {
+     "shape": "epitrochoid",
+     "generating_radius": 65,
+     "eccentricity": 15,
+     "rotation_deg": 90
+    },
+    "face": "front",
+    "depth": "through",
+    "material_length": 68
+   },
+   "derived": true,
+   "derived_from": "major axis drawn vertical (rotation 90)",
+   "uncertain": true
+  },
+  {
+   "id": "I3",
+   "feature": "hole",
+   "printed": "12x Ø10.5 (THRU) PCD Ø190, 30° (TYP.)",
+   "params": {
+    "pattern": {
+     "kind": "circular",
+     "centre": {
+      "x": 0,
+      "y": 0
+     },
+     "pitch_diameter": 190,
+     "count": 12,
+     "start_angle_deg": 90
+    },
+    "diameter": 10.5,
+    "face": "front",
+    "depth": "through",
+    "material_length": 68
+   },
+   "derived": true,
+   "derived_from": "12 at 30 degrees, one on top as in detail E"
+  },
+  {
+   "id": "I4",
+   "feature": "hole",
+   "printed": "Ø16 COOLANT IN, 48 from the bottom, 18 deep (detail 08)",
+   "params": {
+    "positions": [
+     {
+      "x": 0,
+      "y": 48,
+      "y_from": "bottom_edge"
+     }
+    ],
+    "diameter": 16,
+    "face": "left",
+    "depth": 18
+   },
+   "derived": true,
+   "derived_from": "centred in the 68 width",
+   "uncertain": true
+  },
+  {
+   "id": "I5",
+   "feature": "hole",
+   "printed": "Ø16 COOLANT OUT, 48 from the bottom, 18 deep (detail 08)",
+   "params": {
+    "positions": [
+     {
+      "x": 0,
+      "y": 48,
+      "y_from": "bottom_edge"
+     }
+    ],
+    "diameter": 16,
+    "face": "right",
+    "depth": 18
+   },
+   "derived": true,
+   "derived_from": "centred in the 68 width",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "The trochoid: R65 with e = 15 gives a bore 160 x 100, but the front view prints 130 between the bolt rows and R41.200 as a base circle. Confirm R and e (and that the long axis is vertical).",
+  "Coolant ports: are they centred in the 68 width, and how far does the Ø12 continue past the Ø16 x 18 counterbore?"
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "Lobed outer outline round the bolt bosses (not dimensioned)."
+  },
+  {
+   "id": "U2",
+   "text": "Water jacket (peripheral cooling, section A-A) is not dimensioned."
+  },
+  {
+   "id": "U3",
+   "text": "Spark plug boss (detail 05: Ø24, 36 / 22 long, M14x1.25, 32 x 28 pad R8) sits on the curved trochoid wall: not on the menu (angled_boss stands on the front face only)."
+  },
+  {
+   "id": "U4",
+   "text": "Ø12 continuation of the coolant ports and the M14x1.25 thread."
+  }
+ ]
+}

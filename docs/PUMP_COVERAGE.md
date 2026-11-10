@@ -58,3 +58,10 @@ sizes of a 6206; a 6306 is Ø30 x Ø72 x 19. Worth confirming before ordering.
 ## Fixed while testing
 The extraction read the parts list's material column into the part name ("Pump Casing — Cast Iron (FC250)"), so the SolidWorks page found
 no views for 11 of 12 parts. Names are now split at the dash (material kept separately) and the mechanical seal counts as bought.
+
+## Build lists for the remaining parts (2026-11-10)
+`scripts/write_missing_part_lists.py` writes `pump_casing`, `pump_motor_housing`, `pump_impeller`, `pump_cooling_fan` and `pump_bearing_housing`.
+Numbers the sheet does not print are written as ASSUMED and the item is uncertain, with a question for the designer, so each build waits on the
+Review page. Once confirmed, every feature compiles and passes the IR validator (`tests/test_missing_part_lists.py`). Still gaps (accepted by a
+human or built later): the casing's discharge neck and feet, the motor housing's feet and eye-bolt boss, the end cover's square lug flange.
+Stator and rotor have no detail drawing; bearings, seal and eye bolt are bought parts.

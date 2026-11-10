@@ -1,0 +1,67 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Wankel 03 ROTOR (sheet 2)",
+ "seen_dimensions": [
+  "R65",
+  "e = 15.00",
+  "42.00",
+  "Ø36.00 H7",
+  "120.00",
+  "90.00",
+  "103.80"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "rotor running in the R65 / e = 15 trochoid, 42.00 wide",
+   "params": {
+    "profile": {
+     "shape": "rotor_flank",
+     "generating_radius": 65,
+     "eccentricity": 15
+    },
+    "depth": 42
+   },
+   "uncertain": true
+  },
+  {
+   "id": "I2",
+   "feature": "hole",
+   "printed": "Ø36.00 H7",
+   "params": {
+    "positions": [
+     {
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "diameter": 36,
+    "face": "front",
+    "depth": "through",
+    "material_length": 42
+   },
+   "note": "H7 is a fit note; the nominal Ø36 is modelled."
+  }
+ ],
+ "needs_human": [
+  "The rotor sheet is inconsistent: R65 / e = 15 give a rotor 112.58 apex to apex, but the sheet prints 120.00 (and 90.00 high vs about 97). Which is right: the trochoid numbers or the printed rotor size?"
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "Oil pockets (3x 120 degrees, R6.0): not dimensioned."
+  },
+  {
+   "id": "U2",
+   "text": "Apex, side and corner seal grooves (details 02 and 07)."
+  },
+  {
+   "id": "U3",
+   "text": "Internal gear seat (the ring gear is a separate part)."
+  }
+ ]
+}

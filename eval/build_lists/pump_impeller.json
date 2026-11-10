@@ -1,0 +1,109 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Water pump 01 IMPELLER (sheet 2, front view and section C-C)",
+ "seen_dimensions": [
+  "Ø140",
+  "Ø110",
+  "Ø70",
+  "Ø50 (EYE)",
+  "36",
+  "6",
+  "t = 6.0",
+  "HUB (t = 16.0)",
+  "18",
+  "≈22"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "front shroud Ø140 t = 6.0, rear shroud Ø140 t = 6.0, hub Ø70 with a Ø50 bore, 36 overall",
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       25
+      ],
+      [
+       0,
+       70
+      ],
+      [
+       6,
+       70
+      ],
+      [
+       6,
+       35
+      ],
+      [
+       30,
+       35
+      ],
+      [
+       30,
+       70
+      ],
+      [
+       36,
+       70
+      ],
+      [
+       36,
+       25
+      ]
+     ]
+    }
+   },
+   "derived": true,
+   "derived_from": "front shroud 0 to 6, rear shroud 36 - 6 = 30 to 36, joined by the Ø70 hub (the eye is opened by I3); bore Ø50 = the shaft's impeller seat",
+   "uncertain": true,
+   "note": "HUB (t = 16.0) is not reproduced: the hub here runs the full 36 to join both shrouds."
+  },
+  {
+   "id": "I2",
+   "feature": "radial_blades",
+   "printed": "7 curved blades (drawn), blade passage between the shrouds (6 to 30)",
+   "params": {
+    "count": 7,
+    "inner_diameter": 70,
+    "outer_diameter": 140,
+    "thickness": 4,
+    "from_u": 6,
+    "to_u": 30,
+    "shape": "arc",
+    "inlet_angle_deg": 25,
+    "outlet_angle_deg": 30,
+    "hand": "clockwise"
+   },
+   "derived": true,
+   "derived_from": "between the front shroud (0 to 6) and the rear shroud (30); ASSUMED 4 thick, beta 1 = 25, beta 2 = 30 degrees, leaning as drawn",
+   "uncertain": true
+  },
+  {
+   "id": "I3",
+   "feature": "turned_axial",
+   "printed": "Ø110 opening of the front shroud (the eye)",
+   "params": {
+    "operation": "cut",
+    "diameter": 110,
+    "from_u": 0,
+    "to_u": 6
+   },
+   "derived": true,
+   "derived_from": "the Ø110 read as the front shroud's eye opening; it also opens the hub inside it",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "Blade count, thickness and the inlet / outlet blade angles are not printed (assumed 7 blades, 4 thick, beta 1 = 25, beta 2 = 30).",
+  "Section C-C: is Ø110 the front shroud's opening (the front view shows a Ø50 eye)? The blade passage is printed ≈22 but 36 - 6 - 6 = 24."
+ ],
+ "accepted_gaps": [],
+ "unsupported": []
+}

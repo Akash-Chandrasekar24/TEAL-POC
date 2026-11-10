@@ -39,3 +39,10 @@ are listed as an `unsupported` gap that a human must accept.
   Needs the printed tilt angle, boss diameter / height and the M14x1.25 position.
 - Water jacket of the rotor housing: it runs through the housing and is closed by the side housings, so it is a `profile_cut` (through) of the
   jacket outline, not a shell; the jacket outline is not dimensioned on the sheet. `shell` (new) covers hollow boxes and cups.
+
+## Build lists for the remaining parts (2026-11-10)
+`scripts/write_missing_part_lists.py` writes `wankel_rotor_housing`, `wankel_side_housing`, `wankel_rotor`, `wankel_apex_seal`, `wankel_side_seal`,
+`wankel_corner_seal` and `wankel_dowel` (same rule: unprinted numbers are ASSUMED and wait for the designer; `tests/test_missing_part_lists.py`).
+Correction: detail 05 puts the spark-plug boss on the ROTOR housing's curved trochoid wall, not on a flat face, so `angled_boss` does not build it;
+it is listed as a gap. Other gaps: lobed outer outlines and the water jacket (not dimensioned), seal grooves and oil pockets in the rotor,
+the 30 degree seal chamfers. The rotor still waits on the R65 / e15 vs 120 conflict.

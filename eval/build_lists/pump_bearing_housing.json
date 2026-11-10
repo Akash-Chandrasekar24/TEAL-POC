@@ -1,0 +1,138 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Water pump 03 BEARING HOUSING / END COVER (sheet 2)",
+ "seen_dimensions": [
+  "110",
+  "88",
+  "11",
+  "Ø106",
+  "Ø72",
+  "Ø62",
+  "Ø35 (BRG SEAT)",
+  "18",
+  "40",
+  "76",
+  "4x Ø10.5 (THRU) PCD Ø90"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "Ø106 body, bores Ø72 x 18, Ø62 x 40 (bearing), Ø35 x 18, 76 long",
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       36
+      ],
+      [
+       0,
+       53
+      ],
+      [
+       76,
+       53
+      ],
+      [
+       76,
+       17.5
+      ],
+      [
+       58,
+       17.5
+      ],
+      [
+       58,
+       31
+      ],
+      [
+       18,
+       31
+      ],
+      [
+       18,
+       36
+      ]
+     ]
+    }
+   },
+   "derived": true,
+   "derived_from": "radii are half the printed diameters (53, 36, 31, 17.5); 18 + 40 = 58, + 18 = 76"
+  },
+  {
+   "id": "I2",
+   "feature": "turned_axial",
+   "printed": "4x Ø10.5 (THRU) PCD Ø90",
+   "params": {
+    "operation": "cut",
+    "diameter": 10.5,
+    "from_u": 0,
+    "to_u": 76,
+    "offset_in_view": 45
+   },
+   "derived": true,
+   "derived_from": "PCD Ø90 -> 45 from the axis, through the 76 length",
+   "uncertain": true
+  },
+  {
+   "id": "I3",
+   "feature": "turned_axial",
+   "printed": "4x Ø10.5 (THRU) PCD Ø90",
+   "params": {
+    "operation": "cut",
+    "diameter": 10.5,
+    "from_u": 0,
+    "to_u": 76,
+    "offset_in_view": -45
+   },
+   "derived": true,
+   "derived_from": "PCD Ø90 -> 45 from the axis, through the 76 length",
+   "uncertain": true
+  },
+  {
+   "id": "I4",
+   "feature": "turned_axial",
+   "printed": "4x Ø10.5 (THRU) PCD Ø90",
+   "params": {
+    "operation": "cut",
+    "diameter": 10.5,
+    "from_u": 0,
+    "to_u": 76,
+    "offset_toward_viewer": 45
+   },
+   "derived": true,
+   "derived_from": "PCD Ø90 -> 45 from the axis, through the 76 length",
+   "uncertain": true
+  },
+  {
+   "id": "I5",
+   "feature": "turned_axial",
+   "printed": "4x Ø10.5 (THRU) PCD Ø90",
+   "params": {
+    "operation": "cut",
+    "diameter": 10.5,
+    "from_u": 0,
+    "to_u": 76,
+    "offset_toward_viewer": -45
+   },
+   "derived": true,
+   "derived_from": "PCD Ø90 -> 45 from the axis, through the 76 length",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "Bolt holes: the note says PCD Ø90, but they are drawn 88 apart on the corners of a 110 x 106 flange (a PCD of about 124, outside the Ø106 body). Which is right? (PCD Ø90 through the body used)"
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "Square flange with four lugs (110 x 106) is not on a turned part's menu; the body is modelled round (Ø106)."
+  }
+ ]
+}

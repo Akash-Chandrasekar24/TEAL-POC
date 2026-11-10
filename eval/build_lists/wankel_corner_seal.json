@@ -1,0 +1,35 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Wankel 10 CORNER SEAL (sheet 2)",
+ "seen_dimensions": [
+  "12.00",
+  "2.00",
+  "3.00",
+  "30°"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "extrude_profile_boss",
+   "printed": "12.00 x 2.00, 3.00",
+   "params": {
+    "profile": {
+     "shape": "rectangle",
+     "width": 12,
+     "height": 2
+    },
+    "depth": 3
+   }
+  }
+ ],
+ "needs_human": [],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "The 30° tip chamfer is not modelled (a chamfer with two different setbacks)."
+  }
+ ]
+}

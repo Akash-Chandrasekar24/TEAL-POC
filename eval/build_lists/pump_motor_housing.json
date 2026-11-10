@@ -1,0 +1,117 @@
+{
+ "list_version": "1",
+ "unit": "mm",
+ "projection": "third",
+ "part_name": "Water pump 02 MOTOR HOUSING (sheet 1, side view and section B-B)",
+ "seen_dimensions": [
+  "248",
+  "40",
+  "168",
+  "Ø150",
+  "Ø140",
+  "Ø120 STATOR CAVITY",
+  "t8",
+  "Ø35 (BRG) SEAT",
+  "Ø25 (SHAFT BORE)",
+  "210"
+ ],
+ "items": [
+  {
+   "id": "I1",
+   "feature": "revolve_base",
+   "printed": "Ø150 end flanges 40 long, Ø140 body 168 long, Ø120 stator cavity, end walls t8, Ø35 bearing seats",
+   "params": {
+    "axis": "horizontal",
+    "profile": {
+     "shape": "polygon",
+     "points": [
+      [
+       0,
+       17.5
+      ],
+      [
+       0,
+       75
+      ],
+      [
+       40,
+       75
+      ],
+      [
+       40,
+       70
+      ],
+      [
+       208,
+       70
+      ],
+      [
+       208,
+       75
+      ],
+      [
+       248,
+       75
+      ],
+      [
+       248,
+       17.5
+      ],
+      [
+       240,
+       17.5
+      ],
+      [
+       240,
+       60
+      ],
+      [
+       8,
+       60
+      ],
+      [
+       8,
+       17.5
+      ]
+     ]
+    }
+   },
+   "derived": true,
+   "derived_from": "radii are half the printed diameters (75, 70, 60, 17.5); 40 + 168 = 208, + 40 = 248; cavity from 8 to 240 (t8 walls); the Ø35 seats go through the 8 thick end walls",
+   "uncertain": true
+  },
+  {
+   "id": "I2",
+   "feature": "radial_blades",
+   "printed": "cooling fins on the Ø140 body (drawn, not dimensioned)",
+   "params": {
+    "count": 24,
+    "inner_diameter": 140,
+    "outer_diameter": 150,
+    "thickness": 4,
+    "from_u": 40,
+    "to_u": 208,
+    "shape": "straight"
+   },
+   "derived": true,
+   "derived_from": "ASSUMED 24 fins, 4 thick, standing up to the Ø150 of the end flanges, over the 168 body",
+   "uncertain": true
+  }
+ ],
+ "needs_human": [
+  "Overall length: the side view prints 248 (40 + 168 + 40) but section B-B prints 210 under the same chain. Which is right? (248 used)",
+  "Cooling fins are not dimensioned: how many, how thick, how tall? (assumed 24 x 4 thick, up to Ø150)",
+  "Bearing seats Ø35: how deep are they, and where does the Ø25 shaft bore run? (modelled: Ø35 straight through the t8 end walls)"
+ ],
+ "accepted_gaps": [],
+ "unsupported": [
+  {
+   "id": "U1",
+   "text": "Mounting feet (15 high, 4x Ø12 THRU on 140 x 40, 35 / 140 / 35) are not on a turned part's menu."
+  },
+  {
+   "id": "U2",
+   "text": "Eye-bolt boss on top (the eye bolt itself is a bought part)."
+  }
+ ]
+}
