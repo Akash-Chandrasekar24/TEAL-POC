@@ -575,17 +575,24 @@ function designCard(r) {
     save("section", `${mine[0].group.title} (${mine.length} readings)`);
   };
   const pageNav = el("div", {class:"m-pages", role:"group", "aria-label":"Pages"});
+  const showPage = (pg) => { if (view.navPage === pg) return; view.navPage = pg; view.query = ""; search.value = ""; redraw(); };
+  globalThis.__measurePage = showPage;                             // the drawing's page buttons call this too
   const cleanTitle = (t) => String(t || "").replace(/[\s,;:]+$/, "");
   const drawNav = () => {
     const keys = groupKeys(), first = (k) => inputs.find((i) => i.group.key === k);
     const left = (k) => inputs.filter((i) => i.group.key === k && i.state() !== "verified").length;
     const pages = [...new Set(keys.map((k) => first(k).group.page || 0))];
-    if (!pages.includes(view.navPage)) view.navPage = pages.find((pg) => keys.some((k) => (first(k).group.page || 0) === pg && left(k))) ?? pages[0];
+    if (view.navPage === undefined && pages.includes(r.reviewPage)) view.navPage = r.reviewPage;
+    if (!pages.includes(view.navPage)) {
+      view.navPage = pages.find((pg) => keys.some((k) => (first(k).group.page || 0) === pg && left(k))) ?? pages[0];
+      globalThis.__reviewShowPage?.(view.navPage);                  // start the drawing on the same page
+      if (view.navPage) r.reviewPage = view.navPage;
+    }
     pageNav.replaceChildren(...pages.map((pg) => {
       const mine = keys.filter((k) => (first(k).group.page || 0) === pg), todo = mine.reduce((a, k) => a + left(k), 0);
       const b = el("button", {type:"button", class:`m-pagebtn${pg === view.navPage ? " on" : ""}`, "aria-pressed": String(pg === view.navPage)},
         el("span", {text: pg ? `Page ${pg}` : "Sections"}), el("small", {text: todo ? `${todo} to approve` : `${mine.length} sections ✓`}));
-      b.addEventListener("click", () => { view.navPage = pg; drawNav(); });
+      b.addEventListener("click", () => { showPage(pg); globalThis.__reviewShowPage?.(pg); });
       return b;
     }), qBtn);
     nav.replaceChildren(...keys.filter((k) => (first(k).group.page || 0) === view.navPage).map((k) => {
@@ -598,8 +605,10 @@ function designCard(r) {
   };
   const redraw = () => {
     if (view.tab === null) view.tab = count("open") ? "open" : "all";
+    drawNav();
+    const here = inputs.filter((i) => (i.group.page || 0) === view.navPage);          // the tab counts are for the page shown
     TABS.forEach(([key, label], n) => {
-      const total = key === "all" ? inputs.length : count(key);
+      const total = key === "all" ? here.length : here.filter((i) => i.state() === key).length;
       tabButtons[n].textContent = `${label} ${total}`;
       tabButtons[n].setAttribute("aria-pressed", String(view.tab === key));
       tabButtons[n].className = view.tab === key ? "m-tab on" : "m-tab";
@@ -608,10 +617,10 @@ function designCard(r) {
     approveAll.hidden = pending === 0;
     approveAll.textContent = `Approve all measurements (${pending})`;
     gate();
-    drawNav();
     const q = view.query.trim().toLowerCase();
-    const rows = inputs.filter((i) => (view.tab === "all" || i.state() === view.tab) && (!q || `${i.d.id} ${i.d.text} ${i.correction.value}`.toLowerCase().includes(q)));
-    if (!rows.length) { list.replaceChildren(el("p", {class:"lane-empty",text: q ? "No measurement matches your search." : view.tab === "open" ? "Nothing left to verify." : "Nothing here yet."})); return; }
+    const onPage = (i) => q || (i.group.page || 0) === view.navPage;            // one page at a time; a search looks at every page
+    const rows = inputs.filter((i) => onPage(i) && (view.tab === "all" || i.state() === view.tab) && (!q || `${i.d.id} ${i.d.text} ${i.correction.value}`.toLowerCase().includes(q)));
+    if (!rows.length) { list.replaceChildren(el("p", {class:"lane-empty",text: q ? "No measurement matches your search." : view.tab === "open" ? `Nothing left to verify on page ${view.navPage}.` : "Nothing here yet."})); return; }
     // one group per view / section of the drawing, in drawing order; each shows what still needs the reviewer
     const groups = new Map();
     for (const i of rows) { const k = i.group.key; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); }
@@ -663,6 +672,8 @@ function designCard(r) {
   // From the drawing: hovering a callout highlights its row; clicking it jumps to the row.
   globalThis.__measureFocus = (id, on) => { const row = inputs.find((i) => i.d.id === id)?.row; if (row && row.classList) row.classList.toggle("m-hover", on); };
   globalThis.__measureSelect = (id) => {
+    const hit = inputs.find((i) => i.d.id === id);
+    if (hit) view.navPage = hit.group.page || 0;
     view.tab = "all"; view.query = ""; search.value = ""; redraw();
     const row = inputs.find((i) => i.d.id === id)?.row;
     if (row && row.scrollIntoView) { row.scrollIntoView({ block: "center", behavior: "smooth" }); row.classList.add("m-flash"); setTimeout(() => row.classList.remove("m-flash"), 1600); }
@@ -865,17 +876,23 @@ function drawingReviewCard(r) {
   const select = el("select", {"aria-label":"Drawing page to review"}, r.pages.map((p) => el("option", {value:p.no,text:`Page ${p.no} · ${p.source}`})));
   select.value = String(active.no);
   content.append(pageCard(active, true));
-  select.addEventListener("change", () => {
-    r.reviewPage = Number(select.value);
-    content.replaceChildren(pageCard(r.pages.find((p) => p.no === r.reviewPage), true));
-  });
+  const thumbButtons = [];
+  const showPage = (no, fromMeasurements = false) => {
+    const page = r.pages.find((p) => p.no === no);
+    if (!page) return;
+    const changed = r.reviewPage !== no;
+    r.reviewPage = no; select.value = String(no);
+    thumbButtons.forEach(([n, b]) => { b.className = n === no ? "page-thumb on" : "page-thumb"; });
+    if (changed) content.replaceChildren(pageCard(page, true));
+    if (!fromMeasurements) globalThis.__measurePage?.(no);         // the measurements follow the drawing
+  };
+  globalThis.__reviewShowPage = (no) => showPage(no, true);         // and the drawing follows the measurements' page tabs
+  select.addEventListener("change", () => showPage(Number(select.value)));
   const thumbs = r.pages.length > 1 ? el("div", {class:"page-thumbs", role:"group", "aria-label":"Drawing pages"}, r.pages.map((p) => {
     const b = el("button", {type:"button", class:`page-thumb${p.no === active.no ? " on" : ""}`, "aria-label":`Show page ${p.no}`},
       el("img", {src:`/api/page/${p.sha}`, alt:"", loading:"lazy"}), el("span", {text:`Page ${p.no}`}));
-    b.addEventListener("click", () => {
-      select.value = String(p.no); select.dispatchEvent(new Event("change"));
-      thumbs.querySelectorAll(".page-thumb").forEach((t) => t.className = t === b ? "page-thumb on" : "page-thumb");
-    });
+    thumbButtons.push([p.no, b]);
+    b.addEventListener("click", () => showPage(p.no));
     return b;
   })) : null;
   return el("section", {class:"source-review", "aria-label":"Original drawing"},
