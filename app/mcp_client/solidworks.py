@@ -168,6 +168,34 @@ def _clean_env(extra: dict[str, str]) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------- the client
+BRIDGE_HEALTH = "http://localhost:5000/health"
+
+
+def keep_bridge_up(exe: Path, wait_s: float = 60.0) -> None:
+    """Start OUR execution bridge outside the MCP session's Windows job object, so it outlives the session and the next part reuses it.
+    The MCP client puts the adapter in a kill-on-close job: the bridge the adapter spawned died with every part (~15 s each to restart)."""
+    import subprocess
+    import httpx
+    try:
+        if httpx.get(BRIDGE_HEALTH, timeout=2).status_code == 200:
+            return
+    except httpx.HTTPError:
+        pass
+    flags = 0x00000008 | 0x08000000                                         # DETACHED_PROCESS | CREATE_NO_WINDOW
+    try:
+        subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=flags | 0x01000000, close_fds=True)   # | CREATE_BREAKAWAY_FROM_JOB
+    except OSError:                                                         # our own process is in a job that forbids breakaway
+        subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=flags, close_fds=True)
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(BRIDGE_HEALTH, timeout=2).status_code == 200:
+                return
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.5)
+
+
 class SolidWorksClient(ToolsMixin):
     """Async context manager. All 47 adapter tools are typed methods (generated: see ToolsMixin); the hand-written
     methods below override a few of them with friendlier arguments. Usage:
@@ -210,6 +238,7 @@ class SolidWorksClient(ToolsMixin):
             cwd=str(config.BUILD_DIR),  # not the repo folder
         )
         config.BUILD_DIR.mkdir(parents=True, exist_ok=True)
+        keep_bridge_up(self.exe_path)                                           # best effort: the adapter starts it itself if this did not
         stderr_path = self.log_path.with_name("adapter_stderr.log")
         stack = AsyncExitStack()
         try:

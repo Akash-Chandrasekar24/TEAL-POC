@@ -138,6 +138,11 @@ def main() -> int:
     output = config.BUILD_DIR / "execution-bin"
     shutil.copytree(original, work, dirs_exist_ok=True, ignore=shutil.ignore_patterns("bin", "obj", "packages"))
     output.mkdir(parents=True, exist_ok=True)
+    # the app keeps OUR bridge running between parts: stop that one process (matched by its exact path) so it can be replaced
+    exe_path = str((output / "SolidworksExecution.exe").resolve())
+    subprocess.run(["powershell", "-NoProfile", "-Command",
+                    f"Get-Process SolidworksExecution -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -eq '{exe_path}' }} | Stop-Process -Force"],
+                   capture_output=True)
     project = work / "SolidworksExecution/SolidworksExecution.csproj"
     # Extend the copied project, preserving the pinned vendor sources verbatim.
     tree = ET.parse(project)

@@ -48,3 +48,17 @@ def test_fast_mode_goes_on_after_ensure_ready_and_off_when_the_session_closes():
 
     asyncio.run(run())
     assert sent == [("ensure_ready", None), ("ext_command_in_progress", True), ("ensure_ready", None), ("ext_command_in_progress", False)]
+
+
+def test_the_bridge_is_started_outside_the_session_job_and_reused_while_healthy():
+    from unittest.mock import patch
+    from pathlib import Path
+    from app.mcp_client import solidworks as swmod
+    started = []
+    up = iter([False, True])
+    def health(url, timeout):
+        return SimpleNamespace(status_code=200 if next(up, True) else 503)
+    with patch("httpx.get", health), patch("subprocess.Popen", lambda args, **kw: started.append(kw["creationflags"])):
+        swmod.keep_bridge_up(Path("C:/x/SolidworksExecution.exe"), wait_s=5)
+        swmod.keep_bridge_up(Path("C:/x/SolidworksExecution.exe"), wait_s=5)        # healthy: reused, not started again
+    assert len(started) == 1 and started[0] & 0x01000000                           # CREATE_BREAKAWAY_FROM_JOB

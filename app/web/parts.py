@@ -87,7 +87,18 @@ def detect_parts(result: dict) -> list[dict]:
 
 
 # ------------------------------------------------------------------ SolidWorks on this machine
+_STATUS: list = [0.0, None]          # (time, result): the page polls every 2.5 s; the check (process list + COM) takes ~0.2 s
+
+
 def solidworks_status() -> dict:
+    """solidworks_status_now(), reused for 10 s (a status that goes stale for a few seconds only delays the button)."""
+    import time
+    if _STATUS[1] is None or time.monotonic() - _STATUS[0] > 10:
+        _STATUS[:] = [time.monotonic(), solidworks_status_now()]
+    return dict(_STATUS[1])
+
+
+def solidworks_status_now() -> dict:
     """Is SolidWorks installed, running and attachable here? Read-only: never starts SolidWorks."""
     out = {"installed": False, "version": None, "running": False, "attachable": False, "ready": False, "detail": ""}
     try:

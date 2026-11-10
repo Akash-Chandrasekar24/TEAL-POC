@@ -41,8 +41,8 @@ PAGE_PROMPT = ("A page of an engineering drawing. " + _COMMON +
                'Confidence ratings illustrate the format, not a default. Assess each reading. In this pass consistency cannot exceed 3 without identified supporting views.\n')
 CROPS_PROMPT = ("Top: the whole page of an engineering drawing, small, with numbered blue boxes. Below: those boxes cut out at full size, "
                 "marked with the same numbers in red. For every number: the view it shows (plan|front|side|section|detail|iso|other|none; "
-                "hatching = section, a 3D picture = iso), its caption as printed NEAR the view on the page (\"SECTION A-A\", \"DETAIL B\", or "
-                "\"\"), its own scale or null, \"s\": another number showing the SAME view (one view cut in two) or null; and the dimensions "
+                "hatching = section, a 3D picture = iso), its caption or title as printed NEAR the view on the page, word for word, including a part "
+                "number and name (\"01. PISTON\", \"03. CRANKSHAFT\", \"TOP VIEW\", \"SECTION A-A\", \"DETAIL B\"; \"\" only when nothing is printed), its own scale or null, \"s\": another number showing the SAME view (one view cut in two) or null; and the dimensions "
                 "in the full-size cut-out. For sections add section: {cutting_plane: printed reference, evidence: internal geometry and hatching, questions: [uncertainties]}. "
                 "Do not treat hatching as geometry. " + _COMMON + ' Reply {"c": {"1": {"t": "plan", "l": "", "sc": null, "s": null, "d": [dims]}}}')
 MIN_CROP_SCALE = 0.6           # crops may be shrunk to fit one sheet down to this (a 300 DPI page still gives ~180 DPI crops)
