@@ -157,7 +157,7 @@ def test_keep_after_the_agent_rebuilt_a_step_keeps_the_agents_version():
         rep = asyncio.run(r._run_once(bl, steps))
     f2 = rep.items[1]
     assert f2.status == "check_failed" and "reworked by the SolidWorks agent as cut" in f2.message and "kept by the SolidWorks agent" in f2.message
-    assert not any(t == "ext_delete_after" for t, _ in calls)                 # nothing taken out after the keep
+    assert [t for t, _ in calls].count("ext_delete_after") == 1                # only the clean-up before the agent's attempt; nothing after the keep
     assert any("kept by the SolidWorks agent" in w for w in rep.warnings)
 
 
@@ -205,3 +205,45 @@ def test_one_budget_of_model_calls_covers_the_whole_part():
     agent = SolidWorksAgent(Says(*[{"tool": "hole", "args": {}}] * 50), None, "", fix_turns=5, review_turns=5, total_turns=7)
     ends = [asyncio.run(agent.fix({"item": {"id": f"F{k}"}}, run)) for k in range(4)]
     assert agent.log.turns == 7 and all(e["tool"] == "skip" for e in ends) and "budget" in ends[-1]["args"]["reason"]
+
+
+def test_a_feature_solidworks_refused_is_taken_out_before_the_part_is_measured():
+    """Live bug (user's build): the agent's added boss was refused mid-sketch, the open sketch made the part unmeasurable and the finished
+    part was thrown away. The refused attempt is undone first (the bridge also closes an open sketch), then measured."""
+    from app.runner.runner import Runner as R
+    bl = _list()
+    r, calls = _runner(None, None)
+    order = []
+
+    async def call(tool, args=None, **kw):
+        order.append(tool)
+        return SimpleNamespace(ok=True, text="ok", json=lambda: {"count": 4})
+    r.sw.call = call
+
+    class Ver:
+        async def current(self):
+            order.append("measure")
+
+    class Refused:
+        async def apply(self, ctx):
+            return FeatureResult("A1", verdicts=[StepVerdict("A1", False, "tool_failed", "ENTITY_CREATION_FAILED add_sketch_entity")])
+    with patch.object(runner_mod, "prepare", lambda b: [Prepared(bl.items[0], None, Refused(), "A1")]):
+        out = asyncio.run(R._try_feature(r, bl, SimpleNamespace(verifier=Ver()), {}, bl.items[1], 4))
+    assert out["status"] == "failed" and "refused" in out["message"] and order == ["ext_delete_after", "measure"]
+
+
+def test_a_failing_review_keeps_the_finished_part():
+    from app.verify import VerifyError
+    bl = _list()
+    r, calls = _runner(SolidWorksAgent(Says(), b"png", "", review_turns=3), None)
+
+    async def boom(*a):
+        raise VerifyError("analyze_model failed twice")
+    r._agent_review_part = boom
+
+    class Ver:
+        async def current(self):
+            return None
+    report = runner_mod.RunReport("p", "mm")
+    stop = asyncio.run(r._agent_review(bl, SimpleNamespace(verifier=Ver()), {}, report))
+    assert stop is False and report.failure is None and any("part is kept" in w for w in report.warnings)

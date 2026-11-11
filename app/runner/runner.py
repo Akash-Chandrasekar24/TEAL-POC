@@ -349,7 +349,7 @@ class Runner:
         return [items[a:b] for a, b in zip(starts, starts[1:])]
 
     async def _undo_to(self, mark) -> None:
-        if mark is not None and (await self._feature_count() or 0) > mark:
+        if mark is not None:                                                            # also closes a sketch a refused feature left open
             await self.sw.call("ext_delete_after", {"count": mark})
 
     async def _measure(self, ctx) -> dict:
@@ -422,6 +422,11 @@ class Runner:
             await self._undo_to(mark)
             await ctx.verifier.current()                                                # still unreadable: VerifyError, the run stops
             return {"status": "failed", "feature_call": True, "message": f"SolidWorks could not analyse the part after this feature ({ex}): taken out"[:500]}
+        refused = next((v for v in result.verdicts if not v.ok and v.verdict == "tool_failed"), None)
+        if refused is not None:                                                         # SolidWorks refused it: whatever it left (an open sketch) comes out
+            await self._undo_to(mark)
+            await ctx.verifier.current()
+            return {"status": "failed", "feature_call": True, "message": f"SolidWorks refused it: {refused.message}"[:500], **self._observed(result)}
         if not await self._usable(ctx, mark):
             return {"status": "failed", "feature_call": True, "message": "the part could not be analysed after this feature (an open sketch or a broken rebuild): taken out"}
         seen = self._observed(result)
@@ -529,12 +534,20 @@ class Runner:
         """True = SolidWorks is not usable any more (report.failure says why)."""
         if self.agent is None or not hasattr(bl, "model_copy") or "ext_feature_count" not in (getattr(self.sw, "tool_names", None) or []):
             return False
+        self._review_box = [None]
         try:
             await self._agent_review_part(bl, ctx, built, report)
             return False
         except (McpToolTimeout, VerifyError, ConnectionError) as ex:
-            report.failure = Failure("-", "review", "environment", f"during the SolidWorks agent's review: {type(ex).__name__}: {ex}"[:400])
-            return True
+            # every list step is built: a failed review call is taken out and the part is kept (the user's part was lost this way)
+            try:
+                await self._undo_to(self._review_box[0])
+                await ctx.verifier.current()
+            except (McpToolTimeout, VerifyError, ConnectionError):
+                report.failure = Failure("-", "review", "environment", f"during the SolidWorks agent's review: {type(ex).__name__}: {ex}"[:400])
+                return True
+            report.warnings.append(f"SolidWorks agent review stopped ({type(ex).__name__}: {str(ex)[:150]}); its last call was taken out, the part is kept"[:400])
+            return False
 
     async def _agent_review_part(self, bl, ctx, built: dict, report: RunReport) -> None:
         """Every step is done: the agent looks at the part beside the drawing and adds what is missing."""
@@ -548,7 +561,7 @@ class Runner:
         if self.progress is not None:
             self.progress.data["current"] = "review"
             self.progress.log("agent", "AI agent compares the part with the drawing")
-        end = await self.agent.review(state, self._tools(bl, ctx, built, "review", "-", [None]))
+        end = await self.agent.review(state, self._tools(bl, ctx, built, "review", "-", self._review_box))
         for new_id in [k for k in built if k not in before]:
             item = built[new_id]
             report.items.append(ItemReport(new_id, item.feature, "ok", message=f"added by the SolidWorks agent: {json.dumps(item.params)}"[:400]))

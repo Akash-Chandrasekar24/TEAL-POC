@@ -39,6 +39,10 @@ namespace DrawingToSolidworks
                 var model = Part();
                 int keep = body.Value<int>("count");
                 var deleted = new JArray();
+                // a refused feature can leave its sketch OPEN: nothing can be selected or measured until it is closed (measured: the part's
+                // mass properties then fail, and the build was lost)
+                bool closedSketch = model.SketchManager.ActiveSketch != null;
+                if (closedSketch) model.SketchManager.InsertSketch(true);
                 for (int guard = 0; guard < 200 && FeatureCount(model) > keep; guard++)
                 {
                     var last = LastFeature(model);
@@ -49,7 +53,7 @@ namespace DrawingToSolidworks
                     deleted.Add(name);
                 }
                 model.ForceRebuild3(false);
-                return new JObject { ["ok"] = true, ["deleted"] = deleted, ["count"] = FeatureCount(model) };
+                return new JObject { ["ok"] = true, ["deleted"] = deleted, ["count"] = FeatureCount(model), ["closed_open_sketch"] = closedSketch };
             });
         }
 
