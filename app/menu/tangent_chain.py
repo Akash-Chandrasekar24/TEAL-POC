@@ -43,9 +43,17 @@ class Polar(BaseModel):
     angle_deg: float = Field(description="direction from that centre to this one, counter-clockwise from +x as seen in the plate view")
 
 
+class Blend(_Strict):
+    """A blend arc (fillet) of a printed radius between the circles BEFORE and AFTER it in the chain: its centre is not printed, it follows
+    from touching both. E.g. the R150 / R350 arcs joining the clamp ends of a triple clamp, an R10 fillet between a boss and an arm."""
+    blend: Literal[True]
+
+
 class ChainCircle(_Strict):
     id: str = Field(min_length=1, description="a short name, e.g. A, B, C")
-    centre: Union[XY, Polar] = Field(description="x, y in the outline's frame, or placed from an earlier circle with from / distance / angle_deg")
+    centre: Union[XY, Polar, Blend] = Field(description="x, y in the outline's frame; or placed from an earlier circle with from / distance / angle_deg; "
+                                                         "or {\"blend\": true} for a blend arc of this radius that touches the circles before and after it "
+                                                         "(its centre is worked out: write only the printed radius and the turn)")
     radius: float = Field(ge=0, description="0 = a sharp corner")
     turn: Literal["ccw", "cw"] = Field(description="ccw: the outline wraps round this circle counter-clockwise (convex); cw: clockwise (a concave scoop)")
 
@@ -61,7 +69,15 @@ class TangentChain(_Strict):
         dup = sorted({i for i in ids if ids.count(i) > 1})
         if dup:
             raise ValueError(f"duplicate circle ids: {dup}")
+        n = len(self.circles)
         for k, c in enumerate(self.circles):
+            if isinstance(c.centre, Blend):
+                if c.radius <= 0:
+                    raise ValueError(f"circle {c.id}: a blend arc needs its printed radius")
+                if any(isinstance(self.circles[(k + d) % n].centre, Blend) for d in (-1, 1)):
+                    raise ValueError(f"circle {c.id}: a blend arc must sit between two circles that are placed (not another blend)")
+            if isinstance(c.centre, Polar) and isinstance(next((x for x in self.circles if x.id == c.centre.origin), None), _BlendType()):
+                raise ValueError(f"circle {c.id}: place it from a circle whose centre is given, not from a blend")
             if isinstance(c.centre, Polar) and c.centre.origin not in ids[:k]:
                 raise ValueError(f"circle {c.id}: 'from' must be the id of an EARLIER circle in the list (got {c.centre.origin!r})")
         solve_chain(self)                                   # geometry problems show up when the list is read, not at build time
@@ -72,15 +88,40 @@ class TangentChain(_Strict):
 Point = tuple[float, float]
 
 
-def _centres(chain: TangentChain) -> list[Point]:
+def _BlendType():
+    return Blend
+
+
+def _placed_centres(chain: TangentChain) -> dict[str, Point]:
     out: dict[str, Point] = {}
     for c in chain.circles:
         if isinstance(c.centre, XY):
             out[c.id] = (c.centre.x, c.centre.y)
-        else:
+        elif isinstance(c.centre, Polar):
             bx, by = out[c.centre.origin]
             a = math.radians(c.centre.angle_deg)
             out[c.id] = (bx + c.centre.distance * math.cos(a), by + c.centre.distance * math.sin(a))
+    return out
+
+
+def blend_candidates(a: Point, ra: float, sa: int, b: Point, rb: float, sb: int, r: float, s: int) -> list[Point]:
+    """Centres of a circle of radius r (turn s) that touches circle a and circle b on a SMOOTH outline: with signed radii (turn x radius)
+    the centres lie |s r - sa ra| from a and |s r - sb rb| from b (internal touch when the turns agree, external when they differ).
+    Two circle-circle intersections: both returned, the solver keeps the one that gives a valid outline."""
+    da, db = abs(s * r - sa * ra), abs(s * r - sb * rb)
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    d = math.hypot(dx, dy)
+    if d < TOL or d > da + db + TOL or d < abs(da - db) - TOL:
+        return []
+    x = (da * da - db * db + d * d) / (2 * d)
+    h = math.sqrt(max(da * da - x * x, 0.0))
+    mx, my = a[0] + x * dx / d, a[1] + x * dy / d
+    return [(mx - h * dy / d, my + h * dx / d), (mx + h * dy / d, my - h * dx / d)]
+
+
+def _centres(chain: TangentChain) -> list[Point]:
+    """Centres when the chain has no blend arcs (blends are resolved in solve_chain)."""
+    out = _placed_centres(chain)
     return [out[c.id] for c in chain.circles]
 
 
@@ -114,10 +155,52 @@ def _join(ci: Point, ri: float, si: int, cj: Point, rj: float, sj: int, names: s
 
 
 def solve_chain(chain: TangentChain) -> list[dict]:
-    """The closed outline (lines and arcs) the chain stands for. Raises FeatureRequestError when it cannot be built exactly."""
+    """The closed outline (lines and arcs) the chain stands for. Raises FeatureRequestError when it cannot be built exactly.
+    Blend arcs: each has two possible centres; every combination is tried and the valid outline with the shortest blend arcs is kept."""
     circles = chain.circles
     n = len(circles)
-    cen = _centres(chain)
+    placed = _placed_centres(chain)
+    blends = [i for i, c in enumerate(circles) if isinstance(c.centre, Blend)]
+    if not blends:
+        return _solve(chain, [placed[c.id] for c in circles])
+    sgn = [1 if c.turn == "ccw" else -1 for c in circles]
+    options = []
+    for i in blends:
+        a, b = circles[(i - 1) % n], circles[(i + 1) % n]
+        found = blend_candidates(placed[a.id], a.radius, sgn[(i - 1) % n], placed[b.id], b.radius, sgn[(i + 1) % n], circles[i].radius, sgn[i])
+        if not found:
+            raise FeatureRequestError(f"blend {circles[i].id} (R{circles[i].radius:g}) cannot touch both {a.id} and {b.id}: the radius is too small "
+                                      f"for the gap, or a turn (ccw / cw) is wrong")
+        options.append(found)
+    best, last_error = None, None
+    import itertools
+    for pick in itertools.product(*options):
+        cen = [placed.get(c.id) for c in circles]
+        for i, c in zip(blends, pick):
+            cen[i] = c
+        try:
+            segs = _solve(chain, cen)
+        except FeatureRequestError as ex:
+            last_error = ex
+            continue
+        blend_len = sum(_arc_length(sg) for sg in segs if sg["kind"] == "arc" and any(
+            abs(sg["cx"] - cen[i][0]) < 1e-9 and abs(sg["cy"] - cen[i][1]) < 1e-9 for i in blends))
+        if best is None or blend_len < best[0]:
+            best = (blend_len, segs)
+    if best is None:
+        raise last_error or FeatureRequestError("the blend arcs cannot be placed")
+    return best[1]
+
+
+def _arc_length(sg: dict) -> float:
+    a1 = math.atan2(sg["y1"] - sg["cy"], sg["x1"] - sg["cx"])
+    a2 = math.atan2(sg["y2"] - sg["cy"], sg["x2"] - sg["cx"])
+    return math.hypot(sg["x1"] - sg["cx"], sg["y1"] - sg["cy"]) * (((a2 - a1) * sg["dir"]) % (2 * math.pi))
+
+
+def _solve(chain: TangentChain, cen: list[Point]) -> list[dict]:
+    circles = chain.circles
+    n = len(circles)
     sgn = [1 if c.turn == "ccw" else -1 for c in circles]
     pout: list[Point] = [(0.0, 0.0)] * n
     qin: list[Point] = [(0.0, 0.0)] * n
