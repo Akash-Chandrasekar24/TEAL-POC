@@ -74,6 +74,12 @@ carefully the first time.
   printed and cannot be added up from printed numbers, do not use a chain: put the outline in `unsupported`. Never read a radius or a centre off the picture by measuring.
   Every outline of the part (the base chain, later chains, polygons, segments, fillet regions) is written in the SAME coordinates as the base chain's numbers: use the same origin
   (for example a hub centre) in all of them. Hole and cut positions keep their edge words.
+  **Blend arcs**: a large radius printed between two rounded ends or bosses (R150, R350, R35 joining two lobes; a fillet between a boss and an arm) is a circle of
+  that radius with centre `{"blend": true}` placed between them in the chain: the code finds its centre from touching both. Never replace such an arc by straight lines
+  and never work its end points out yourself. Prefer a chain over `segments` whenever the drawing dimensions the outline by radii and centres.
+- **Shapes seen in the SIDE view**: when the part rises, steps or slopes in elevation (thick ends and a raised middle, sloped arms), extrude the top-view outline to the
+  FULL height and add a `side_profile_cut` with the side-view outline. Holes and openings drawn as circles or shapes in the side view (pinch-bolt holes, counterbores,
+  the split of a clamp end, cross holes) are `side_cut` items, not `hole` items on the front face.
 - `face` is `"front"` (the face you see in the front view) or `"back"` (the opposite face) of the base plate. **Positions on the `back` face are written in FRONT-VIEW
   coordinates, exactly like the front face**: x to the right of the FRONT view (world +x), `left_edge` the left of the front view. Do NOT mirror them because the back face is
   seen from behind. (Only a feature placed with `on` is read as seen from outside, see below: on a face that looks away from you, right is the LEFT of the front view.)
