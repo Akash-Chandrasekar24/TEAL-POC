@@ -379,6 +379,7 @@ class SideProfileCut:
     unit: str
     outline: tuple                       # closed lines / arcs, drawing unit, x centred on the base outline, z from the back face
     size: tuple                          # the base's (W, H, T)
+    centre: tuple = (0.0, 0.0)           # where the top outline's box centre sits in the datum frame (drawing unit): x and the width
     label: str = "side profile cut"
 
     NAME = "side_profile_cut"
@@ -409,12 +410,12 @@ class SideProfileCut:
         f = factor(self.unit)
         W, H, T = self.size
         m = self.MARGIN
-        y0 = 0.0                                                                # the Top datum through the part, cut both ways (measured: a plane BELOW
+        cx, y0 = self.centre[0], self.centre[1] * f                             # the Top datum through the part, cut both ways (measured: a plane BELOW
                                                                                 # the part with through_all makes SolidWorks refuse the cut)
         box = [(-W / 2 - m, -m), (W / 2 + m, -m), (W / 2 + m, T + m), (-W / 2 - m, T + m)]
         loop = [{"kind": "line", "x1": a[0], "y1": a[1], "x2": b[0], "y2": b[1]} for a, b in zip(box, box[1:] + box[:1])]
         # the Top datum's sketch y runs along world -Z: heights z go in as -z, and an arc's turning sense flips with that mirror
-        flip = lambda seg: {**seg, **{k: seg[k] * f for k in ("x1", "x2", "cx") if k in seg}, **{k: -seg[k] * f for k in ("y1", "y2", "cy") if k in seg},
+        flip = lambda seg: {**seg, **{k: (seg[k] + cx) * f for k in ("x1", "x2", "cx") if k in seg}, **{k: -seg[k] * f for k in ("y1", "y2", "cy") if k in seg},
                             **({"dir": -seg["dir"]} if "dir" in seg else {})}
         frame = PlaneFrame("top")
         ents = ext_entities([flip(seg) for seg in loop + list(self.outline)], frame, y0)
@@ -446,6 +447,70 @@ class SideProfileCut:
 
 
 @dataclass(frozen=True)
+class ShapedBase:
+    """The base of a part whose height varies, built as the real shape STRAIGHT AWAY (never a full-height block carved down): the side
+    outline is grown across the part's width (exact volume: side area x width), then trimmed to the top-view outline in the same step.
+    Replaces "base extruded to the full height + side_profile_cut" (the runner merges the two items); later items see the same base."""
+    base: object                         # the ExtrudeProfileBoss of the top outline (full height): its outline, plane and size
+    side: SideProfileCut
+    label: str = "base shaped from the top and side views"
+
+    NAME = "shaped_base"
+    MARGIN = 5.0
+
+    def validate(self) -> None:
+        self.base.validate(); self.side.validate()
+
+    def specs(self) -> list[dict]:
+        from .base import PlaneFrame
+        from .extrude_profile_boss import datum_normal, ext_entities, profile_to_graph
+        self.validate()
+        f = factor(self.side.unit)
+        W, H, T = self.side.size
+        m = self.MARGIN
+        cx, cy = self.side.centre
+        # 1. the side outline on the Top datum through the middle of the width, grown both ways across it
+        flip = lambda seg: {**seg, **{k: (seg[k] + cx) * f for k in ("x1", "x2", "cx") if k in seg}, **{k: -seg[k] * f for k in ("y1", "y2", "cy") if k in seg},
+                            **({"dir": -seg["dir"]} if "dir" in seg else {})}
+        top = PlaneFrame("top")
+        grow = {"operation": "boss", "plane": {"datum": "top", "offset": cy * f}, "entities": ext_entities([flip(g) for g in self.side.outline], top, cy * f),
+                "direction": datum_normal(top), "end": "blind", "depth": H / 2 * f, "depth_back": H / 2 * f}
+        # 2. trim to the top outline: the region between a box round it and the outline, cut both ways from the mid height
+        front = PlaneFrame(self.base.plane)
+        box = [(cx + sx * (W / 2 + m), cy + sy * (H / 2 + m)) for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+        loop = [{"kind": "line", "x1": a[0] * f, "y1": a[1] * f, "x2": b[0] * f, "y2": b[1] * f} for a, b in zip(box, box[1:] + box[:1])]
+        mid = T / 2 * f
+        trim = {"operation": "cut", "plane": {"datum": self.base.plane, "offset": mid},
+                "entities": ext_entities(loop + profile_to_graph(self.base.profile, self.base.unit, self.base.origin), front, mid),
+                "direction": datum_normal(front), "end": "blind", "depth": (T / 2 + m) * f}
+        return [grow, trim, {**trim, "direction": [-v for v in trim["direction"]]}]
+
+    def expected(self) -> Expect:
+        """At most the side shape across the full width, at most the top outline at full height: the smaller bound (one solid)."""
+        from app.geometry import profile_area
+        W, H, T = self.side.size
+        k = MM3_PER_UNIT3[self.side.unit]
+        return Expect(bound_mm3=min(profile_area(list(self.side.outline)) * H, self.base.expected_delta_mm3() / k) * k, bodies=1)
+
+    def expected_delta_mm3(self) -> float:
+        return self.expected().bound_mm3
+
+    async def apply(self, ctx: FeatureContext) -> FeatureResult:
+        res = FeatureResult(self.NAME)
+
+        async def steps():
+            r = None
+            for spec in self.specs():
+                r = await ctx.sw.geometry("ext_sketch_extrude", spec)
+                if not r.ok:
+                    return r
+            return r
+
+        res.verdicts.append(await ctx.verifier.run_step(self.label, steps, self.expected()))
+        return res
+
+
+@dataclass(frozen=True)
 class SideCut:
     """Holes and openings drawn in the SIDE view, cut sideways (across the part's width): a pinch-bolt hole with its counterbore, the
     split of a clamp end, a cross hole. Coordinates as in side_profile_cut (x centred on the base outline, z = height above the back face).
@@ -455,6 +520,7 @@ class SideCut:
     size: tuple                          # the base's (W, H, T)
     depth: float | None = None           # None = through the whole width
     from_edge: str = "top_edge"          # with a depth: the face it starts from, as seen in the top view
+    centre: tuple = (0.0, 0.0)           # where the top outline's box centre sits in the datum frame (see SideProfileCut)
     label: str = "side cut"
 
     NAME = "side_cut"
@@ -485,17 +551,18 @@ class SideCut:
         f = factor(self.unit)
         W, H, T = self.size
         frame = PlaneFrame("top")
-        flip = lambda seg: {**seg, **{k: seg[k] * f for k in ("x1", "x2", "cx", "diameter") if k in seg},
+        cx, cy = self.centre
+        flip = lambda seg: {**seg, **{k: (seg[k] + cx) * f for k in ("x1", "x2", "cx") if k in seg}, **({"diameter": seg["diameter"] * f} if "diameter" in seg else {}),
                             **{k: -seg[k] * f for k in ("y1", "y2", "cy") if k in seg}, **({"dir": -seg["dir"]} if "dir" in seg else {})}
         segs = [flip(seg) for loop in self.loops for seg in loop]
         if self.depth is None:                                                  # through: both ways from the mid plane (see SideProfileCut)
-            one = {"operation": "cut", "plane": {"datum": "top", "offset": 0.0}, "entities": ext_entities(segs, frame, 0.0),
+            one = {"operation": "cut", "plane": {"datum": "top", "offset": cy * f}, "entities": ext_entities(segs, frame, cy * f),
                    "direction": [0.0, 1.0, 0.0], "end": "blind", "depth": (H / 2 + 5) * f}
             return [one, {**one, "direction": [0.0, -1.0, 0.0]}]
         # sketch at the FLOOR (inside the part) and cut out toward the face: measured in SolidWorks, a sketch on the face plane cutting
         # inward is refused; from the floor outward it removes the exact counterbore
         sign = 1 if self.from_edge == "top_edge" else -1
-        y0 = sign * (H / 2 - self.depth) * f
+        y0 = (cy + sign * (H / 2 - self.depth)) * f
         return [{"operation": "cut", "plane": {"datum": "top", "offset": y0}, "entities": ext_entities(segs, frame, y0),
                  "direction": [0.0, float(sign), 0.0], "end": "blind", "depth": self.depth * f}]
 
@@ -520,4 +587,56 @@ class SideCut:
             return r
 
         res.verdicts.append(await ctx.verifier.run_step(self.label, run, self.expected()))
+        return res
+
+
+@dataclass(frozen=True)
+class Drill:
+    """A hole along ANY direction, from an entry point on the part: plain, through or blind, with an optional counterbore. The one hole
+    for holes that are not square to the top view: angled drillings, holes on sloped or curved faces, oil ways. Coordinates in the top
+    view's frame: x right and y up from the centre of the base outline, z = height above the back face; direction in the same axes."""
+    unit: str
+    entry: tuple                         # (x, y, z) drawing unit
+    direction: tuple                     # (dx, dy, dz): into the material
+    diameter: float
+    depth: float | None = None           # None = through
+    counterbore: tuple | None = None     # (diameter, depth)
+    reach: float = 0.0                   # the longest straight line through the part (bounds a through hole)
+    label: str = "drill"
+
+    NAME = "drill"
+
+    def validate(self) -> None:
+        factor(self.unit)
+        if math.hypot(*self.direction) < 1e-12:
+            raise FeatureRequestError("give the drill direction (it is zero)")
+        if not self.diameter > 0 or (self.depth is not None and not self.depth > 0):
+            raise FeatureRequestError("a drill needs a positive diameter, and a positive depth unless it goes through")
+        if self.counterbore is not None and not (self.counterbore[0] > self.diameter and self.counterbore[1] > 0):
+            raise FeatureRequestError("a counterbore is wider than the hole and has a positive depth")
+
+    def spec(self) -> dict:
+        self.validate()
+        f = factor(self.unit)
+        n = math.hypot(*self.direction)
+        cuts = [{"radius": self.diameter / 2 * f, "end": "through_all" if self.depth is None else "blind", "depth": 0.0 if self.depth is None else self.depth * f}]
+        if self.counterbore is not None:
+            cuts.append({"radius": self.counterbore[0] / 2 * f, "end": "blind", "depth": self.counterbore[1] * f})
+        return {"point": [v * f for v in self.entry], "direction": [v / n for v in self.direction], "cuts": cuts}
+
+    def expected(self) -> Expect:
+        k = MM3_PER_UNIT3[self.unit]
+        length = self.depth if self.depth is not None else self.reach
+        removed = math.pi / 4 * self.diameter ** 2 * length
+        if self.counterbore is not None:
+            removed += math.pi / 4 * (self.counterbore[0] ** 2 - self.diameter ** 2) * self.counterbore[1]
+        return Expect(bound_mm3=-removed * k, bodies=None)                   # at most: the drill may start in the air or cross a pocket
+
+    def expected_delta_mm3(self) -> float:
+        return self.expected().bound_mm3
+
+    async def apply(self, ctx: FeatureContext) -> FeatureResult:
+        spec = self.spec()
+        res = FeatureResult(self.NAME)
+        res.verdicts.append(await ctx.verifier.run_step(self.label, lambda: ctx.sw.geometry("ext_drill", spec), self.expected()))
         return res

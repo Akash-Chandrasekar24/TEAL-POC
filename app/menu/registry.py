@@ -30,7 +30,7 @@ from app.features.revolve_base import RevolveBase, turned_base_info
 from app.features.revolve_on_face import RevolveOnFace
 from app.features.blades import RadialBlades, TurnedKeyway
 from app.features.standalone import Loft, Section, SheetMetalBase, SweptTube
-from app.features.ext_features import AngledBoss, Shell, SideCut, SideProfileCut, SweptPassage
+from app.features.ext_features import AngledBoss, Drill, Shell, SideCut, SideProfileCut, SweptPassage
 from app.features.turned_ops import MM3_PER_UNIT3 as _MM3
 from app.features.turned_ops import CrossHole, TurnedAxial
 from app.features.outline_helpers import round_polygon_corners, rounded_rectangle
@@ -553,7 +553,7 @@ def build_side_profile_cut(p: P.SideProfileCutParams, ctx: BuildContext, label: 
     W, H = ctx.outline_wh
     segs = round_polygon_corners([tuple(pt) for pt in p.outline.points], p.outline.corner_radius) if isinstance(p.outline, P.Polygon) \
         else [s.model_dump() for s in p.outline.segments]
-    return SideProfileCut(ctx.unit, tuple(_shift(segs, W / 2, 0.0)), (W, H, ctx.thickness), label=label)
+    return SideProfileCut(ctx.unit, tuple(_shift(segs, W / 2, 0.0)), (W, H, ctx.thickness), _outline_centre(ctx), label=label)
 
 
 def build_side_cut(p: P.SideCutParams, ctx: BuildContext, label: str) -> SideCut:
@@ -569,7 +569,26 @@ def build_side_cut(p: P.SideCutParams, ctx: BuildContext, label: str) -> SideCut
         loops.append(tuple(_shift(segs, W / 2, 0.0)))
     if not loops:
         raise FeatureRequestError("give the holes or outlines seen in the side view")
-    return SideCut(ctx.unit, tuple(loops), (W, H, ctx.thickness), None if p.depth == "through" else p.depth, p.from_edge, label=label)
+    return SideCut(ctx.unit, tuple(loops), (W, H, ctx.thickness), None if p.depth == "through" else p.depth, p.from_edge, _outline_centre(ctx), label=label)
+
+
+def _outline_centre(ctx: BuildContext) -> tuple[float, float]:
+    """Where the base outline's box centre sits in the datum frame: the outline is drawn where the drawing puts it, NOT centred on the origin
+    (a triple clamp's outline runs y -75 .. 35). Side-view features measure from the outline's edges, so they are placed from this."""
+    (W, H), (dx, dy) = ctx.outline_wh, ctx.frame_shift
+    return (W / 2 - dx, H / 2 - dy)
+
+
+def build_drill(p: P.DrillParams, ctx: BuildContext, label: str) -> Drill:
+    ctx.need_base("a drill")
+    f = factor(ctx.unit)
+    sx, sy = _position(p.entry).to_sketch_m(ctx.unit, ctx.outline_wh)
+    if (p.counterbore_diameter is None) != (p.counterbore_depth is None):
+        raise FeatureRequestError("a counterbore needs both its diameter and its depth")
+    W, H = ctx.outline_wh
+    reach = math.sqrt(W * W + H * H + ctx.thickness ** 2)
+    return Drill(ctx.unit, (sx / f, sy / f, p.entry_height), tuple(p.direction), p.diameter, None if p.depth == "through" else p.depth,
+                 (p.counterbore_diameter, p.counterbore_depth) if p.counterbore_diameter else None, reach, label=label)
 
 
 def build_angled_boss(p: P.AngledBossParams, ctx: BuildContext, label: str) -> AngledBoss:
@@ -623,7 +642,7 @@ class MenuEntry:
                 "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole,
                 "radial_blades": RadialBlades, "turned_keyway": TurnedKeyway,
                 "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase,
-                "swept_passage": SweptPassage, "shell": Shell, "angled_boss": AngledBoss, "side_profile_cut": SideProfileCut, "side_cut": SideCut}[self.name]
+                "swept_passage": SweptPassage, "shell": Shell, "angled_boss": AngledBoss, "side_profile_cut": SideProfileCut, "side_cut": SideCut, "drill": Drill}[self.name]
 
 
 _COMMON = frozenset({"unit", "plane", "label", "regression_delta_mm3", "outline_wh"})

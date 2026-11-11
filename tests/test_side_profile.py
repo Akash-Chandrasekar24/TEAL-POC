@@ -14,7 +14,7 @@ def build(depth, points):
 
 
 def test_the_side_outline_becomes_heights_above_the_back_face_and_the_volume_bound_is_exact():
-    f = prepare(build(60, CLAMP))[1].feature
+    f = prepare(build(60, CLAMP))[0].feature.side
     spec = f.spec()
     zs = [e[k][2] for e in spec["entities"] for k in ("p1", "p2") if k in e]
     assert spec["plane"] == {"datum": "top", "offset": 0.0} and spec["end"] == "blind" and spec["direction"] == [0.0, 1.0, 0.0]
@@ -33,7 +33,7 @@ def test_a_side_outline_taller_than_the_base_is_refused():
 
 def test_the_volume_bound_is_negative_for_material_removed():
     from app.verify.step_verifier import Snapshot, judge
-    f = prepare(build(60, CLAMP))[1].feature
+    f = prepare(build(60, CLAMP))[0].feature.side
     exp = f.expected()
     assert exp.bound_mm3 < 0
     before = Snapshot(doc="P", volume=1e-3, area=0, cog=(0, 0, 0), bodies=1, faces=6, edges=12, vertices=8)
@@ -66,4 +66,17 @@ def test_through_cuts_after_side_profile_are_bound_only():
                                                      "positions": [{"x": 0, "x_from": "centre", "y": 0, "y_from": "centre"}]}}
     shaped = build(60, CLAMP); shaped.items.append(type(shaped.items[0]).model_validate(hole))
     plain = build(60, CLAMP); plain.items[1] = type(plain.items[0]).model_validate(hole)
-    assert prepare(shaped)[2].feature.bound_only and not prepare(plain)[1].feature.bound_only
+    assert prepare(shaped)[1].feature.bound_only and not prepare(plain)[1].feature.bound_only
+
+
+def test_the_base_is_built_as_the_real_shape_never_a_full_height_block():
+    """Base (full height) + side_profile_cut -> ONE step: grow the side outline across the width, then trim to the top outline."""
+    steps = prepare(build(60, CLAMP))
+    f = steps[0].feature
+    grow, trim, trim_back = f.specs()
+    assert len(steps) == 1 and f.NAME == "shaped_base"
+    assert grow["operation"] == "boss" and grow["plane"]["datum"] == "top" and abs(grow["depth"] - 0.04) < 1e-12 and abs(grow["depth_back"] - 0.04) < 1e-12
+    assert trim["operation"] == trim_back["operation"] == "cut" and trim["plane"] == {"datum": "front", "offset": 0.03}
+    assert trim["direction"] == [-v for v in trim_back["direction"]]
+    side_area = 200 * 32 + (60 + 20) / 2 * 28
+    assert abs(f.expected().bound_mm3 - side_area * 80) < 1e-6 and f.expected().bodies == 1

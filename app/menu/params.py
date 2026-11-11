@@ -461,6 +461,18 @@ class SideCutParams(Strict):
                                                            "edge of the top-view outline")
 
 
+class DrillParams(Strict):
+    entry: Pos = Field(description="where the hole axis enters the part, as seen in the TOP view (placed like any position)")
+    entry_height: float = Field(description="height of the entry point above the back face of the base (e.g. half the thickness for a hole in a side face)")
+    direction: Annotated[list[float], Field(min_length=3, max_length=3)] = Field(
+        description="the drilling direction INTO the material, in the top view's axes: [x right, y up, z toward the viewer]. Straight down from the "
+                    "front face is [0, 0, -1]; a hole drilled along the arm at angle a in the top view is [cos a, sin a, 0]; tilted holes have all three")
+    diameter: float = Field(gt=0, description="hole diameter (a threaded hole: the nominal size)")
+    depth: Union[float, Literal["through"]] = Field("through", description="'through', or the depth from the entry point")
+    counterbore_diameter: float | None = Field(None, gt=0)
+    counterbore_depth: float | None = Field(None, gt=0)
+
+
 class AngledBossParams(Strict):
     position: Pos = Field(description="where the boss axis meets the FRONT face")
     diameter: float = Field(gt=0, description="boss diameter")

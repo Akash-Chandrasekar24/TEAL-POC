@@ -149,6 +149,11 @@ def prepare(bl: BuildList) -> list[Prepared]:
         ctx.height_varies |= it.feature == "side_profile_cut"
         ctx.anchors.update(anchors_of(it.id, feature))                         # the flat faces this item made: later items can say "on <id>.top"
         out.append(Prepared(it, params, feature, label))
+    if len(out) > 1 and out[1].item.feature == "side_profile_cut" and getattr(out[0].feature, "is_base", False):
+        # the real shape straight away: the side outline grown and trimmed to the top outline, never a full-height block carved down
+        from app.features.ext_features import ShapedBase
+        label = f"{out[0].label} + {out[1].item.id} (shaped from the top and side views)"
+        out[:2] = [Prepared(out[0].item, out[0].params, ShapedBase(out[0].feature, out[1].feature, label), label)]
     return out
 
 

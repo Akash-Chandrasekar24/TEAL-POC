@@ -25,7 +25,7 @@ def test_a_raised_middle_becomes_full_height_plus_a_side_profile_cut_and_a_flat_
     found = elevation_from(ask_elevation(Says(clamp), b"png"), DRAFT, 200)
     out = apply_elevation(DRAFT, found)
     assert [i["feature"] for i in out["items"]] == ["extrude_profile_boss", "side_profile_cut"] and out["items"][0]["params"]["depth"] == 60
-    assert validate_list(parse_reply(out)) == [] and len(prepare(parse_reply(out))) == 2
+    assert validate_list(parse_reply(out)) == [] and len(prepare(parse_reply(out))) == 1                  # base + E1 are one step (shaped_base)
     assert elevation_from({"constant": True}, DRAFT, 200) is None
     assert elevation_from({"constant": False}, DRAFT, 200) is None                         # an unusable reply changes nothing
     elbow = {**clamp, "full_height": 540, "outline": [[0, 0], [360, 0], [360, 540], [0, 540]]}
