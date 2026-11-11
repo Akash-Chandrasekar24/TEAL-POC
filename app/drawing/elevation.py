@@ -4,12 +4,12 @@ reader prompt was followed only some of the time (a triple clamp came out as a f
 Works for any extruded part: brackets with sloped arms, stepped plates, castings thicker in the middle."""
 from __future__ import annotations
 
-import json
-
 from app.llm.base import FilePart
 
 PROMPT = """You look at ONE engineering drawing of a part that is modelled by extruding its TOP-view outline. Look at its SIDE view / elevation
 (the view showing the part's length horizontally and its height vertically, often marked like "C").
+First: is the part ONE plate-like piece made by extruding a top-view outline? A pipe, elbow, bend, tube, swept passage, a turned / round
+part, or a part made of several pieces is NOT: then reply {"constant": true}.
 Question: is the part's height the SAME everywhere along its length?
 - If yes: reply {"constant": true}.
 - If no (thick ends and a raised middle, sloped or stepped arms, a hump): reply {"constant": false, "full_height": H, "outline": [[x, y], ...],
@@ -20,20 +20,30 @@ Question: is the part's height the SAME everywhere along its length?
 Reply with JSON only."""
 
 
-def elevation_pass(llm, picture: bytes, draft: dict, part_length: float) -> dict | None:
-    """The side_profile_cut item to add (and the full height for the base), or None when the height is constant / the reply is unusable."""
+def ask_elevation(llm, picture: bytes) -> dict | None:
+    """The question alone: it needs only the drawing, so it runs WHILE the build list is written (saves one model call of waiting)."""
+    reply = llm.generate_json(PROMPT, [FilePart(picture, "image/png")]).data
+    return reply if isinstance(reply, dict) else None
+
+
+def elevation_from(reply: dict | None, draft: dict, part_length: float) -> dict | None:
+    """The side_profile_cut item to add (and the full height for the base), or None when the height is constant / the reply is unusable
+    or does not fit the list's base (its length differs from the base's by more than 10 %: a different reading of the part)."""
     items = draft.get("items") or []
     if not items or items[0].get("feature") != "extrude_profile_boss" or any(i.get("feature") == "side_profile_cut" for i in items):
         return None
-    context = json.dumps({"part_length_in_top_view": part_length, "unit": draft.get("unit")})
-    reply = llm.generate_json(PROMPT, [FilePart(picture, "image/png"), context]).data
     if not isinstance(reply, dict) or reply.get("constant") is not False:
         return None
     pts, h = reply.get("outline"), reply.get("full_height")
     if not (isinstance(pts, list) and len(pts) >= 3 and isinstance(h, (int, float)) and h > 0):
         return None
+    xs = [float(p[0]) for p in pts]
+    span = max(xs) - min(xs)
+    if not part_length or span <= 0 or abs(span / part_length - 1) > 0.10:
+        return None
+    k = part_length / span                                                      # the base's length wins: the cut then meets both ends exactly
     radii = reply.get("corner_radius")
-    outline = {"shape": "polygon", "frame": "base_lower_left", "points": [[float(p[0]), float(p[1])] for p in pts]}
+    outline = {"shape": "polygon", "frame": "base_lower_left", "points": [[(float(p[0]) - min(xs)) * k, float(p[1])] for p in pts]}
     if isinstance(radii, list) and len(radii) == len(pts):
         outline["corner_radius"] = [float(r or 0) for r in radii]
     return {"full_height": float(h), "item": {"id": "E1", "feature": "side_profile_cut", "printed": "side view (elevation)",

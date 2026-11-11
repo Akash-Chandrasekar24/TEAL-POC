@@ -1103,8 +1103,13 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
                     + json.dumps(keep, ensure_ascii=False))
         effort = "medium"
     attempt = uuid.uuid4().hex[:12]
+    provider = llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER
+    side_view = None
+    if effort != "medium":                                                      # a new list: ask the side-view question at the same time
+        from concurrent.futures import ThreadPoolExecutor
+        from app.drawing.elevation import ask_elevation
+        side_view = ThreadPoolExecutor(1).submit(ask_elevation, client if client is not None else make_client(provider, reasoning_effort="medium"), png)
     with trace.run(attempt, RUNS / attempt, save_files=config.TRACE_FILES, workflow="part_build_list", drawing_result=rid, part=part_id):
-        provider = llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER
         supervisor = Orchestrator(extraction=ExtractionAgent(client if client is not None else make_client(provider, reasoning_effort=effort)))
         try:
             response = supervisor.read_list([FilePart(png, "image/png"), context])
@@ -1115,7 +1120,7 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
     if effort == "medium" and previous and draft.get("items"):                  # an edit: the format fields it was not shown come from the earlier list
         draft = {**{k: v for k, v in previous["draft"].items() if k not in ("accepted_gaps", "designer_answers")}, **draft}
     try:                                                                        # the elevation pass: a focused second look at the side view
-        from app.drawing.elevation import apply_elevation, elevation_pass
+        from app.drawing.elevation import apply_elevation, elevation_from
         from app.geometry import profile_bounds
         from app.menu import parse_reply as _pr
         from app.runner import prepare as _prep
@@ -1124,7 +1129,7 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
         length = None
         if first is not None and hasattr(first, "profile"):
             x0, x1, _, _ = profile_bounds(first.profile); length = x1 - x0
-        found = elevation_pass(client if client is not None else make_client(provider, reasoning_effort="medium"), png, draft, length) if length else None
+        found = elevation_from(side_view.result(), draft, length) if (side_view and length) else None
         if found:
             draft = apply_elevation(draft, found)
             # the side shape is now one cut: anything the first list added only to build up height (ring bosses, stacked blocks) would float
