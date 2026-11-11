@@ -445,6 +445,22 @@ class SideProfileCutParams(Strict):
                     "outline; y = height above the back face of the base. Closed, frame base_lower_left. Everything of the base outside it is cut away")
 
 
+class SideHole(Strict):
+    x: float = Field(description="centre: from the LEFT edge of the base outline, along the part, as in the top view")
+    y: float = Field(description="centre: height above the back face of the base")
+    diameter: float = Field(gt=0)
+
+
+class SideCutParams(Strict):
+    holes: list[SideHole] = Field([], description="round holes seen as circles in the SIDE view (pinch-bolt holes, cross holes, counterbores)")
+    outlines: list[Annotated[Union[Polygon, Segments], Field(discriminator="shape")]] = Field(
+        [], description="openings seen in the SIDE view (the split of a clamp end, a window): closed, frame base_lower_left, x from the left edge of "
+                        "the base outline, y = height above the back face")
+    depth: Union[float, Literal["through"]] = Field("through", description="'through' the part's whole width, or a depth (a counterbore, a blind hole)")
+    from_edge: Literal["top_edge", "bottom_edge"] = Field("top_edge", description="with a depth: the side face it is drilled from, as the TOP or BOTTOM "
+                                                           "edge of the top-view outline")
+
+
 class AngledBossParams(Strict):
     position: Pos = Field(description="where the boss axis meets the FRONT face")
     diameter: float = Field(gt=0, description="boss diameter")

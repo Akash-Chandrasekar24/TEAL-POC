@@ -39,3 +39,21 @@ def test_the_volume_bound_is_negative_for_material_removed():
     before = Snapshot(doc="P", volume=1e-3, area=0, cog=(0, 0, 0), bodies=1, faces=6, edges=12, vertices=8)
     after = Snapshot(doc="P", volume=1e-3 - 300000e-9, area=0, cog=(0, 0, 0), bodies=1, faces=30, edges=84, vertices=56)
     assert judge("side", before, after, exp).ok                                      # a removal within the bound passes (it failed as wrong_sign)
+
+
+def side_cut(params):
+    return prepare(parse_reply({"list_version": "1", "unit": "mm", "projection": "third", "items": [
+        {"id": "F1", "feature": "extrude_profile_boss", "params": {"profile": {"shape": "rectangle", "width": 268, "height": 70}, "depth": 60}},
+        {"id": "F2", "feature": "side_cut", "params": params}]}))[1].feature
+
+
+def test_side_cut_through_is_two_cuts_and_a_counterbore_starts_at_its_floor():
+    through = side_cut({"holes": [{"x": 30, "y": 16, "diameter": 10.5}], "depth": "through"}).specs()
+    assert [s["direction"] for s in through] == [[0.0, 1.0, 0.0], [0.0, -1.0, 0.0]] and through[0]["plane"]["offset"] == 0.0
+    c = through[0]["entities"][0]
+    assert c["kind"] == "circle" and abs(c["center"][0] + 0.104) < 1e-9 and abs(c["center"][2] - 0.016) < 1e-9 and abs(c["radius"] - 0.00525) < 1e-12
+    top = side_cut({"holes": [{"x": 30, "y": 16, "diameter": 22}], "depth": 28, "from_edge": "top_edge"}).specs()[0]
+    bottom = side_cut({"holes": [{"x": 30, "y": 16, "diameter": 22}], "depth": 28, "from_edge": "bottom_edge"}).specs()[0]
+    assert abs(top["plane"]["offset"] - 0.007) < 1e-12 and top["direction"] == [0.0, 1.0, 0.0]          # floor at 35 - 28, cut out to the face
+    assert abs(bottom["plane"]["offset"] + 0.007) < 1e-12 and bottom["direction"] == [0.0, -1.0, 0.0]
+    assert side_cut({"holes": [{"x": 30, "y": 16, "diameter": 22}], "depth": 28}).expected().bound_mm3 < 0

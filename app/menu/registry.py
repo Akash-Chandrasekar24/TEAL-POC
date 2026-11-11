@@ -30,7 +30,7 @@ from app.features.revolve_base import RevolveBase, turned_base_info
 from app.features.revolve_on_face import RevolveOnFace
 from app.features.blades import RadialBlades, TurnedKeyway
 from app.features.standalone import Loft, Section, SheetMetalBase, SweptTube
-from app.features.ext_features import AngledBoss, Shell, SideProfileCut, SweptPassage
+from app.features.ext_features import AngledBoss, Shell, SideCut, SideProfileCut, SweptPassage
 from app.features.turned_ops import MM3_PER_UNIT3 as _MM3
 from app.features.turned_ops import CrossHole, TurnedAxial
 from app.features.outline_helpers import round_polygon_corners, rounded_rectangle
@@ -551,6 +551,22 @@ def build_side_profile_cut(p: P.SideProfileCutParams, ctx: BuildContext, label: 
     return SideProfileCut(ctx.unit, tuple(_shift(segs, W / 2, 0.0)), (W, H, ctx.thickness), label=label)
 
 
+def build_side_cut(p: P.SideCutParams, ctx: BuildContext, label: str) -> SideCut:
+    ctx.need_base("a side cut")
+    if ctx.turned:
+        raise FeatureRequestError("a side cut is for an extruded base (on a turned part use cross_hole)")
+    W, H = ctx.outline_wh
+    loops = [({"kind": "circle", "cx": h.x - W / 2, "cy": h.y, "diameter": h.diameter},) for h in p.holes]
+    for o in p.outlines:
+        if o.frame != "base_lower_left":
+            raise FeatureRequestError("a side-view outline is written with frame base_lower_left")
+        segs = round_polygon_corners([tuple(pt) for pt in o.points], o.corner_radius) if isinstance(o, P.Polygon) else [s.model_dump() for s in o.segments]
+        loops.append(tuple(_shift(segs, W / 2, 0.0)))
+    if not loops:
+        raise FeatureRequestError("give the holes or outlines seen in the side view")
+    return SideCut(ctx.unit, tuple(loops), (W, H, ctx.thickness), None if p.depth == "through" else p.depth, p.from_edge, label=label)
+
+
 def build_angled_boss(p: P.AngledBossParams, ctx: BuildContext, label: str) -> AngledBoss:
     ctx.need_base("an angled boss")
     if ctx.turned:
@@ -602,7 +618,7 @@ class MenuEntry:
                 "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole,
                 "radial_blades": RadialBlades, "turned_keyway": TurnedKeyway,
                 "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase,
-                "swept_passage": SweptPassage, "shell": Shell, "angled_boss": AngledBoss, "side_profile_cut": SideProfileCut}[self.name]
+                "swept_passage": SweptPassage, "shell": Shell, "angled_boss": AngledBoss, "side_profile_cut": SideProfileCut, "side_cut": SideCut}[self.name]
 
 
 _COMMON = frozenset({"unit", "plane", "label", "regression_delta_mm3", "outline_wh"})
@@ -800,4 +816,14 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
         {"outline": {"shape": "polygon", "frame": "base_lower_left", "points": [[0, 0], [120, 0], [120, 5], [80, 5], [70, 10], [50, 10], [40, 5], [0, 5]],
                      "corner_radius": 0}},
         build_side_profile_cut, _COMMON),
+    MenuEntry(
+        "side_cut", P.SideCutParams,
+        "After an extruded base: holes and openings drawn in the SIDE view, cut sideways across the part's width: pinch-bolt holes and their "
+        "counterbores (a hole 10.5 through + a 22 counterbore to depth 28 from one side), the split of a clamp end, a cross hole.",
+        "Give round holes by their centre (x from the left edge of the base outline, y = height above the back face) and diameter, or openings "
+        "as closed outlines in the same frame; 'through' the width, or a depth from the face at the top or bottom edge of the top-view outline. "
+        "A counterbored hole is two side cuts: the small hole through, the counterbore to its depth.",
+        ("an extruded base only", "straight across the width (square to the side view)", "the volume is checked as an upper bound"),
+        {"holes": [{"x": 20, "y": 5, "diameter": 4}], "depth": "through"},
+        build_side_cut, _COMMON),
 ]}

@@ -443,3 +443,81 @@ class SideProfileCut:
 
         res.verdicts.append(await ctx.verifier.run_step(self.label, both, self.expected()))
         return res
+
+
+@dataclass(frozen=True)
+class SideCut:
+    """Holes and openings drawn in the SIDE view, cut sideways (across the part's width): a pinch-bolt hole with its counterbore, the
+    split of a clamp end, a cross hole. Coordinates as in side_profile_cut (x centred on the base outline, z = height above the back face).
+    Through the width: two cuts from the mid plane. To a depth: from the face at the top or bottom edge of the top-view outline."""
+    unit: str
+    loops: tuple                         # closed loops: ((segments), ...) in the drawing unit; a circle is one {"kind": "circle", ...}
+    size: tuple                          # the base's (W, H, T)
+    depth: float | None = None           # None = through the whole width
+    from_edge: str = "top_edge"          # with a depth: the face it starts from, as seen in the top view
+    label: str = "side cut"
+
+    NAME = "side_cut"
+
+    def validate(self) -> None:
+        from app.geometry import profile_bounds
+        factor(self.unit)
+        W, H, T = self.size
+        if not self.loops:
+            raise FeatureRequestError("give at least one hole or outline")
+        if self.depth is not None and not 0 < self.depth <= H:
+            raise FeatureRequestError(f"the depth must be between 0 and the part's width ({H:g})")
+        if self.from_edge not in ("top_edge", "bottom_edge"):
+            raise FeatureRequestError("from_edge is top_edge or bottom_edge (the face at that edge of the top-view outline)")
+        for loop in self.loops:
+            x0, x1, z0, z1 = profile_bounds(list(loop))
+            if x1 < -W / 2 or x0 > W / 2 or z1 < 0 or z0 > T:
+                raise FeatureRequestError("a side-view hole or outline lies outside the part")
+
+    def area(self) -> float:
+        from app.geometry import profile_area
+        return sum(profile_area(list(loop)) for loop in self.loops)
+
+    def specs(self) -> list[dict]:
+        self.validate()
+        from .extrude_profile_boss import ext_entities
+        from .base import PlaneFrame
+        f = factor(self.unit)
+        W, H, T = self.size
+        frame = PlaneFrame("top")
+        flip = lambda seg: {**seg, **{k: seg[k] * f for k in ("x1", "x2", "cx", "diameter") if k in seg},
+                            **{k: -seg[k] * f for k in ("y1", "y2", "cy") if k in seg}, **({"dir": -seg["dir"]} if "dir" in seg else {})}
+        segs = [flip(seg) for loop in self.loops for seg in loop]
+        if self.depth is None:                                                  # through: both ways from the mid plane (see SideProfileCut)
+            one = {"operation": "cut", "plane": {"datum": "top", "offset": 0.0}, "entities": ext_entities(segs, frame, 0.0),
+                   "direction": [0.0, 1.0, 0.0], "end": "blind", "depth": (H / 2 + 5) * f}
+            return [one, {**one, "direction": [0.0, -1.0, 0.0]}]
+        # sketch at the FLOOR (inside the part) and cut out toward the face: measured in SolidWorks, a sketch on the face plane cutting
+        # inward is refused; from the floor outward it removes the exact counterbore
+        sign = 1 if self.from_edge == "top_edge" else -1
+        y0 = sign * (H / 2 - self.depth) * f
+        return [{"operation": "cut", "plane": {"datum": "top", "offset": y0}, "entities": ext_entities(segs, frame, y0),
+                 "direction": [0.0, float(sign), 0.0], "end": "blind", "depth": self.depth * f}]
+
+    def expected(self) -> Expect:
+        W, H, T = self.size
+        reach = H if self.depth is None else self.depth
+        return Expect(bound_mm3=-self.area() * reach * MM3_PER_UNIT3[self.unit], bodies=None)    # at most: the part need not be full across
+
+    def expected_delta_mm3(self) -> float:
+        return self.expected().bound_mm3
+
+    async def apply(self, ctx: FeatureContext) -> FeatureResult:
+        specs = self.specs()
+        res = FeatureResult(self.NAME)
+
+        async def run():
+            r = None
+            for spec in specs:
+                r = await ctx.sw.geometry("ext_sketch_extrude", spec)
+                if not r.ok:
+                    return r
+            return r
+
+        res.verdicts.append(await ctx.verifier.run_step(self.label, run, self.expected()))
+        return res
