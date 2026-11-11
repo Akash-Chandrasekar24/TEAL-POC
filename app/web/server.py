@@ -640,6 +640,8 @@ def parts_overview(rid: str) -> dict:
     parts = [{**{k: v for k, v in p.items() if k != "views"}, "views": [{"page": v["page"], "no": v["no"], "label": v["label"]} for v in p["views"]],
               "list": lists.get(p["id"])} for p in detect_parts(result)]
     batch = load_batch(rid)
+    if not (batch and batch["id"] in _ACTIVE):
+        start_lists_early(rid)                                                    # the SolidWorks page is open: get the build lists ready
     if batch and batch["phase"] in ("preparing", "resolving", "building", "assembling") and batch["id"] not in _ACTIVE:
         batch["phase"] = "interrupted"                                            # the server restarted mid-run: offer to start again
     if batch:                                                                     # live status of every part job the batch started
@@ -666,6 +668,41 @@ _BATCH_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cad-batch") 
 _PREP_POOL = ThreadPoolExecutor(max_workers=3, thread_name_prefix="build-lists")      # AI work for other drawings must not wait behind a build
 _BATCH_LOCK = threading.Lock()
 _PREP_WORKERS = 4                         # build lists are independent model calls (45-135 s each): write them side by side
+_EARLY: dict = {}                         # (result id, part id) -> Future: a build list started BEFORE the button was pressed
+_EARLY_LOCK = threading.Lock()
+
+
+def start_lists_early(rid: str) -> None:
+    """Write every missing build list in the background as soon as the measurements are approved (and when the SolidWorks page opens), so
+    "Build in SolidWorks" finds them ready: writing one takes 1.5-3 minutes (one high-effort model call). Nothing is built; never raises."""
+    try:
+        from app.web.parts import detect_parts, latest_lists
+        result = result_with_design(rid)
+        if any("human review required" in q or "confirm this" in q for q in result["drawing_model"].get("issues", [])):
+            return                                                               # not approved yet: create_part_list would refuse
+        lists = latest_lists(PART_LISTS, rid)
+        for part in detect_parts(result):
+            key = (rid, part["id"])
+            with _EARLY_LOCK:
+                if part["id"] in lists or (key in _EARLY and not _EARLY[key].done()):
+                    continue
+                if key in _EARLY and _EARLY[key].exception() is not None:
+                    continue                                                     # it failed once: the button writes it (and shows why)
+                _EARLY[key] = _PREP_POOL.submit(create_part_list, rid, part["id"])
+    except Exception:                                                            # noqa: BLE001 - an early start is only a head start
+        pass
+
+
+def _early_list(rid: str, part_id: str):
+    """The build list an early start is writing for this part (waits for it), or None."""
+    with _EARLY_LOCK:
+        future = _EARLY.get((rid, part_id))
+    if future is None:
+        return None
+    try:
+        return future.result()
+    except Exception:                                                            # noqa: BLE001 - the flow then writes it itself
+        return None
 _ACTIVE = set()                           # batch ids running in THIS server process; a batch left "running" by a restart is interrupted
 
 
@@ -867,7 +904,7 @@ def _one_flow(rid, bid, llm_name):
         def one(item):                                                   # a ready build list for this part, whatever it takes
             mark(item, status="preparing")
             try:
-                art = latest_lists(PART_LISTS, rid).get(item["part_id"])
+                art = latest_lists(PART_LISTS, rid).get(item["part_id"]) or _early_list(rid, item["part_id"])
                 if not art:
                     art = create_part_list(rid, item["part_id"], llm_name)
                 if art["check"]["status"] != "ready":
@@ -1545,7 +1582,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not _PLAN_LOCK.acquire(blocking=False):
                     return self._json(409, {"error": "A review is already being saved. Wait for it to finish."})
                 try:
-                    return self._json(200, review_result(str(body.get("result_id", "")), str(body.get("source_hash", "")), Resolutions.model_validate(body.get("resolutions") or {})))
+                    reviewed = review_result(str(body.get("result_id", "")), str(body.get("source_hash", "")), Resolutions.model_validate(body.get("resolutions") or {}))
+                    start_lists_early(str(body.get("result_id", "")))             # measurements approved: write the build lists now, not at the button
+                    return self._json(200, reviewed)
                 finally:
                     _PLAN_LOCK.release()
             if self.path == "/api/assembly/model":

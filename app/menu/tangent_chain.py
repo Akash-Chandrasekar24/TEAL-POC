@@ -224,6 +224,11 @@ def _solve(chain: TangentChain, cen: list[Point]) -> list[dict]:
         if sweep == 0.0:
             pout[i] = qin[i]                                    # no arc: the line leaves exactly where the previous one arrived
         arcs.append(sweep)
+    for i in range(n):                                          # a blend arc meets its neighbours: the "line" between them has no length
+        j = (i + 1) % n                                         # (SolidWorks refuses a zero-length line: the triple clamp's base failed)
+        if not touching[i] and math.hypot(qin[j][0] - pout[i][0], qin[j][1] - pout[i][1]) < 1e-4:   # 0.1 µm in mm: far below any real line
+            touching[i] = True
+            qin[j] = pout[i]                                    # the next arc starts EXACTLY where this one ends
     for i, c in enumerate(circles):
         j = (i + 1) % n
         if arcs[i] > 0.0:

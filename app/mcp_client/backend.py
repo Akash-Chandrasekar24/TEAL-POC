@@ -22,7 +22,7 @@ class BackendUnavailable(RuntimeError):
 
 
 APPLICATION_TOOL_PARAMETERS = {"inspect_assembly": {"inspection_type"}, "inspect_drawing": set(),
-                               "ext_sweep": {"spec"}, "ext_shell": {"spec"}, "ext_clear_selection": set(), "ext_feature_count": set(), "ext_delete_after": {"count"}, "ext_drill": {"spec"}, "ext_bbox": set(), "ext_command_in_progress": {"on"}, "ext_angled_plane": {"spec"}, "ext_sketch_extrude": {"spec"}, "ext_revolve": {"spec"}, "ext_annotate": {"spec"}}
+                               "ext_sweep": {"spec"}, "ext_shell": {"spec"}, "ext_clear_selection": set(), "ext_feature_count": set(), "ext_delete_after": {"count"}, "ext_drill": {"spec"}, "ext_bbox": set(), "ext_command_in_progress": {"on"}, "ext_angled_plane": {"spec"}, "ext_sketch_extrude": {"spec"}, "ext_revolve": {"spec"}, "ext_annotate": {"spec"}, "ext_dimension_sketches": {"spec"}, "ext_set_tolerances": {"spec"}}
 
 
 def extension_hashes() -> dict[str, str]:
@@ -157,7 +157,9 @@ def catalog(tools: list | None = None) -> dict:
                                   {"name": "ext_angled_plane", "kind": "model", "layer": "application_mcp", "purpose": "Reference plane at an angle through an axis, direction checked"},
                                   {"name": "ext_sketch_extrude", "kind": "model", "layer": "application_mcp", "purpose": "Sketch + extrude (one or both ways) on any plane, direction by vector"},
                                   {"name": "ext_revolve", "kind": "model", "layer": "application_mcp", "purpose": "Revolve on any plane about the sketch's centreline"},
-                                  {"name": "ext_annotate", "kind": "model", "layer": "application_mcp", "purpose": "Notes with leaders on measured faces (drawing vs model)"}],
+                                  {"name": "ext_annotate", "kind": "model", "layer": "application_mcp", "purpose": "Notes with leaders on measured faces (drawing vs model)"},
+                                  {"name": "ext_dimension_sketches", "kind": "model", "layer": "application_mcp", "purpose": "Real dimensions on every sketch of the part"},
+                                  {"name": "ext_set_tolerances", "kind": "model", "layer": "application_mcp", "purpose": "Tolerances on named dimensions"}],
             "custom_features": [{"name": e.name, "summary": e.summary, "limits": list(e.limits),
                                  "layer": "application", "execution": "upstream_mcp"} for e in MENU.values()],
             "note": "Native tool availability is separate from the validated custom build-list menu. Human approval and feature checks remain required."}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import uuid
 from dataclasses import asdict
@@ -30,16 +31,9 @@ async def _preview(approved, job_dir):
                               progress=Progress(job_dir)).run(plan)
         finish = None
         if report.ok:
-            from app.runner.measure import note_texts
             info = Path(job_dir) / "drawing.json"
             general = json.loads(info.read_text(encoding="utf-8")).get("general_tolerance") if info.is_file() else None
-            printed = {i.id: i.printed for i in plan.items}
-            notes = [n for it in report.items for n in note_texts(it.id, it.measured or {}, printed.get(it.id, ""), general, plan.unit)]
-            if notes and "ext_annotate" in (getattr(sw, "tool_names", None) or []):
-                try:                                                          # drawing vs model, readable in SolidWorks itself
-                    await sw.geometry("ext_annotate", {"notes": notes[:60]})
-                except Exception as ex:                                       # noqa: BLE001 - notes are information, never a reason to stop
-                    report.warnings.append(f"measurement notes not placed in SolidWorks: {ex}"[:300])
+            await dimension_part(sw, plan, general, report)
             # Private tessellation is needed to show a rotatable preview. No STEP
             # or downloadable native deliverable is produced at this stage.
             folder = job_dir / "private" / uuid.uuid4().hex[:12]
@@ -52,6 +46,42 @@ async def _preview(approved, job_dir):
                 raise ValueError("Cannot verify the saved preview's active configuration")
             finish["configuration"] = workspace.json()["configuration"]
     return {"report": asdict(report), "finish": finish}
+
+
+async def dimension_part(sw, plan, general, report) -> None:
+    """Real SolidWorks dimensions on the built part (lengths, diameters, radii, angles: what Smart Dimension draws), each with the drawing's
+    tolerance: the callout that prints that value, else the drawing's general tolerance, else ISO 2768-m. They are added with the sketch's own
+    values, so the geometry does not change: the volume is compared before and after to prove it."""
+    from app.drawing.tolerance import judge
+    from app.features.base import factor
+    if "ext_dimension_sketches" not in (getattr(sw, "tool_names", None) or []):
+        return
+    try:
+        before = (await sw.analyze_model("mass_properties")).text
+        r = await sw.geometry("ext_dimension_sketches", {"max_segments": 40})
+        if not r.ok:
+            report.warnings.append(f"dimensions not added in SolidWorks: {r.text[:200]}")
+            return
+        after = (await sw.analyze_model("mass_properties")).text
+        vol = lambda t: (re.search(r"volume=([0-9.Ee+-]+)", t) or [None, None])[1]
+        if vol(before) != vol(after):
+            report.warnings.append(f"adding the dimensions changed the volume ({vol(before)} -> {vol(after)} m3): check the part")
+        printed = ", ".join(i.printed for i in plan.items if i.printed)
+        mm = factor(plan.unit) * 1000
+        tols = []
+        for d in r.json().get("dimensions", []):
+            if d["kind"] == "angle":
+                continue
+            value_mm = d["value"] * 1000
+            j = judge({"what": d["kind"], "drawing": value_mm, "model": value_mm, "unit": "mm"}, printed, general, mm)
+            if j.get("tol"):
+                tols.append({"name": d["name"], "lo": j["tol"][0] / 1000, "hi": j["tol"][1] / 1000})
+        if tols:
+            await sw.geometry("ext_set_tolerances", {"dims": tols})
+        report.final["dimensions_in_solidworks"] = {"added": len(r.json().get("dimensions", [])), "with_tolerance": len(tols),
+                                                    "skipped_sketches": r.json().get("skipped_sketches", [])}
+    except Exception as ex:                                                   # noqa: BLE001 - dimensions are information, never a reason to stop
+        report.warnings.append(f"dimensions not added in SolidWorks: {type(ex).__name__}: {ex}"[:300])
 
 
 def preview_build(approved, job_dir):

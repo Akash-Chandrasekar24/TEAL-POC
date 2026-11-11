@@ -4,6 +4,7 @@
 // convention is assumed. Never starts SolidWorks: it attaches to the running instance, on the STA thread.
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Web.Http;
 using Newtonsoft.Json.Linq;
@@ -83,6 +84,46 @@ namespace DrawingToSolidworks
                 model.ClearSelection2(true);
                 model.GraphicsRedraw2();
                 return new JObject { ["ok"] = true, ["notes"] = placed };
+            });
+        }
+
+        // Real SolidWorks dimensions on the built part (like Smart Dimension): every sketch the build made gets a length on each line, a
+        // diameter on each circle, a radius on each arc and an angle between two sloped lines that meet; shown with the feature dimensions.
+        // They are added with the sketch's current values, so the geometry does not change (the caller checks the volume before / after).
+        [HttpPost, Route("api/ext/dimension_sketches")]
+        public IHttpActionResult DimensionSketches([FromBody] JObject body) { return Run(() => DoDimensionSketches(body)); }
+
+        // A tolerance on each named dimension: {dims: [{name: "D1@Sketch3", lo: m, hi: m}]}; lo = -hi gives a symmetric one.
+        [HttpPost, Route("api/ext/set_tolerances")]
+        public IHttpActionResult SetTolerances([FromBody] JObject body)
+        {
+            return Run(() =>
+            {
+                var model = Part();
+                int set = 0;
+                var view = model.ActiveView as IModelView;
+                if (view != null) view.EnableGraphicsUpdate = false;
+                model.FeatureManager.EnableFeatureTree = false;
+                try
+                {
+                foreach (JObject d in (JArray)body["dims"])
+                {
+                    var dim = model.Parameter(d.Value<string>("name")) as IDimension;
+                    if (dim == null) continue;
+                    double lo = d.Value<double>("lo"), hi = d.Value<double>("hi");
+                    var tol = dim.Tolerance;
+                    bool sym = Math.Abs(lo + hi) < 1e-12;
+                    tol.Type = (int)(sym ? swTolType_e.swTolSYMMETRIC : swTolType_e.swTolBILAT);
+                    if (tol.SetValues2(lo, hi, (int)swSetValueInConfiguration_e.swSetValue_InThisConfiguration, null)) set++;
+                }
+                }
+                finally
+                {
+                    model.FeatureManager.EnableFeatureTree = true;
+                    if (view != null) view.EnableGraphicsUpdate = true;
+                }
+                model.GraphicsRedraw2();
+                return new JObject { ["ok"] = true, ["set"] = set };
             });
         }
 
@@ -232,6 +273,11 @@ namespace DrawingToSolidworks
         {
             private readonly IMathUtility _math; private readonly MathTransform _m2s;
             public Frame(ISketch sketch) { _math = (IMathUtility)App().GetMathUtility(); _m2s = sketch.ModelToSketchTransform; }
+            public double[] ToModel(double[] sk)
+            {
+                var pt = (IMathPoint)_math.CreatePoint(sk);
+                return ((IMathPoint)pt.MultiplyTransform((MathTransform)_m2s.Inverse())).ArrayData as double[];
+            }
             public double[] ToSketch(double[] model)
             {
                 var pt = (IMathPoint)_math.CreatePoint(model);
@@ -439,6 +485,105 @@ namespace DrawingToSolidworks
             var result = Done(model, f, before);
             result["sketch"] = sketch;
             return result;
+        }
+
+        private static JObject DoDimensionSketches(JObject body)
+        {
+            var model = Part();
+            int maxSegs = body.Value<int?>("max_segments") ?? 40;
+            App().SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swInputDimValOnCreate, false);     // no "Modify" box per dimension
+            var sketches = new List<IFeature>();
+            for (var f = model.FirstFeature() as IFeature; f != null; f = f.GetNextFeature() as IFeature)
+            {
+                if (f.GetTypeName2() == "ProfileFeature") sketches.Add(f);
+                var sub = f.GetFirstSubFeature() as IFeature;                // sketches absorbed by a feature sit under it
+                for (; sub != null; sub = sub.GetNextSubFeature() as IFeature) if (sub.GetTypeName2() == "ProfileFeature") sketches.Add(sub);
+            }
+            var made = new JArray(); var skipped = new JArray();
+            var view = model.ActiveView as IModelView;
+            if (view != null) view.EnableGraphicsUpdate = false;
+            model.FeatureManager.EnableFeatureTree = false;
+            try
+            {
+            foreach (var feat in sketches)
+            {
+                var sketch = feat.GetSpecificFeature2() as ISketch;
+                var segs = (sketch?.GetSketchSegments() as object[]) ?? new object[0];
+                var real = segs.Cast<ISketchSegment>().Where(s => !s.ConstructionGeometry).ToList();
+                if (real.Count == 0 || real.Count > maxSegs) { skipped.Add(feat.Name); continue; }
+                model.ClearSelection2(true);
+                if (!feat.Select2(false, 0)) continue;
+                model.EditSketch();
+                var frame = new Frame(model.SketchManager.ActiveSketch ?? sketch);
+                var lines = new List<ISketchLine>();
+                foreach (var seg in real)
+                {
+                    IDisplayDimension dd = null;
+                    model.ClearSelection2(true);
+                    int type = seg.GetType();
+                    if (type == (int)swSketchSegments_e.swSketchLINE)
+                    {
+                        var ln = (ISketchLine)seg; lines.Add(ln);
+                        var a = (ISketchPoint)ln.GetStartPoint2(); var b = (ISketchPoint)ln.GetEndPoint2();
+                        double dx = b.X - a.X, dy = b.Y - a.Y, len = Math.Sqrt(dx * dx + dy * dy);
+                        if (len < 1e-6) continue;
+                        double off = Math.Max(0.006, 0.12 * len);                 // the dimension line beside the edge, outside the part's side of it
+                        var at = frame.ToModel(new[] { (a.X + b.X) / 2 - dy / len * off, (a.Y + b.Y) / 2 + dx / len * off, 0.0 });
+                        if (seg.Select4(false, null)) dd = model.AddDimension2(at[0], at[1], at[2]) as IDisplayDimension;
+                    }
+                    else if (type == (int)swSketchSegments_e.swSketchARC)
+                    {
+                        var arc = (ISketchArc)seg; var c = (ISketchPoint)arc.GetCenterPoint2(); double r = arc.GetRadius();
+                        var at = frame.ToModel(new[] { c.X + r * 1.25, c.Y + r * 1.25, 0.0 });
+                        if (seg.Select4(false, null)) dd = model.AddDimension2(at[0], at[1], at[2]) as IDisplayDimension;
+                    }
+                    if (dd != null)
+                    {
+                        var dim = dd.GetDimension2(0);
+                        made.Add(new JObject { ["name"] = dim.FullName, ["value"] = dim.SystemValue,
+                            ["kind"] = type == (int)swSketchSegments_e.swSketchLINE ? "length" : (((ISketchArc)seg).IsCircle() == 1 ? "diameter" : "radius") });
+                    }
+                }
+                // an angle between two sloped lines that meet (like the trapezoid's sides): not for square corners
+                for (int i = 0; i < lines.Count; i++)
+                    for (int j = i + 1; j < lines.Count; j++)
+                    {
+                        var p1 = (ISketchPoint[])new[] { (ISketchPoint)lines[i].GetStartPoint2(), (ISketchPoint)lines[i].GetEndPoint2() };
+                        var p2 = (ISketchPoint[])new[] { (ISketchPoint)lines[j].GetStartPoint2(), (ISketchPoint)lines[j].GetEndPoint2() };
+                        ISketchPoint shared = null; ISketchPoint far1 = null, far2 = null;
+                        for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++)
+                                if (Math.Abs(p1[a].X - p2[b].X) < 1e-7 && Math.Abs(p1[a].Y - p2[b].Y) < 1e-7) { shared = p1[a]; far1 = p1[1 - a]; far2 = p2[1 - b]; }
+                        if (shared == null) continue;
+                        double ux = far1.X - shared.X, uy = far1.Y - shared.Y, vx = far2.X - shared.X, vy = far2.Y - shared.Y;
+                        double nu = Math.Sqrt(ux * ux + uy * uy), nv = Math.Sqrt(vx * vx + vy * vy);
+                        if (nu < 1e-6 || nv < 1e-6) continue;
+                        double cos = (ux * vx + uy * vy) / (nu * nv), deg = Math.Acos(Math.Max(-1, Math.Min(1, cos))) * 180 / Math.PI;
+                        if (Math.Abs(deg - 90) < 0.5 || deg > 179.5 || deg < 0.5) continue;
+                        double bx = ux / nu + vx / nv, by = uy / nu + vy / nv, nb = Math.Sqrt(bx * bx + by * by);
+                        if (nb < 1e-9) continue;
+                        double reach = 0.35 * Math.Min(nu, nv);
+                        var at = frame.ToModel(new[] { shared.X + bx / nb * reach, shared.Y + by / nb * reach, 0.0 });
+                        model.ClearSelection2(true);
+                        if (((ISketchSegment)lines[i]).Select4(false, null) && ((ISketchSegment)lines[j]).Select4(true, null))
+                        {
+                            var dd = model.AddDimension2(at[0], at[1], at[2]) as IDisplayDimension;
+                            if (dd != null) { var dim = dd.GetDimension2(0); made.Add(new JObject { ["name"] = dim.FullName, ["value"] = dim.SystemValue, ["kind"] = "angle" }); }
+                        }
+                    }
+                model.ClearSelection2(true);
+                model.SketchManager.InsertSketch(false);                    // close the sketch without a rebuild: one rebuild at the end
+            }
+            }
+            finally
+            {
+                model.FeatureManager.EnableFeatureTree = true;
+                if (view != null) view.EnableGraphicsUpdate = true;
+            }
+            model.Extension.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swDisplayFeatureDimensions, 0, true);
+            model.Extension.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swDisplayAnnotations, 0, true);
+            model.ForceRebuild3(false);
+            model.GraphicsRedraw2();
+            return new JObject { ["ok"] = true, ["dimensions"] = made, ["skipped_sketches"] = skipped };
         }
 
         private static JObject DoSketchExtrude(JObject body)

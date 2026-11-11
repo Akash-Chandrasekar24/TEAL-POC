@@ -32,3 +32,16 @@ def test_a_convex_blend_bulges_out_and_a_too_small_radius_is_refused():
         chain(40, "ccw"); assert False                                            # refused when the outline is read
     except ValueError as ex:
         assert "cannot touch both" in str(ex)
+
+
+def test_a_blend_arc_that_meets_its_neighbours_gives_no_zero_length_line():
+    """User's triple clamp: an R350 blend between R35 and R33 circles left two zero-length lines; SolidWorks refused the base sketch."""
+    import math
+    from app.menu.tangent_chain import TangentChain, solve_chain
+    chain = TangentChain.model_validate({"shape": "tangent_chain", "frame": "base_lower_left", "circles": [
+        {"id": "A", "centre": {"x": 233, "y": 75}, "radius": 35, "turn": "ccw"}, {"id": "B", "centre": {"blend": True}, "radius": 350, "turn": "cw"},
+        {"id": "C", "centre": {"x": 33, "y": 75}, "radius": 33, "turn": "ccw"}, {"id": "D", "centre": {"x": 133, "y": 35}, "radius": 35, "turn": "ccw"}]})
+    segs = solve_chain(chain)
+    assert all(math.hypot(s["x2"] - s["x1"], s["y2"] - s["y1"]) > 1e-4 for s in segs if s["kind"] == "line")
+    for a, b in zip(segs, segs[1:] + segs[:1]):
+        assert (a["x2"], a["y2"]) == (b["x1"], b["y1"])                                  # still closed, end points shared exactly

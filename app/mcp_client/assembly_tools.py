@@ -95,6 +95,17 @@ def register(mcp):
         return geometry("/api/ext/angled_plane", spec, 240)
 
     @mcp.tool()
+    def ext_dimension_sketches(spec: dict) -> str:
+        """Real dimensions on the built part: lengths, diameters, radii and angles on every sketch (sketches over max_segments are skipped).
+        spec {max_segments?}. Returns {dimensions: [{name, value (m or rad), kind}], skipped_sketches}."""
+        return geometry("/api/ext/dimension_sketches", spec, 600)
+
+    @mcp.tool()
+    def ext_set_tolerances(spec: dict) -> str:
+        """Tolerances on named dimensions: spec {dims: [{name, lo, hi}]} in metres (lo = -hi: symmetric)."""
+        return geometry("/api/ext/set_tolerances", spec, 240)
+
+    @mcp.tool()
     def ext_annotate(spec: dict) -> str:
         """Notes with leaders on faces of the active part: spec {notes: [{point: [x,y,z] m on the face, text}]}. Annotations are switched on."""
         return geometry("/api/ext/annotate", spec, 240)
