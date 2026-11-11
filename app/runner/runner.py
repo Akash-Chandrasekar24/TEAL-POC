@@ -123,6 +123,11 @@ def template_for_unit(unit: str) -> tuple[str | None, str | None]:
     return None, "no millimetre template configured (SW_TEMPLATE_MM): the default template is used, so STEP / SLDPRT units are inches"
 
 
+def _say(item) -> str:
+    """A step in a few words for the page: the feature and the printed text it comes from."""
+    return f"{item.feature.replace('_', ' ')}" + (f" ({item.printed})" if getattr(item, "printed", "") else "")
+
+
 # ------------------------------------------------------------------ offline preparation
 def prepare(bl: BuildList) -> list[Prepared]:
     """Every item -> its validated feature request, in order. Raises RequestProblem on the first item that cannot be built."""
@@ -173,14 +178,30 @@ def validate_list(bl: BuildList) -> list[str]:
 
 
 # ------------------------------------------------------------------ the runner
+_RENDER = None                       # one thread draws the pictures (matplotlib is not thread-safe)
+
+
+def _render_pool():
+    global _RENDER
+    if _RENDER is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _RENDER = ThreadPoolExecutor(1)
+    return _RENDER
+
+
 class Runner:
     agent = None                     # no SolidWorks agent unless one is given
     look_dir = None
+    progress = None                  # app.runner.progress.Progress: what the SolidWorks page shows while the part is built
+    _cover_ids: dict = {}
 
     def __init__(self, sw: SolidWorksClient, *, expected_docs: tuple[str, ...] = (), log: RunLog | None = None, env_retries: int = 1,
-                 agent=None, look_dir: Path | None = None):
+                 agent=None, look_dir: Path | None = None, progress=None):
         self.sw, self.expected_docs, self.log, self.env_retries = sw, tuple(expected_docs), log, env_retries
         self.agent, self.look_dir = agent, look_dir                 # the SolidWorks agent (app.agent.sw_agent): reworks a step that went wrong
+        self.progress = progress
+        if agent is not None and progress is not None:
+            agent.log.listener = self._agent_said
 
     async def run(self, bl: BuildList, *, gate: bool = True) -> RunReport:
         """Build the whole list. Never raises for a failed step (the report says what failed); raises RunnerRefused / RequestProblem before any work."""
@@ -195,6 +216,10 @@ class Runner:
             report = await self._run_once(bl, prepared)
             report.attempts = attempts
             if report.ok or report.failure is None or report.failure.kind != "environment" or attempts > self.env_retries:
+                if self.progress is not None:
+                    if report.failure is not None:
+                        self.progress.log("warn", f"Stopped at {report.failure.item_id}: {report.failure.message[:200]}")
+                    self.progress.finish(report.ok)
                 return report
             self._event("environment_retry", failure=report.failure.message)
 
@@ -231,10 +256,16 @@ class Runner:
         verifier = StepVerifier(self.sw, self.log, doc=report.document)
         ctx = FeatureContext(self.sw, verifier, self.log)
         covers = self._covers(bl, prepared)
+        self._cover_ids = {p.item.id: [i.id for i in c] for p, c in zip(prepared, covers)}
+        if self.progress is not None:
+            self.progress.plan([i for c in covers for i in c])
         built: dict[str, Any] = {}                                                  # id -> the item as it stands in the part (the agent's version when it reworked one)
         for n, (p, rep) in enumerate(zip(prepared, report.items)):
             t0 = time.time()
             self._event("item_start", id=p.item.id, feature=p.item.feature)
+            if self.progress is not None:
+                self.progress.step(self._cover_ids.get(p.item.id, [p.item.id]), "building")
+                self.progress.log("step", f"Building {' + '.join(self._cover_ids.get(p.item.id, [p.item.id]))}: {_say(p.item)}")
             mark = await self._feature_count() if n > 0 else None
             try:
                 result = await p.feature.apply(ctx)
@@ -274,6 +305,7 @@ class Runner:
             if result.ok:
                 self._finish_item(rep, t0, "ok", "")
                 built.update({i.id: i for i in covers[n]})
+                await self._snapshot(n, p.item.id)
                 continue
             failure = self._classify(p, result)
             if n > 0 and failure.kind != "environment":
@@ -343,7 +375,13 @@ class Runner:
         await ctx.verifier.current()                                                    # back on our document (an export can activate another)
         if not r.ok or not (folder / "now.stl").is_file():
             return {"status": "failed", "message": f"could not export the part: {r.text[:200]}"}
-        png = await asyncio.to_thread(render_views_png, folder / "now.stl", folder / "now.png", "the part as built now")
+        png = await asyncio.get_running_loop().run_in_executor(_render_pool(), render_views_png, folder / "now.stl", folder / "now.png", "the part as built now")
+        if self.progress is not None:
+            import shutil
+            name = f"look_{folder.name}.png"
+            (self.progress.folder / "live").mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(png, self.progress.folder / "live" / name)
+            self.progress.image(name, "AI agent's look")
         return {"status": "ok", "image": str(png), "message": "picture attached: TOP, FRONT/elevation, SIDE, 3D", **await self._measure(ctx)}
 
     @staticmethod
@@ -458,6 +496,9 @@ class Runner:
                    "part_now": await self._measure(ctx)}
         warn = len(report.warnings) - 1
         t0 = time.time() - rep.seconds
+        if self.progress is not None:
+            self.progress.step(self._cover_ids.get(p.item.id, [p.item.id]), "fixing", rep.message)
+            self.progress.log("agent", f"AI agent is fixing {p.item.id}: SolidWorks said: {rep.message[:200]}")
         box = [mark, rep.status, p.item]                                                # [feature count before the step, its status in the part, the item that made it]
         end = await self.agent.fix(problem, self._tools(bl, ctx, built, "fix", p.item.id, box))
         why = str((end.get("args") or {}).get("reason") or end.get("why") or "")[:200]
@@ -504,10 +545,15 @@ class Runner:
                  "list": [i.model_dump() for i in bl.items], "warnings": report.warnings[-10:], "part_now": await self._measure(ctx),
                  "feature_cards": {n: feature_card(n) for n in sorted(likely) if n in MENU}}   # read here: no describe call (a turn) needed for these
         before = set(built)
+        if self.progress is not None:
+            self.progress.data["current"] = "review"
+            self.progress.log("agent", "AI agent compares the part with the drawing")
         end = await self.agent.review(state, self._tools(bl, ctx, built, "review", "-", [None]))
         for new_id in [k for k in built if k not in before]:
             item = built[new_id]
             report.items.append(ItemReport(new_id, item.feature, "ok", message=f"added by the SolidWorks agent: {json.dumps(item.params)}"[:400]))
+            if self.progress is not None:
+                self.progress.add_step(item, "ok", "added by the AI agent")
         if end.get("tool") != "done":
             report.warnings.append(f"SolidWorks agent review ended: {(end.get('args') or {}).get('reason', end.get('tool'))}"[:300])
         report.agent = {"turns": self.agent.log.turns, "calls": self.agent.log.calls, "review": end.get("args")}
@@ -533,6 +579,43 @@ class Runner:
     def _finish_item(self, rep: ItemReport, t0: float, status: str, message: str) -> None:
         rep.status, rep.message, rep.seconds = status, message, time.time() - t0
         self._event("item_end", id=rep.id, status=status, message=message, seconds=round(rep.seconds, 2))
+        if self.progress is not None:
+            self.progress.step(self._cover_ids.get(rep.id, [rep.id]), status, message)
+            if status == "ok":
+                self.progress.log("ok", f"{rep.id} done in {rep.seconds:.0f} s" + (f": {message}" if message else ""))
+            else:
+                self.progress.log("warn", f"{rep.id} {status.replace('_', ' ')}: {message}")
+
+    # ---------------------------------------------------------------- live progress (the SolidWorks page)
+    def _agent_said(self, entry: dict) -> None:
+        r = entry.get("result") or {}
+        what = {"look": "looks at the part beside the drawing", "measure": "measures the part", "describe": f"reads the {(entry.get('args') or {}).get('feature', '')} card",
+                "keep": "keeps the step as it is", "skip": "gives up on this step", "done": "finishes the review"}.get(entry["tool"], f"tries {entry['tool']}")
+        where = f" {entry['item']}" if entry.get("item") not in (None, "-") else ""
+        tail = f" -> {r.get('status')}: {str(r.get('message', ''))[:160]}" if r else ""
+        self.progress.log("agent", f"AI agent{where} {what}" + (f" ({entry['why']})" if entry.get("why") else "") + tail)
+
+    async def _snapshot(self, n: int, step_id: str) -> None:
+        """A picture of the part after a step, drawn on another thread (the build goes on)."""
+        if self.progress is None:
+            return
+        try:
+            stl = self.progress.folder / "live" / f"s{n:02d}.stl"
+            if "ext_clear_selection" in (getattr(self.sw, "tool_names", None) or []):
+                await self.sw.call("ext_clear_selection")
+            r = await self.sw.export_document("STL", stl)
+            if r.ok and stl.is_file():
+                asyncio.get_running_loop().run_in_executor(_render_pool(), self._draw_live, stl, step_id)
+        except Exception:                                                                # noqa: BLE001 - a picture is never worth stopping a build
+            pass
+
+    def _draw_live(self, stl: Path, step_id: str) -> None:
+        try:
+            from app.preview import render_stl_png
+            png = render_stl_png(stl, stl.with_suffix(".png"), f"after {step_id}")
+            self.progress.image(png.name, step_id)
+        except Exception:                                                                # noqa: BLE001
+            pass
 
     @staticmethod
     def _classify(p: Prepared, result) -> Failure:

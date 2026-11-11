@@ -52,8 +52,12 @@ function flowBox(r, data, reload, status) {
     const why = it.job?.detail || it.detail;
     if (bad && why) row.append(el("small", { text: why.slice(0, 220) }));
     if (it.job && ok) row.append(el("button", { type: "button", class: "m-link", text: "Open", onclick: () => { r.workflowJob = it.job; window.dispatchEvent(new CustomEvent("studio:job", { detail: { job: it.job } })); show(r); pollJob(r); } }));
+    if (it.job_id && ph !== "building") row.append(el("button", { type: "button", class: "m-link", text: r.liveOpen === it.job_id ? "Hide the build log" : "Show the build log",
+      onclick: () => { r.liveOpen = r.liveOpen === it.job_id ? null : it.job_id; reload(); } }));
+    if (it.job_id && (ph === "building" || r.liveOpen === it.job_id)) row.append(livePanel(r, it.job_id, ph === "building"));   // what SolidWorks is doing now
     return row;
   });
+  const nextPart = running && items.find((it) => ["to_prepare", "preparing", "listed", "queued"].includes(phaseOf(it)) && items.some((o) => phaseOf(o) === "building"));
   const asm = batch?.assembly;
   const asmLine = asm ? el("p", { class: `flow-asm ${asm.status === "awaiting_review" || asm.status === "accepted" ? "ok" : ["building", "placing"].includes(asm.status) ? "busy" : "bad"}`,
     text: asm.status === "placing" ? "Placing the parts into one assembly…" : asm.status === "building" ? "Building the assembly in SolidWorks…" :
@@ -69,7 +73,42 @@ function flowBox(r, data, reload, status) {
   const warn = unanswered && !running ? el("p", { class: "flow-warn", text: `${unanswered} open question${unanswered === 1 ? " was" : "s were"} not answered on the Review page. ` +
     "The AI will decide them, so the final model may not match the drawing's measurements there." }) : null;
   return el("div", { class: `batch-box flow${running ? " running" : ""}` }, head, warn, el("div", { class: "part-actions" }, start),
-    rows.length ? el("ol", { class: "batch-list" }, rows) : null, asmLine);
+    rows.length ? el("ol", { class: "batch-list" }, rows) : null,
+    nextPart ? el("p", { class: "hint", text: `Next part: ${nextPart.name}` }) : null, asmLine);
+}
+
+// ---------------------------------------------------------------- the live build: the drawing, the part as built so far, the steps, the log
+const FEATURE_WORDS = { extrude_profile_boss: "outline extruded", cut: "cut", hole: "hole", circle_boss: "round boss", profile_cut: "shaped cut", rib: "rib",
+  fillet_chamfer_edges: "rounding / chamfer", revolve_base: "turned body", revolve_on_face: "bend", turned_axial: "turned feature", cross_hole: "cross hole",
+  radial_blades: "blades", turned_keyway: "keyway", swept_tube: "bent tube", loft: "loft", sheet_metal_base: "sheet metal", swept_passage: "passage",
+  shell: "shell", angled_boss: "angled boss", side_profile_cut: "side shape", side_cut: "side hole / cut" };
+const STEP_MARK = { ok: "✓", building: "●", fixing: "⟳", waiting: "○", check_failed: "!", failed: "✕", removed: "✕", not_run: "○" };
+
+function stepWords(s) { return `${s.id} ${FEATURE_WORDS[s.feature] || s.feature.replace(/_/g, " ")}${s.printed ? ` (${s.printed})` : ""}`; }
+
+function livePanel(r, jid, live) {
+  r.liveCache = r.liveCache || {};
+  const host = el("div", { class: "live-build" });
+  const draw = (p) => {
+    const steps = p.steps || [], now = steps.find((s) => s.status === "building" || s.status === "fixing");
+    const next = steps.find((s) => s.status === "waiting");
+    const pics = el("div", { class: "live-pics" },
+      p.drawing ? el("figure", {}, el("img", { src: `/api/workflow/${jid}/live/drawing.png`, alt: "The drawing of this part", loading: "lazy" }), el("figcaption", { text: "The drawing" })) : null,
+      p.image ? el("figure", {}, el("img", { src: `/api/workflow/${jid}/live/${p.image.replace(/\.png$/, "")}.png`, alt: "The part as built so far" }),
+        el("figcaption", { text: p.image_step ? `In SolidWorks, ${p.image_step.startsWith("AI") ? p.image_step : `after ${p.image_step}`}` : "In SolidWorks" })) : el("figure", { class: "empty" }, el("figcaption", { text: "The part appears here after its first step" })));
+    const doing = p.current === "review" ? "The AI agent is comparing the part with the drawing"
+      : now ? `${now.status === "fixing" ? "AI agent is fixing" : "Now building"}: ${stepWords(now)}` : p.phase === "done" ? "Finished" : p.phase === "stopped" ? "Stopped" : "Starting SolidWorks…";
+    const list = el("ol", { class: "live-steps" }, steps.map((s) => el("li", { class: `st-${s.status}`, title: s.message || "" },
+      el("span", { class: "st-mark", text: STEP_MARK[s.status] || "·" }), el("span", { text: stepWords(s) }))));
+    const log = el("ol", { class: "live-log" }, (p.log || []).slice(-40).map((e) => el("li", { class: `lg-${e.kind}` },
+      el("time", { text: new Date(e.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) }), el("span", { text: e.text }))));
+    host.replaceChildren(el("p", { class: "live-now" }, el("b", { text: doing }), next && live ? el("span", { text: ` · Next: ${stepWords(next)}` }) : null),
+      pics, el("div", { class: "live-cols" }, el("div", {}, el("h5", { text: "Steps" }), list), el("div", {}, el("h5", { text: "Log" }), log)));
+    log.scrollTop = log.scrollHeight;
+  };
+  if (r.liveCache[jid]) draw(r.liveCache[jid]); else host.append(el("p", { class: "hint", text: "Starting the build…" }));
+  fetch(`/api/workflow/${jid}/progress`).then((x) => x.json()).then((p) => { r.liveCache[jid] = p; if (p.steps) draw(p); }).catch(() => {});
+  return host;
 }
 
 function batchBox(r, data, reload, status, partPost) {

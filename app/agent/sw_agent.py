@@ -55,10 +55,16 @@ likely features are in `feature_cards`: no describe call is needed for them. Spe
 class AgentLog:
     turns: int = 0
     calls: list[dict] = field(default_factory=list)       # {"phase", "item", "tool", "args", "why", "result"}
+    listener: Callable[[dict], None] | None = None        # told of every call (the SolidWorks page's live log)
 
     def add(self, phase: str, item: str, act: dict, result: dict | None) -> None:
         self.calls.append({"phase": phase, "item": item, "tool": act.get("tool"), "args": act.get("args"), "why": str(act.get("why", ""))[:300],
                            "result": _short(result)})
+        if self.listener is not None:
+            try:
+                self.listener(self.calls[-1])
+            except Exception:                                               # noqa: BLE001 - the log is for the eyes only
+                pass
 
 
 def _short(result: dict | None) -> dict | None:

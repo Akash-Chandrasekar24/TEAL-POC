@@ -968,6 +968,8 @@ def _build_each(rid):
         try:
             job = WORKFLOW.create(rid, item["list_id"])
             _hand_drawing_to_agent(rid, item["part_id"], job["id"])
+            item["job_id"] = job["id"]                                           # the page shows this build's live progress
+            _save_batch(rid, batch)
             job = WORKFLOW.action(job["id"], job["revision"], "build", accepted_gaps=item["accepted_gaps"])
             item.update(status=job["phase"], job_id=job["id"], detail=job.get("detail") or "")
         except Exception as ex:                                                  # noqa: BLE001
@@ -1306,6 +1308,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, WORKFLOW.latest(m.group(1)))
             except (ValueError, OSError) as ex:
                 return self._json(409, {"error": str(ex)})
+        m = re.fullmatch(r"/api/workflow/([0-9a-f]{12})/(progress|live/([a-z0-9_]{1,40})\.png)", path)
+        if m:                                                                   # a build's live progress and its pictures
+            folder = WORKFLOW.folder(m.group(1))
+            if m.group(2) == "progress":
+                f = folder / "progress.json"
+                from app.assembly.jobs import read_json
+                return self._json(200, read_json(f) if f.is_file() else {"steps": [], "log": [], "phase": "waiting"})
+            f = folder / "drawing.png" if m.group(3) == "drawing" else folder / "live" / f"{m.group(3)}.png"
+            return self._send(200, f.read_bytes(), "image/png") if f.is_file() else self._json(404, {"error": "no picture yet"})
         m = re.fullmatch(r"/api/workflow/([0-9a-f]{12})(?:/(preview|mesh|download/(SLDPRT|SLDASM|STEP|STL|BUNDLE)))?", path)
         if m:
             try:
