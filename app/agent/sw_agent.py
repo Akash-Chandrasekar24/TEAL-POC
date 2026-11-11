@@ -85,9 +85,10 @@ Run = Callable[[str, dict], Awaitable[dict]]            # (tool, args) -> result
 class SolidWorksAgent:
     """`llm`: a JSON model client (generate_json). `picture`: the drawing (PNG bytes). Turn limits keep every loop finite."""
 
-    def __init__(self, llm, picture: bytes | None, menu_overview: str, *, fix_turns: int = 6, review_turns: int = 8):
+    def __init__(self, llm, picture: bytes | None, menu_overview: str, *, fix_turns: int = 6, review_turns: int = 8, total_turns: int = 1000):
         self.llm, self.picture, self.menu = llm, picture, menu_overview
         self.fix_turns, self.review_turns = fix_turns, review_turns
+        self.total_turns = total_turns          # one budget for the whole part (stress test: 71 model calls, 22 minutes on one part with many failing steps)
         self.log = AgentLog()
 
     async def _ask(self, system: str, context: dict, image: bytes | None) -> dict:
@@ -106,6 +107,8 @@ class SolidWorksAgent:
                     finished: Callable[[dict, dict], bool], image: bytes | None = None) -> dict:
         history: list[dict] = []
         for _ in range(turns):
+            if self.log.turns >= self.total_turns:                              # the part's budget is used up: the rest is flagged for the designer
+                return {"tool": "skip", "args": {"reason": f"the SolidWorks agent's budget of {self.total_turns} model calls for this part is used up"}}
             try:
                 act = await self._ask(system, {**context, "your_calls_so_far": history[-10:]}, image)
             except LLMError as ex:                                              # the model is not reachable: the build goes on without it
@@ -148,4 +151,5 @@ def agent_for(job_dir: Path) -> SolidWorksAgent | None:
     from app.llm import make_client
     from app.menu.text import menu_overview
     return SolidWorksAgent(make_client(config.WORKER_LLM_PROVIDER, reasoning_effort="medium"), picture.read_bytes(), menu_overview(),
-                           fix_turns=int(os.getenv("SW_AGENT_FIX_TURNS", "5")), review_turns=int(os.getenv("SW_AGENT_REVIEW_TURNS", "6")))
+                           fix_turns=int(os.getenv("SW_AGENT_FIX_TURNS", "5")), review_turns=int(os.getenv("SW_AGENT_REVIEW_TURNS", "6")),
+                           total_turns=int(os.getenv("SW_AGENT_TOTAL_TURNS", "16")))

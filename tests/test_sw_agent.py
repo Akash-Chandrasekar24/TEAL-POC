@@ -196,3 +196,12 @@ def test_solidworks_failing_during_the_agents_work_stops_the_run_with_a_report_n
     with patch.object(runner_mod, "predicted_check", lambda *a, **k: None):
         rep = asyncio.run(r._run_once(bl, _steps(bl, False)))
     assert not rep.ok and rep.failure.kind == "environment" and "analyze_model" in rep.failure.message
+
+
+def test_one_budget_of_model_calls_covers_the_whole_part():
+    """Stress run: a part with many failing steps took 71 model calls (22 minutes). The agent shares one budget across every step and the review."""
+    async def run(tool, args):
+        return {"status": "refused", "feature_call": True, "message": "no"}
+    agent = SolidWorksAgent(Says(*[{"tool": "hole", "args": {}}] * 50), None, "", fix_turns=5, review_turns=5, total_turns=7)
+    ends = [asyncio.run(agent.fix({"item": {"id": f"F{k}"}}, run)) for k in range(4)]
+    assert agent.log.turns == 7 and all(e["tool"] == "skip" for e in ends) and "budget" in ends[-1]["args"]["reason"]
