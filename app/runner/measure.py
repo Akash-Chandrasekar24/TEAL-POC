@@ -74,10 +74,11 @@ def step_measurement(item, unit: str, new_faces: list[dict], verdicts: list[dict
     return {"anchor_mm": anchor, "checks": checks, "diameters_mm": diam[:12], "notes": notes[:8]}
 
 
-def judged(checks: list[dict], printed: str, general: str | None, unit: str) -> list[dict]:
-    """Every check with the drawing's tolerance band and whether the model is inside it (app.drawing.tolerance)."""
+def judged(checks: list[dict], printed: str, general: str | None, unit: str, accuracy: float | None = None) -> list[dict]:
+    """Every check with the drawing's tolerance band and whether the model is inside it (app.drawing.tolerance); `accuracy` (mm): a
+    stricter band for how exactly the model matches the printed value."""
     from app.drawing.tolerance import judge
-    return [judge(c, printed, general, factor(unit) * 1000) for c in checks]
+    return [judge(c, printed, general, factor(unit) * 1000, accuracy) for c in checks]
 
 
 def note_texts(item_id: str, measured: dict, printed: str, general: str | None, unit: str) -> list[dict]:

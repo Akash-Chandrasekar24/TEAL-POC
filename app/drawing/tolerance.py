@@ -60,8 +60,18 @@ def _callout_for(drawing_value: float, printed: str, mm_per_unit: float) -> str 
     return None
 
 
-def judge(check: dict, printed: str, general: str | None, mm_per_unit: float = 1.0) -> dict:
-    """The check with its tolerance band (mm), where the band comes from, and whether the model is inside it. Volumes have no drawing tolerance."""
+def judge(check: dict, printed: str, general: str | None, mm_per_unit: float = 1.0, accuracy: float | None = None) -> dict:
+    """The check with its tolerance band (mm), where the band comes from, and whether the model is inside it. Volumes have no drawing tolerance.
+    `accuracy` (mm, e.g. 0.01 or 0.001): judge the MODEL against the printed nominal by that band instead (how exactly the CAD matches the
+    drawing); the drawing's own band stays in `tol` for reference. The face reader resolves 0.001 mm: that is the finest meaningful value."""
+    if accuracy:
+        base = judge(check, printed, general, mm_per_unit)
+        if check.get("unit") != "mm" or check.get("model") is None:
+            return base
+        err = check["model"] - check["drawing"]
+        return {**base, "within_drawing": base.get("within"), "drawing_tol_source": base.get("tol_source"), "accuracy": accuracy,
+                "tol": [-accuracy, accuracy], "tol_source": f"model accuracy ±{accuracy:g} mm (drawing: {base.get('tol_source')})",
+                "within": abs(err) <= accuracy + 1e-9}
     if check.get("unit") != "mm" or check.get("model") is None:
         return {**check, "tol": None, "tol_source": "no drawing tolerance for a volume" if check.get("unit") != "mm" else "not measured", "within": None}
     nominal, err = check["drawing"], check["model"] - check["drawing"]

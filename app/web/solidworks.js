@@ -694,22 +694,29 @@ function checkRows(checks) {
       el("td", {text:tolText(c)}), el("td", {text:c.model === null ? "–" : `${c.model} ${c.unit}`}), el("td", {text:devText(c.deviation_pct)}), el("td", {text:verdictText(c)})))));
 }
 
-async function showDimensions(jid, viewer, cardHost, tableHost) {
+function savedAccuracy() { try { return localStorage.getItem("dimAccuracy") || "0.01"; } catch { return "0.01"; } }
+
+async function showDimensions(jid, viewer, cardHost, tableHost, accuracy = savedAccuracy()) {
   let data;
-  try { const response = await fetch(`/api/workflow/${jid}/dimensions`); data = await response.json(); if (!response.ok) throw new Error(data.error || "no measurements"); }
+  try { const response = await fetch(`/api/workflow/${jid}/dimensions${accuracy ? `?accuracy=${accuracy}` : ""}`); data = await response.json(); if (!response.ok) throw new Error(data.error || "no measurements"); }
   catch (error) { cardHost.replaceChildren(el("p", {class:"hint", text:`Measurements are not available for this build (${error.message}). Builds from now on record them.`})); return; }
   const feats = (data.features || []).filter((f) => f.checks.length);
   if (!feats.length) { cardHost.replaceChildren(el("p", {class:"hint", text:"This build has no recorded measurements. Build it again to compare it with the drawing."})); return; }
   const pick = (i) => {
     const f = feats[i], bad = f.checks.filter((c) => c.within === false).length;
     cardHost.replaceChildren(el("h4", {text:`${i + 1}. ${f.id} ${FEATURE_WORDS[f.feature] || f.feature}${f.printed ? ` · printed ${f.printed}` : ""}`}),
-      el("p", {class:`dim-worst ${verdictClass(f.within)}`, text:f.within === true ? "Every dimension is within the drawing's tolerance." : f.within === false ? `${bad} dimension${bad === 1 ? " is" : "s are"} out of the drawing's tolerance.` : "No tolerance applies to these values."}),
+      el("p", {class:`dim-worst ${verdictClass(f.within)}`, text:f.within === true ? `Every dimension is within ${accuracy ? `±${accuracy} mm` : "the drawing's tolerance"}.` : f.within === false ? `${bad} dimension${bad === 1 ? " is" : "s are"} outside ${accuracy ? `±${accuracy} mm` : "the drawing's tolerance"}.` : "No tolerance applies to these values."}),
       checkRows(f.checks), f.message ? el("p", {class:"hint", text:f.message}) : null);
     tableHost.querySelectorAll("tr[data-pin]").forEach((tr) => tr.classList.toggle("picked", Number(tr.dataset.pin) === i));
   };
   viewer.markers(feats.map((f, i) => ({at:f.anchor, label:String(i + 1), cls:verdictClass(f.within), title:`${f.id}: ${f.within === false ? "out of tolerance" : f.within ? "within tolerance" : "not judged"}`})), pick);
-  tableHost.replaceChildren(el("h3", {text:"Drawing vs SolidWorks"}),
-    el("p", {class:`hint ${data.within === data.checked ? "dim-all-ok" : ""}`, text:`${data.within} of ${data.checked} dimensions are within the drawing's tolerance (general tolerance ISO 2768-${data.general_tolerance}). Largest deviation: ${devText(data.worst_pct)}. Click a row or a marker for the details.`}),
+  const choose = el("select", {"aria-label":"How closely the model must match the drawing"},
+    [["0.01", "Model accuracy ±0.01 mm"], ["0.001", "Model accuracy ±0.001 mm"], ["", "The drawing's tolerance"]].map(([v, t]) => el("option", {value:v, text:t})));
+  choose.value = accuracy || "";
+  choose.addEventListener("change", () => { try { localStorage.setItem("dimAccuracy", choose.value); } catch {} showDimensions(jid, viewer, cardHost, tableHost, choose.value); });
+  const against = data.accuracy ? `within ±${data.accuracy} mm of the drawing's printed value` : `within the drawing's tolerance (general tolerance ISO 2768-${data.general_tolerance})`;
+  tableHost.replaceChildren(el("div", {class:"dim-head"}, el("h3", {text:"Drawing vs SolidWorks"}), choose),
+    el("p", {class:`hint ${data.within === data.checked ? "dim-all-ok" : ""}`, text:`${data.within} of ${data.checked} dimensions are ${against}. Largest deviation: ${devText(data.worst_pct)}. Click a row or a marker for the details.${data.accuracy === 0.001 ? " ±0.001 mm is the finest step SolidWorks reports the geometry in." : ""}`}),
     el("table", {class:"dim-rows"}, el("thead", {}, el("tr", {}, ["#", "Step", "Printed", "Dimensions", "Largest deviation", "Result"].map((t) => el("th", {text:t})))),
       el("tbody", {}, feats.map((f, i) => { const out = f.checks.filter((c) => c.within === false).length, judged = f.checks.filter((c) => c.within !== null && c.within !== undefined).length;
         const tr = el("tr", {class:verdictClass(f.within), "data-pin":String(i)}, el("td", {text:String(i + 1)}),

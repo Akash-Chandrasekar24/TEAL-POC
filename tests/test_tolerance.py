@@ -29,3 +29,10 @@ def test_a_volume_has_no_drawing_tolerance_and_inches_are_converted():
     assert judge({"what": "volume", "drawing": 100, "model": 101, "unit": "mm³"}, "", None)["within"] is None
     j = judge(chk(25.4, 25.5), "1.000 ±0.005", None, mm_per_unit=25.4)
     assert j["tol"] == [-0.127, 0.127] and j["within"] is True
+
+
+def test_a_strict_model_accuracy_judges_the_model_against_the_printed_value():
+    j = judge(chk(50, 50.004), "Ø50", None, accuracy=0.01)
+    assert j["within"] and j["tol"] == [-0.01, 0.01] and j["within_drawing"] and "ISO 2768-m" in j["drawing_tol_source"]
+    assert judge(chk(50, 50.004), "Ø50", None, accuracy=0.001)["within"] is False      # 4 µm: outside ±0.001 mm
+    assert judge(chk(50, 50.001), "Ø50", None, accuracy=0.001)["within"] is True

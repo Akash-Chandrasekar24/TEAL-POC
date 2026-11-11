@@ -597,3 +597,4 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 .dim-rows td{padding:3px 6px;border-bottom:1px solid #eee}.dim-table tr[data-pin]{cursor:pointer}.dim-table tr.picked{outline:2px solid var(--brand)}
 .dev-ok td:last-child,.dim-worst.dev-ok{color:#2e7d50}.dev-warn td:last-child,.dim-worst.dev-warn{color:#9d701f}.dev-bad td:last-child,.dim-worst.dev-bad{color:#b3412f}
 .dev-ok td:last-child{color:#2e7d50}
+.dim-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.dim-head h3{margin:0}

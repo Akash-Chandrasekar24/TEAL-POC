@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+from urllib.parse import parse_qs, urlparse
 import threading
 from datetime import datetime, timezone
 import time
@@ -1001,7 +1002,7 @@ def _general_tolerance(result: dict) -> str | None:
     return general_class(json.dumps([p.get("read") for p in result.get("pages", [])], ensure_ascii=False))
 
 
-def job_dimensions(jid: str) -> dict:
+def job_dimensions(jid: str, accuracy: float | None = None) -> dict:
     """Every built step's markers for the 3D review: where it is on the review mesh, its printed text, and drawing vs model numbers. The STL
     is written shifted into positive space, so each anchor is moved by (STL box min - model box min)."""
     record = WORKFLOW.load(jid)
@@ -1022,7 +1023,7 @@ def job_dimensions(jid: str) -> dict:
         meas = it.get("measured") or {}
         if not meas.get("anchor_mm"):
             continue
-        checks = judged(meas.get("checks", []), printed.get(it["id"], ""), general, unit)
+        checks = judged(meas.get("checks", []), printed.get(it["id"], ""), general, unit, accuracy)
         devs = [abs(c["deviation_pct"]) for c in checks if c.get("deviation_pct") is not None]
         verdicts = [c["within"] for c in checks if c.get("within") is not None]
         out.append({"id": it["id"], "feature": it["feature"], "status": it["status"], "printed": printed.get(it["id"], ""), "message": it.get("message", "")[:300],
@@ -1031,7 +1032,7 @@ def job_dimensions(jid: str) -> dict:
     worst = [f["worst_pct"] for f in out if f["worst_pct"] is not None]
     judged_all = [c for f in out for c in f["checks"] if c.get("within") is not None]
     return {"features": out, "worst_pct": max(worst) if worst else None, "checked": len(judged_all),
-            "within": sum(1 for c in judged_all if c["within"]), "general_tolerance": general or "m (assumed)"}
+            "within": sum(1 for c in judged_all if c["within"]), "general_tolerance": general or "m (assumed)", "accuracy": accuracy}
 
 
 def _no_pause(job, rounds=4):
@@ -1401,7 +1402,11 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/workflow/([0-9a-f]{12})/dimensions", path)
         if m:                                                                   # drawing vs model, per step, placed on the review mesh
             try:
-                return self._json(200, job_dimensions(m.group(1)))
+                q = parse_qs(urlparse(self.path).query).get("accuracy", [""])[0]
+                accuracy = float(q) if q else None
+                if accuracy is not None and not 0.0005 <= accuracy <= 5:
+                    raise ValueError("accuracy must be between 0.0005 and 5 mm")
+                return self._json(200, job_dimensions(m.group(1), accuracy))
             except (ValueError, OSError, KeyError) as ex:
                 return self._json(409, {"error": str(ex)})
         m = re.fullmatch(r"/api/workflow/([0-9a-f]{12})/(progress|live/([a-z0-9_]{1,40})\.png)", path)
