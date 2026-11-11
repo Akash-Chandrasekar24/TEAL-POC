@@ -967,6 +967,7 @@ def _build_each(rid):
         _save_batch(rid, batch)
         try:
             job = WORKFLOW.create(rid, item["list_id"])
+            _hand_drawing_to_agent(rid, item["part_id"], job["id"])
             job = WORKFLOW.action(job["id"], job["revision"], "build", accepted_gaps=item["accepted_gaps"])
             item.update(status=job["phase"], job_id=job["id"], detail=job.get("detail") or "")
         except Exception as ex:                                                  # noqa: BLE001
@@ -1059,6 +1060,28 @@ def _build_assembly(rid, attempt):
         _save_batch(rid, batch)
 
 
+def _part_picture(result: dict, part: dict) -> bytes:
+    """The picture the AI reads for one part: the whole sheet when the drawing is that one part, else its views (or the assembly views)."""
+    from app.web.parts import assembly_views, detect_parts, part_sheet, whole_pages
+    shas = {p["no"]: p["sha"] for p in result["pages"]}
+    shown = part if part["views"] else {**part, "views": assembly_views(result)}
+    if not shown["views"]:
+        raise ValueError(f"{part['name']} is not drawn anywhere on the sheet: describe it in an answer and let the AI work it out")
+    if len(detect_parts(result)) == 1:                                           # the whole drawing is this part: show all of it, not crops
+        return whole_pages(result, lambda no: default_cache().get_blob(shas[no]))
+    return part_sheet(result, shown, lambda no: default_cache().get_blob(shas[no]))
+
+
+def _hand_drawing_to_agent(rid: str, part_id: str, job_id: str) -> None:
+    """The SolidWorks agent compares the part with the drawing: its picture goes into the job folder (no picture: the agent stays off)."""
+    try:
+        png = _part_picture(result_with_design(rid), _part(result_with_design(rid), part_id))
+        folder = WORKFLOW.folder(job_id); folder.mkdir(parents=True, exist_ok=True)
+        (folder / "drawing.png").write_bytes(png)
+    except Exception:                                                            # noqa: BLE001 - the build goes on without the agent
+        pass
+
+
 def _part(result: dict, part_id: str) -> dict:
     from app.web.parts import detect_parts
     part = next((p for p in detect_parts(result) if p["id"] == part_id), None)
@@ -1080,15 +1103,7 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
     if any("human review required" in q or "confirm this" in q for q in result["drawing_model"].get("issues", [])):
         raise ValueError("Approve the measurements on the Review step first: the build list uses the reviewed values")
     part = _part(result, part_id)
-    shas = {p["no"]: p["sha"] for p in result["pages"]}
-    shown = part if part["views"] else {**part, "views": assembly_views(result)}
-    if not shown["views"]:
-        raise ValueError(f"{part['name']} is not drawn anywhere on the sheet: describe it in an answer and let the AI work it out")
-    from app.web.parts import detect_parts, whole_pages
-    if len(detect_parts(result)) == 1:                                           # the whole drawing is this part: show all of it, not crops
-        png = whole_pages(result, lambda no: default_cache().get_blob(shas[no]))
-    else:
-        png = part_sheet(result, shown, lambda no: default_cache().get_blob(shas[no]))
+    png = _part_picture(result, part)
     work_it_out = work_it_out or not part["views"]                              # nothing printed for it: the AI must work its sizes out
     from app.web.parts import latest_lists
     previous = latest_lists(PART_LISTS, rid).get(part_id)

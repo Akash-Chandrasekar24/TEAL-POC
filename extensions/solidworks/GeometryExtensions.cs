@@ -53,6 +53,9 @@ namespace DrawingToSolidworks
             });
         }
 
+        [HttpPost, Route("api/ext/revolve")]
+        public IHttpActionResult Revolve([FromBody] JObject body) { return Run(() => DoRevolve(body)); }
+
         [HttpPost, Route("api/ext/sketch_extrude")]
         public IHttpActionResult SketchExtrude([FromBody] JObject body) { return Run(() => DoSketchExtrude(body)); }
 
@@ -226,6 +229,7 @@ namespace DrawingToSolidworks
                     {
                         var a = frame.ToSketch(P(e["p1"])); var b = frame.ToSketch(P(e["p2"]));
                         made = model.SketchManager.CreateLine(a[0], a[1], 0, b[0], b[1], 0);
+                        if (made != null && e.Value<bool?>("construction") == true) ((ISketchSegment)made).ConstructionGeometry = true;
                     }
                     else if (kind == "circle")
                     {
@@ -377,6 +381,31 @@ namespace DrawingToSolidworks
             var f = sel?.GetSelectedObject6(1, -1) as IFeature;
             if (f == null) throw new InvalidOperationException("no plane selected");
             return f.Name;
+        }
+
+        /// <summary>Revolve on ANY plane: the section and ONE construction line (the axis) drawn in model coordinates, then FeatureRevolve2.
+        /// SolidWorks takes the sketch's single centreline as the axis, so nothing is picked by coordinates (the pinned bridge picks the
+        /// axis at z = 0 and misses it on every plane that is not at z = 0: a bend at the end of a tube).</summary>
+        private static JObject DoRevolve(JObject body)
+        {
+            var model = Part();
+            var ents = (JArray)body["entities"];
+            int axes = 0;
+            foreach (JObject e in ents) if (e.Value<bool?>("construction") == true) axes++;
+            if (axes != 1) throw new InvalidOperationException("give exactly one construction line: the axis");
+            double angle = body.Value<double>("angle");                     // radians
+            if (!(angle > 0 && angle <= 2 * Math.PI + 1e-9)) throw new InvalidOperationException("angle must be in (0, 2*pi] radians");
+            if (Math.Abs(angle - 2 * Math.PI) < 1e-3) angle = 2 * Math.PI;
+            bool reverse = body.Value<bool?>("reverse") == true;
+            string sketch = DrawSketch(model, (JObject)body["plane"], ents);
+            model.ClearSelection2(true);
+            if (!model.Extension.SelectByID2(sketch, "SKETCH", 0, 0, 0, false, 0, null, 0)) throw new InvalidOperationException("sketch not selectable");
+            int before = FeatureCount(model);
+            IFeature f = model.FeatureManager.FeatureRevolve2(true, true, false, false, reverse, false, 0, 0, angle, 0, false, false,
+                                                               0.0, 0.0, 0, 0.0, 0.0, true, true, true) as IFeature;
+            var result = Done(model, f, before);
+            result["sketch"] = sketch;
+            return result;
         }
 
         private static JObject DoSketchExtrude(JObject body)

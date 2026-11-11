@@ -78,6 +78,12 @@ def register(mcp):
         return geometry("/api/ext/angled_plane", spec, 240)
 
     @mcp.tool()
+    def ext_revolve(spec: dict) -> str:
+        """Revolve on any plane: spec {plane, entities (model coordinates; exactly ONE line with construction: true = the axis), angle (radians),
+        reverse?}. The axis is the sketch's centreline: nothing is picked by coordinates."""
+        return geometry("/api/ext/revolve", spec, 240)
+
+    @mcp.tool()
     def ext_sketch_extrude(spec: dict) -> str:
         """Sketch on any plane and extrude: spec {operation: boss|cut, plane, entities (model coordinates), direction: [x,y,z] the way it grows,
         end: blind|through_all, depth (m), depth_back? (m, also extrude the other way)}."""

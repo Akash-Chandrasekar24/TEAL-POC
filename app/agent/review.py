@@ -23,7 +23,8 @@ async def _preview(approved, job_dir):
     plan = parse_reply(approved)
     log = RunLog(f"review_{job_dir.name}")
     async with SolidWorksClient() as sw:
-        report = await Runner(sw, expected_docs=keep_open_docs(), log=log).run(plan)
+        from .sw_agent import agent_for
+        report = await Runner(sw, expected_docs=keep_open_docs(), log=log, agent=agent_for(job_dir), look_dir=job_dir / "looks").run(plan)
         finish = None
         if report.ok:
             # Private tessellation is needed to show a rotatable preview. No STEP

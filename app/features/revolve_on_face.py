@@ -151,6 +151,16 @@ class RevolveOnFace:
         return graph_of([sketch_node("n1", "front", self.plane_height * f, nodes + [construction]),
                          {"id": "n2", "type": "revolve", "sketch": "n1", "axis": axis, "angle": math.radians(self.angle_deg)}])
 
+    @staticmethod
+    def ext_spec(graph: dict) -> dict:
+        """The same sketch and revolve as `graph`, for our ext_revolve (the axis found as the sketch's centreline, on any plane)."""
+        from .base import PlaneFrame
+        from .extrude_profile_boss import ext_entities
+        sketch, rev = graph["nodes"][0], graph["nodes"][1]
+        plane = {"datum": sketch["ref"]["datum"], "offset": sketch["ref"].get("offset", 0.0)}
+        segs = [s for s in sketch["profile"]]
+        return {"plane": plane, "entities": ext_entities(segs, PlaneFrame(plane["datum"]), plane["offset"]), "angle": rev["angle"]}
+
     def probes(self, faces: list[dict]) -> tuple[list[Probe], list[str]]:
         f = factor(self.unit)
         notes: list[str] = []
@@ -175,6 +185,8 @@ class RevolveOnFace:
         res = FeatureResult(self.NAME)
 
         async def action():
+            if "ext_revolve" in (getattr(ctx.sw, "tool_names", None) or []):
+                return await ctx.sw.geometry("ext_revolve", self.ext_spec(graph))
             return await ctx.sw.submit_feature_graph(graph, fresh_document=False)
 
         v = await ctx.verifier.run_step(self.label, action, self.expected())

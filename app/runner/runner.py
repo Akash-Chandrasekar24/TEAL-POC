@@ -15,6 +15,8 @@ After a failed run the part is left open (the report names it) and the next run 
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -94,6 +96,7 @@ class RunReport:
     warnings: list[str] = field(default_factory=list)
     attempts: int = 1
     log_dir: str = ""
+    agent: dict = field(default_factory=dict)               # the SolidWorks agent's calls (when one took part)
 
     def lines(self) -> list[str]:
         out = [f"{'OK' if self.ok else 'FAILED'}: {self.part_name or 'part'} ({self.unit}), {sum(i.status == 'ok' for i in self.items)}/{len(self.items)} items"]
@@ -171,8 +174,13 @@ def validate_list(bl: BuildList) -> list[str]:
 
 # ------------------------------------------------------------------ the runner
 class Runner:
-    def __init__(self, sw: SolidWorksClient, *, expected_docs: tuple[str, ...] = (), log: RunLog | None = None, env_retries: int = 1):
+    agent = None                     # no SolidWorks agent unless one is given
+    look_dir = None
+
+    def __init__(self, sw: SolidWorksClient, *, expected_docs: tuple[str, ...] = (), log: RunLog | None = None, env_retries: int = 1,
+                 agent=None, look_dir: Path | None = None):
         self.sw, self.expected_docs, self.log, self.env_retries = sw, tuple(expected_docs), log, env_retries
+        self.agent, self.look_dir = agent, look_dir                 # the SolidWorks agent (app.agent.sw_agent): reworks a step that went wrong
 
     async def run(self, bl: BuildList, *, gate: bool = True) -> RunReport:
         """Build the whole list. Never raises for a failed step (the report says what failed); raises RunnerRefused / RequestProblem before any work."""
@@ -222,6 +230,8 @@ class Runner:
             return report
         verifier = StepVerifier(self.sw, self.log, doc=report.document)
         ctx = FeatureContext(self.sw, verifier, self.log)
+        covers = self._covers(bl, prepared)
+        built: dict[str, Any] = {}                                                  # id -> the item as it stands in the part (the agent's version when it reworked one)
         for n, (p, rep) in enumerate(zip(prepared, report.items)):
             t0 = time.time()
             self._event("item_start", id=p.item.id, feature=p.item.feature)
@@ -232,6 +242,8 @@ class Runner:
                 self._finish_item(rep, t0, "failed", str(ex))
                 if n > 0:                                                            # not the base: skip this step, build the rest
                     report.warnings.append(f"{p.item.id} ({p.item.feature}) was not built: {ex}"[:400])
+                    if await self._agent_fix(bl, ctx, built, covers[n], p, rep, mark, report):
+                        return report
                     continue
                 report.failure = Failure(p.item.id, p.item.feature, "request", str(ex))
                 return report
@@ -256,9 +268,12 @@ class Runner:
                 msg = f"removed: it made a separate piece ({loose}); undo {'ok' if undo.ok else 'FAILED: ' + undo.text[:120]}"
                 self._finish_item(rep, t0, "removed", msg)
                 report.warnings.append(f"NOT BUILT, it would float: {p.item.id} ({p.item.feature}): {loose}"[:400])
+                if await self._agent_fix(bl, ctx, built, covers[n], p, rep, mark, report):
+                    return report
                 continue
             if result.ok:
                 self._finish_item(rep, t0, "ok", "")
+                built.update({i.id: i for i in covers[n]})
                 continue
             failure = self._classify(p, result)
             if n > 0 and failure.kind != "environment":
@@ -266,11 +281,17 @@ class Runner:
                 # made, flag it for the designer to look at, and build the remaining steps. Before, one such step left a flat plate.
                 self._finish_item(rep, t0, "check_failed", failure.message)
                 report.warnings.append(f"CHECK FAILED, look at it in the model: {p.item.id} ({p.item.feature}): {failure.message}"[:400])
+                built.update({i.id: i for i in covers[n]})
+                if await self._agent_fix(bl, ctx, built, covers[n], p, rep, mark, report):
+                    return report
                 continue
             report.failure = failure
             self._finish_item(rep, t0, "failed", report.failure.message)
             return report
         report.ok = True
+        if await self._agent_review(bl, ctx, built, report):
+            report.ok = False
+            return report
         report.final = await self._final(verifier, report)
         mode = config.PREDICTED_BBOX_MODE if config.PREDICTED_BBOX_MODE in ("warn", "stop") else "warn"
         pc = predicted_check(report.final, [p.feature for p in prepared], bl.unit, config.PREDICTED_BBOX_TOL_MM, mode)
@@ -283,6 +304,213 @@ class Runner:
             report.final["expected_checks"] = checks
             report.warnings += [f"EXPECTED FINAL CHECK FAILED: {c['name']}: {c['detail']}" for c in checks if not c["ok"]]
         return report
+
+    # ---------------------------------------------------------------- the SolidWorks agent (back and forth while building)
+    @staticmethod
+    def _covers(bl, prepared: list[Prepared]) -> list[list]:
+        """The list items each prepared step builds (a merged step, like the shaped base, builds two)."""
+        items = list(getattr(bl, "items", None) or [])
+        ids = [getattr(i, "id", None) for i in items]
+        if not items or any(p.item.id not in ids for p in prepared):
+            return [[p.item] for p in prepared]
+        starts = [ids.index(p.item.id) for p in prepared] + [len(items)]
+        return [items[a:b] for a, b in zip(starts, starts[1:])]
+
+    async def _undo_to(self, mark) -> None:
+        if mark is not None and (await self._feature_count() or 0) > mark:
+            await self.sw.call("ext_delete_after", {"count": mark})
+
+    async def _measure(self, ctx) -> dict:
+        snap = await ctx.verifier.current()
+        out = {"volume_mm3": round(snap.volume * 1e9, 1), "bodies": snap.bodies}
+        try:
+            from app.features.base import fast_bbox
+            bb = await fast_bbox(self.sw)
+            if bb is not None:
+                out["bbox_mm"] = [[round(v * 1000, 2) for v in bb.lo], [round(v * 1000, 2) for v in bb.hi]]
+        except Exception as ex:                                                          # noqa: BLE001 - information only
+            out["bbox_mm"] = f"not available: {ex}"
+        return out
+
+    async def _look(self, ctx) -> dict:
+        """Export the part as it is now and draw it in the drawing's views (top, front, side, 3D)."""
+        import uuid
+        from app.preview import render_views_png
+        folder = (self.look_dir or config.BUILD_DIR / "looks") / uuid.uuid4().hex[:8]
+        if "ext_clear_selection" in (getattr(self.sw, "tool_names", None) or []):
+            await self.sw.call("ext_clear_selection")
+        r = await self.sw.export_document("STL", folder / "now.stl")
+        await ctx.verifier.current()                                                    # back on our document (an export can activate another)
+        if not r.ok or not (folder / "now.stl").is_file():
+            return {"status": "failed", "message": f"could not export the part: {r.text[:200]}"}
+        png = await asyncio.to_thread(render_views_png, folder / "now.stl", folder / "now.png", "the part as built now")
+        return {"status": "ok", "image": str(png), "message": "picture attached: TOP, FRONT/elevation, SIDE, 3D", **await self._measure(ctx)}
+
+    @staticmethod
+    def _observed(result) -> dict:
+        """What SolidWorks really made, in the agent's words."""
+        steps = []
+        for v in result.verdicts:
+            r = v.record()
+            steps.append({"step": r["name"], "ok": r["ok"], "verdict": r["verdict"], "solidworks": str(r["message"])[:300],
+                          "expected_mm3": r["expected_delta_mm3"], "measured_mm3": r["measured_delta_mm3"], "upper_bound_mm3": r["bound_mm3"],
+                          "bodies_before": (r["before"] or {}).get("bodies"), "bodies_after": (r["after"] or {}).get("bodies")})
+        probes = [{"check": q.name, "ok": q.ok, "detail": str(q.detail)[:200]} for q in result.probes]
+        return {"steps": steps, "position_checks": probes, "notes": list(result.notes)[:5]}
+
+    async def _usable(self, ctx, mark) -> bool:
+        """The part can be measured. If not (a failed feature can leave an open sketch or a broken rebuild), everything after `mark` is
+        taken out and it is measured again: False then (the step's material is gone). Still unreadable: VerifyError, the run stops."""
+        try:
+            await ctx.verifier.current()
+            return True
+        except VerifyError:
+            await self._undo_to(mark)
+            await ctx.verifier.current()
+            return False
+
+    async def _try_feature(self, bl, ctx, built: dict, item, mark) -> dict:
+        """Build ONE item the agent asked for, on the part as it is now. Anything wrong is taken out again (the part is never left broken)."""
+        try:
+            feature = prepare(bl.model_copy(update={"items": [*built.values(), item]}))[-1].feature
+        except RequestProblem as ex:
+            return {"status": "refused", "feature_call": True, "message": f"refused before SolidWorks: {ex.message}"[:500]}
+        try:
+            result = await feature.apply(ctx)
+        except FeatureRequestError as ex:
+            await self._undo_to(mark)
+            return {"status": "refused", "feature_call": True, "message": str(ex)[:500]}
+        except VerifyError as ex:                                                       # SolidWorks could not measure the part after it
+            await self._undo_to(mark)
+            await ctx.verifier.current()                                                # still unreadable: VerifyError, the run stops
+            return {"status": "failed", "feature_call": True, "message": f"SolidWorks could not analyse the part after this feature ({ex}): taken out"[:500]}
+        if not await self._usable(ctx, mark):
+            return {"status": "failed", "feature_call": True, "message": "the part could not be analysed after this feature (an open sketch or a broken rebuild): taken out"}
+        seen = self._observed(result)
+        loose = self._made_loose_piece(result)
+        if loose:
+            await self._undo_to(mark)
+            return {"status": "removed", "feature_call": True, "message": f"it made a separate floating piece ({loose}): taken out", **seen}
+        if not result.ok:
+            failure = self._classify(Prepared(item, None, feature, item.id), result)
+            if failure.kind == "environment":
+                raise VerifyError(failure.message)
+            return {"status": "check_failed", "feature_call": True, "message": failure.message, **seen, "part_now": await self._measure(ctx)}
+        return {"status": "ok", "feature_call": True, "message": "built and checked", **seen, "part_now": await self._measure(ctx)}
+
+    def _tools(self, bl, ctx, built: dict, phase: str, item_id: str, mark_box: list):
+        """The agent's tools, executed in SolidWorks. mark_box[0] = the feature count to go back to when a feature call is replaced / undone."""
+        from app.menu.text import feature_card
+
+        async def run(tool: str, args: dict) -> dict:
+            if tool == "describe":
+                name = str(args.get("feature", ""))
+                return {"status": "ok", "card": feature_card(name)} if name in MENU else {"status": "refused", "message": f"no feature {name!r} on the menu"}
+            if tool == "measure":
+                return {"status": "ok", **await self._measure(ctx)}
+            if tool == "look":
+                return await self._look(ctx)
+            if tool not in MENU:
+                return {"status": "refused", "message": f"no tool {tool!r}: use a feature name, describe, measure or look"}
+            if phase == "fix":
+                await self._undo_to(mark_box[0])                                      # the call REPLACES the step that went wrong
+                new_id = item_id
+            else:
+                mark_box[0] = await self._feature_count()
+                new_id = f"A{sum(1 for k in built if str(k).startswith('A')) + 1}"
+            try:
+                item = Item(id=new_id, feature=tool, params=args, derived=True, note="by the SolidWorks agent")
+            except ValidationError as ex:
+                return {"status": "refused", "feature_call": True, "message": str(ex)[:300]}
+            out = await self._try_feature(bl, ctx, {k: v for k, v in built.items() if k != new_id}, item, mark_box[0])
+            if phase == "fix":
+                mark_box[1:] = [out["status"], item]                                 # what stands in the part for this step now
+            if out["status"] == "ok":
+                built[new_id] = item
+            elif phase == "review" and out["status"] == "check_failed":
+                await self._undo_to(mark_box[0])                                      # a new step that is not right is not kept
+                out["message"] += " (taken out again)"
+            return out
+        return run
+
+    async def _agent_fix(self, bl, ctx, built: dict, covers: list, p: Prepared, rep: ItemReport, mark, report: RunReport) -> bool:
+        """True = SolidWorks is not usable any more: the run stops (report.failure says why)."""
+        if self.agent is None or mark is None or not hasattr(bl, "model_copy"):
+            return False
+        try:
+            await self._agent_fix_step(bl, ctx, built, covers, p, rep, mark, report)
+            return False
+        except (McpToolTimeout, VerifyError, ConnectionError) as ex:
+            report.failure = Failure(p.item.id, p.item.feature, "environment", f"while the SolidWorks agent reworked it: {type(ex).__name__}: {ex}"[:400])
+            return True
+
+    async def _agent_fix_step(self, bl, ctx, built: dict, covers: list, p: Prepared, rep: ItemReport, mark, report: RunReport) -> None:
+        """A step went wrong: the agent gets what SolidWorks made and reworks the step with its tools."""
+        if not await self._usable(ctx, mark):                                           # what the failed step left could not even be measured: taken out
+            rep.message = (rep.message + " | it left the part unreadable: taken out")[:600]
+            rep.status = "failed" if rep.status == "check_failed" else rep.status
+            for i in covers:
+                built.pop(i.id, None)
+        from app.menu.text import feature_card
+        problem = {"item": p.item.model_dump(), "status": rep.status, "solidworks_said": rep.message, "steps": rep.verdicts,
+                   "position_checks": rep.probes, "feature_card": feature_card(p.item.feature) if p.item.feature in MENU else "",
+                   "built_before_it": [{"id": i.id, "feature": i.feature} for i in built.values() if i.id not in {c.id for c in covers}],
+                   "part_now": await self._measure(ctx)}
+        warn = len(report.warnings) - 1
+        t0 = time.time() - rep.seconds
+        box = [mark, rep.status, p.item]                                                # [feature count before the step, its status in the part, the item that made it]
+        end = await self.agent.fix(problem, self._tools(bl, ctx, built, "fix", p.item.id, box))
+        why = str((end.get("args") or {}).get("reason") or end.get("why") or "")[:200]
+        if (end.get("result") or {}).get("status") == "ok":
+            report.warnings.pop(warn)
+            self._finish_item(rep, t0, "ok", f"reworked by the SolidWorks agent as {end['tool']}: {why}"[:400])
+            report.warnings.append(f"REWORKED by the SolidWorks agent: {p.item.id} is now {end['tool']} {json.dumps(end.get('args'))}"[:400])
+            for i in covers[1:]:
+                built.pop(i.id, None)
+        elif end.get("tool") == "keep" and box[1] == "check_failed":                   # built, its check failed, the agent says the shape is right
+            if box[2] is not p.item:                                                    # it is the agent's version of the step that stands
+                built[p.item.id] = box[2]
+                for i in covers[1:]:
+                    built.pop(i.id, None)
+                rep.message = f"reworked by the SolidWorks agent as {box[2].feature} {json.dumps(box[2].params)}"[:300]
+            self._finish_item(rep, t0, "check_failed", (rep.message + f" | kept by the SolidWorks agent: {why}")[:600])
+            report.warnings[warn] = f"CHECK FAILED, kept by the SolidWorks agent: {p.item.id}: {why}"[:400]
+        else:
+            await self._undo_to(mark)                                                   # whatever is left of this step comes out
+            for i in covers:
+                built.pop(i.id, None)
+            if rep.status == "check_failed":
+                self._finish_item(rep, t0, "removed", rep.message)
+            rep.message = (rep.message + f" | the SolidWorks agent could not fix it: {why}")[:600]
+        report.agent = {"turns": self.agent.log.turns, "calls": self.agent.log.calls}
+
+    async def _agent_review(self, bl, ctx, built: dict, report: RunReport) -> bool:
+        """True = SolidWorks is not usable any more (report.failure says why)."""
+        if self.agent is None or not hasattr(bl, "model_copy") or "ext_feature_count" not in (getattr(self.sw, "tool_names", None) or []):
+            return False
+        try:
+            await self._agent_review_part(bl, ctx, built, report)
+            return False
+        except (McpToolTimeout, VerifyError, ConnectionError) as ex:
+            report.failure = Failure("-", "review", "environment", f"during the SolidWorks agent's review: {type(ex).__name__}: {ex}"[:400])
+            return True
+
+    async def _agent_review_part(self, bl, ctx, built: dict, report: RunReport) -> None:
+        """Every step is done: the agent looks at the part beside the drawing and adds what is missing."""
+        from app.menu.text import feature_card
+        likely = {*(i.feature for i in bl.items), "hole", "cut", "profile_cut", "side_cut", "circle_boss", "fillet_chamfer_edges"}
+        state = {"steps": [{"id": i.id, "feature": i.feature, "status": i.status, "message": i.message[:200]} for i in report.items],
+                 "items_in_the_part": sorted(built),                        # every list item that stands in the part (a merged step builds two: F1 + E1)
+                 "list": [i.model_dump() for i in bl.items], "warnings": report.warnings[-10:], "part_now": await self._measure(ctx),
+                 "feature_cards": {n: feature_card(n) for n in sorted(likely) if n in MENU}}   # read here: no describe call (a turn) needed for these
+        before = set(built)
+        end = await self.agent.review(state, self._tools(bl, ctx, built, "review", "-", [None]))
+        for new_id in [k for k in built if k not in before]:
+            item = built[new_id]
+            report.items.append(ItemReport(new_id, item.feature, "ok", message=f"added by the SolidWorks agent: {json.dumps(item.params)}"[:400]))
+        if end.get("tool") != "done":
+            report.warnings.append(f"SolidWorks agent review ended: {(end.get('args') or {}).get('reason', end.get('tool'))}"[:300])
+        report.agent = {"turns": self.agent.log.turns, "calls": self.agent.log.calls, "review": end.get("args")}
 
     async def _feature_count(self):
         if "ext_feature_count" not in (getattr(self.sw, "tool_names", None) or []):

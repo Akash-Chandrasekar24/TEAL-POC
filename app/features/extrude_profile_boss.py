@@ -33,7 +33,7 @@ def ext_entities(segments: list[dict], frame: PlaneFrame, height_m: float) -> li
     ents = []
     for s in segments:
         if s["kind"] == "line":
-            ents.append({"kind": "line", "p1": W(s["x1"], s["y1"]), "p2": W(s["x2"], s["y2"])})
+            ents.append({"kind": "line", "p1": W(s["x1"], s["y1"]), "p2": W(s["x2"], s["y2"]), **({"construction": True} if s.get("construction") else {})})
         elif s["kind"] == "arc":
             mx, my = _mid(s)
             ents.append({"kind": "arc", "center": W(s["cx"], s["cy"]), "p1": W(s["x1"], s["y1"]), "p2": W(s["x2"], s["y2"]), "mid": W(mx, my)})
