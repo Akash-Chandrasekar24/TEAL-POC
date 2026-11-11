@@ -57,3 +57,13 @@ def test_side_cut_through_is_two_cuts_and_a_counterbore_starts_at_its_floor():
     assert abs(top["plane"]["offset"] - 0.007) < 1e-12 and top["direction"] == [0.0, 1.0, 0.0]          # floor at 35 - 28, cut out to the face
     assert abs(bottom["plane"]["offset"] + 0.007) < 1e-12 and bottom["direction"] == [0.0, -1.0, 0.0]
     assert side_cut({"holes": [{"x": 30, "y": 16, "diameter": 22}], "depth": 28}).expected().bound_mm3 < 0
+
+
+
+def test_through_cuts_after_side_profile_are_bound_only():
+    """Ends 32, middle 60: a front hole crosses 32 or 60, not the base depth, so it is checked only as 'removes material'."""
+    hole = {"id": "F3", "feature": "hole", "params": {"face": "front", "diameter": 20, "depth": "through", "material_length": 16,
+                                                     "positions": [{"x": 0, "x_from": "centre", "y": 0, "y_from": "centre"}]}}
+    shaped = build(60, CLAMP); shaped.items.append(type(shaped.items[0]).model_validate(hole))
+    plain = build(60, CLAMP); plain.items[1] = type(plain.items[0]).model_validate(hole)
+    assert prepare(shaped)[2].feature.bound_only and not prepare(plain)[1].feature.bound_only

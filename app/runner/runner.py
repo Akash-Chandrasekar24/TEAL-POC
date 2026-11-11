@@ -146,6 +146,7 @@ def prepare(bl: BuildList) -> list[Prepared]:
             ctx.base_feature = feature
             if ctx.turned:
                 ctx.turned_profile, ctx.turned_axis = feature.profile, feature.axis
+        ctx.height_varies |= it.feature == "side_profile_cut"
         ctx.anchors.update(anchors_of(it.id, feature))                         # the flat faces this item made: later items can say "on <id>.top"
         out.append(Prepared(it, params, feature, label))
     return out

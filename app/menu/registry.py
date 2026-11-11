@@ -56,6 +56,11 @@ class BuildContext:
     turned_axis: str | None = None
     base_feature: Any = None                             # the base item's feature (a shell checks it is a plain box or cylinder)
     anchors: dict = field(default_factory=dict)          # name -> Anchor: the flat faces earlier items created ("F6.top", "F5.end"); filled by the runner's prepare()
+    height_varies: bool = False                          # a side_profile_cut shaped the base: a through cut from front / back crosses different heights
+
+    def varying_through(self, face: Any, end: str) -> bool:
+        """A through cut from the front / back of a base whose height varies: its exact volume is unknown, so it is checked as 'removes material'."""
+        return self.height_varies and end == "through" and face in ("front", "back")
 
     @property
     def has_base(self) -> bool:
@@ -397,7 +402,7 @@ def build_cut(p: P.CutParams, ctx: BuildContext, label: str) -> CutFeature:
     shapes = [CutShape(s.kind, pos, diameter=s.diameter, centre_distance=s.centre_distance, width=s.width, height=s.height, angle_deg=s.angle_deg)
               for s in p.shapes for pos in _positions([] if s.position is None else [s.position], s.pattern, ctx, w, "a cut")]
     boxes = [(c.position.x - hx, c.position.x + hx, c.position.y - hy, c.position.y + hy) for c in shapes for hx, hy in [_shape_half_extents(c)]] if isinstance(w.view, AnchorView) else []
-    partial = _corner_zone(w, "a cut", boxes, p.edge_zone_ok)
+    partial = _corner_zone(w, "a cut", boxes, p.edge_zone_ok) or ctx.varying_through(p.face, end)
     return CutFeature(ctx.unit, w.plane, shapes, end=end, depth=depth, target="face", offset=w.offset, into=w.into, material_length=length,
                       outline_wh=w.outline_wh, bound_only=partial, label=label + (" (partial: upper-bound volume)" if partial else ""))
 
@@ -408,7 +413,7 @@ def build_hole(p: P.HoleParams, ctx: BuildContext, label: str) -> Hole:
     positions = _positions(p.positions, p.pattern, ctx, w, "a hole")
     r = max(p.diameter, p.counterbore_diameter or 0.0, p.countersink_diameter or 0.0) / 2          # the WIDEST part of the hole decides
     boxes = [(q.x - r, q.x + r, q.y - r, q.y + r) for q in positions] if isinstance(w.view, AnchorView) else []
-    partial = _corner_zone(w, "a hole", boxes, p.edge_zone_ok)
+    partial = _corner_zone(w, "a hole", boxes, p.edge_zone_ok) or ctx.varying_through(p.face, end)
     return Hole(unit=ctx.unit, plane=w.plane, positions=positions, diameter=p.diameter, style=p.style, end=end,
                 depth=None if end == "through" else float(p.depth), material_length=p.material_length, target="face", offset=w.offset, into=w.into,
                 counterbore_diameter=p.counterbore_diameter, counterbore_depth=p.counterbore_depth,
@@ -428,7 +433,7 @@ def build_profile_cut(p: P.ProfileCutParams, ctx: BuildContext, label: str) -> E
     end, depth, length = _end_and_length(p.depth, p.material_length)
     profile = resolve_outline(p.profile, ctx) if w.view is None else _face_outline(p.profile, w)
     boxes = [profile_bounds(profile)] if isinstance(w.view, AnchorView) else []
-    partial = _corner_zone(w, "a ring cut" if isinstance(p.profile, P.Ring) else "a profile cut", boxes, p.edge_zone_ok)
+    partial = _corner_zone(w, "a ring cut" if isinstance(p.profile, P.Ring) else "a profile cut", boxes, p.edge_zone_ok) or ctx.varying_through(p.face, end)
     return ExtrudeProfileCut(unit=ctx.unit, plane=w.plane, profile=profile, end=end, depth=depth, offset=w.offset, into=w.into,
                              target=w.cut_target, origin="centre", material_length=length, bound_only=partial,
                              label=label + (" (partial: upper-bound volume)" if partial else ""))
