@@ -500,12 +500,16 @@ function workflowCard(r) {
     const preview = el("img", {src:job.preview.image, loading:"lazy", decoding:"async", alt:"SolidWorks model preview"});
     const viewerStatus = el("p", {class:"hint", text:"Drag to rotate · scroll to zoom. Inspect detailed dimensions in SolidWorks as well."});
     const views = el("div", {class:"actions"});
+    const dimCard = el("div", {class:"dim-card", "aria-live":"polite"}, el("p", {class:"hint", text:"Click a numbered marker on the model to see its measurements against the drawing."}));
+    const dimTable = el("div", {class:"dim-table"});
     card.append(el("div", {class:"compare"}, el("div", {}, el("h3", {text:"Your 2D drawing"}), pages, source),
-      el("div", {}, el("h3", {text:"Created 3D model"}), canvas, views, viewerStatus, el("details", {}, el("summary", {text:"Saved preview image"}), preview))));
+      el("div", {}, el("h3", {text:"Created 3D model"}), el("div", {class:"mesh-wrap"}, canvas), views, viewerStatus, dimCard,
+        el("details", {}, el("summary", {text:"Saved preview image"}), preview))), dimTable);
     if (typeof globalThis.renderReviewMesh === "function") {
       const startViewer = () => globalThis.renderReviewMesh(canvas, job.preview.mesh).then((viewer) => {
         if (!canvas.isConnected) { viewer.dispose?.(); return; }
         canvas.reviewViewer = viewer;
+        showDimensions(job.id, viewer, dimCard, dimTable);
         for (const name of ["Isometric","Front","Top","Right"]) {
           const button = el("button", {class:"btn secondary", text:name});
           button.addEventListener("click", () => viewer.view(name)); views.append(button);
@@ -675,3 +679,41 @@ function assemblyCard(r) {
   return card;
 }
 
+
+
+// ---------------------------------------------------------------- drawing vs model: a marker per built step, a click shows its numbers
+// Judged by the drawing's tolerance: printed on the callout, else the drawing's general tolerance (ISO 2768), else ISO 2768-m (assumed).
+function devText(pct) { return pct === null || pct === undefined ? "–" : `${pct > 0 ? "+" : ""}${pct.toFixed(2)} %`; }
+function tolText(c) { if (!c.tol) return c.tol_source || "–"; const [lo, hi] = c.tol; return lo === -hi ? `±${hi}` : `+${hi} / ${lo}`; }
+function verdictClass(within) { return within === true ? "dev-ok" : within === false ? "dev-bad" : "dev-none"; }
+function verdictText(c) { return c.within === true ? "✓ within" : c.within === false ? "✗ out of tolerance" : "not judged"; }
+
+function checkRows(checks) {
+  return el("table", {class:"dim-rows"}, el("thead", {}, el("tr", {}, ["Dimension", "Drawing", "Tolerance", "SolidWorks", "Deviation", "Result"].map((t) => el("th", {text:t})))),
+    el("tbody", {}, checks.map((c) => el("tr", {class:verdictClass(c.within), title:c.tol_source || ""}, el("td", {text:c.what}), el("td", {text:`${c.drawing} ${c.unit}`}),
+      el("td", {text:tolText(c)}), el("td", {text:c.model === null ? "–" : `${c.model} ${c.unit}`}), el("td", {text:devText(c.deviation_pct)}), el("td", {text:verdictText(c)})))));
+}
+
+async function showDimensions(jid, viewer, cardHost, tableHost) {
+  let data;
+  try { const response = await fetch(`/api/workflow/${jid}/dimensions`); data = await response.json(); if (!response.ok) throw new Error(data.error || "no measurements"); }
+  catch (error) { cardHost.replaceChildren(el("p", {class:"hint", text:`Measurements are not available for this build (${error.message}). Builds from now on record them.`})); return; }
+  const feats = (data.features || []).filter((f) => f.checks.length);
+  if (!feats.length) { cardHost.replaceChildren(el("p", {class:"hint", text:"This build has no recorded measurements. Build it again to compare it with the drawing."})); return; }
+  const pick = (i) => {
+    const f = feats[i], bad = f.checks.filter((c) => c.within === false).length;
+    cardHost.replaceChildren(el("h4", {text:`${i + 1}. ${f.id} ${FEATURE_WORDS[f.feature] || f.feature}${f.printed ? ` · printed ${f.printed}` : ""}`}),
+      el("p", {class:`dim-worst ${verdictClass(f.within)}`, text:f.within === true ? "Every dimension is within the drawing's tolerance." : f.within === false ? `${bad} dimension${bad === 1 ? " is" : "s are"} out of the drawing's tolerance.` : "No tolerance applies to these values."}),
+      checkRows(f.checks), f.message ? el("p", {class:"hint", text:f.message}) : null);
+    tableHost.querySelectorAll("tr[data-pin]").forEach((tr) => tr.classList.toggle("picked", Number(tr.dataset.pin) === i));
+  };
+  viewer.markers(feats.map((f, i) => ({at:f.anchor, label:String(i + 1), cls:verdictClass(f.within), title:`${f.id}: ${f.within === false ? "out of tolerance" : f.within ? "within tolerance" : "not judged"}`})), pick);
+  tableHost.replaceChildren(el("h3", {text:"Drawing vs SolidWorks"}),
+    el("p", {class:`hint ${data.within === data.checked ? "dim-all-ok" : ""}`, text:`${data.within} of ${data.checked} dimensions are within the drawing's tolerance (general tolerance ISO 2768-${data.general_tolerance}). Largest deviation: ${devText(data.worst_pct)}. Click a row or a marker for the details.`}),
+    el("table", {class:"dim-rows"}, el("thead", {}, el("tr", {}, ["#", "Step", "Printed", "Dimensions", "Largest deviation", "Result"].map((t) => el("th", {text:t})))),
+      el("tbody", {}, feats.map((f, i) => { const out = f.checks.filter((c) => c.within === false).length, judged = f.checks.filter((c) => c.within !== null && c.within !== undefined).length;
+        const tr = el("tr", {class:verdictClass(f.within), "data-pin":String(i)}, el("td", {text:String(i + 1)}),
+        el("td", {text:`${f.id} ${FEATURE_WORDS[f.feature] || f.feature}`}), el("td", {text:f.printed || "–"}), el("td", {text:String(f.checks.length)}), el("td", {text:devText(f.worst_pct)}),
+        el("td", {text:judged ? (out ? `✗ ${out} of ${judged} out` : `✓ ${judged} within`) : "not judged"}));
+        tr.addEventListener("click", () => pick(i)); return tr; }))));
+}

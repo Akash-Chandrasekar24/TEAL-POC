@@ -583,3 +583,17 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 .live-steps .st-check_failed{color:#9d701f}.live-steps .st-failed,.live-steps .st-removed{color:#b3412f}
 .live-log li{display:flex;gap:8px;padding:2px 4px;border-radius:6px}.live-log time{color:var(--muted);flex:none;font-variant-numeric:tabular-nums}
 .live-log .lg-agent{background:var(--brand-soft)}.live-log .lg-warn{color:#9d701f}.live-log .lg-ok{color:#2e7d50}
+
+/* drawing vs model: markers on the 3D model, the picked step's numbers, the table */
+.mesh-wrap{position:relative}
+.mesh-pins{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.mesh-pin{position:absolute;transform:translate(-50%,-50%);pointer-events:auto;min-width:22px;height:22px;padding:0 5px;border-radius:11px;border:2px solid #fff;
+  font:600 11px var(--font);color:#fff;background:#2e7d50;cursor:pointer;box-shadow:0 1px 4px #0004}
+.mesh-pin.dev-warn{background:#c98a1b}.mesh-pin.dev-bad{background:#b3412f}.mesh-pin.dev-none{background:#65758b}
+.mesh-pin.behind{opacity:.45}
+.dim-card{margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.dim-card h4{margin:0 0 4px;font-size:13px}.dim-worst{margin:0 0 6px;font-size:12.5px;font-weight:600}
+.dim-rows{width:100%;border-collapse:collapse;font-size:12px}.dim-rows th{text-align:left;color:var(--muted);font-weight:600;border-bottom:1px solid var(--line);padding:3px 6px}
+.dim-rows td{padding:3px 6px;border-bottom:1px solid #eee}.dim-table tr[data-pin]{cursor:pointer}.dim-table tr.picked{outline:2px solid var(--brand)}
+.dev-ok td:last-child,.dim-worst.dev-ok{color:#2e7d50}.dev-warn td:last-child,.dim-worst.dev-warn{color:#9d701f}.dev-bad td:last-child,.dim-worst.dev-bad{color:#b3412f}
+.dev-ok td:last-child{color:#2e7d50}

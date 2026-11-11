@@ -71,6 +71,7 @@ class ItemReport:
     verdicts: list[dict] = field(default_factory=list)
     probes: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    measured: dict = field(default_factory=dict)          # drawing vs model for this step (app.runner.measure): where it is, its numbers, the deviation
 
 
 @dataclass
@@ -194,6 +195,9 @@ class Runner:
     look_dir = None
     progress = None                  # app.runner.progress.Progress: what the SolidWorks page shows while the part is built
     _cover_ids: dict = {}
+    _face_sigs: set = set()          # the faces the part had at the last measurement: a step's NEW faces are the rest
+    _added_measured: dict = {}
+    _unit = "mm"
 
     def __init__(self, sw: SolidWorksClient, *, expected_docs: tuple[str, ...] = (), log: RunLog | None = None, env_retries: int = 1,
                  agent=None, look_dir: Path | None = None, progress=None):
@@ -217,6 +221,7 @@ class Runner:
             report.attempts = attempts
             if report.ok or report.failure is None or report.failure.kind != "environment" or attempts > self.env_retries:
                 if self.progress is not None:
+                    self._show_finished_pictures()
                     if report.failure is not None:
                         self.progress.log("warn", f"Stopped at {report.failure.item_id}: {report.failure.message[:200]}")
                     self.progress.finish(report.ok)
@@ -260,6 +265,8 @@ class Runner:
         if self.progress is not None:
             self.progress.plan([i for c in covers for i in c])
         built: dict[str, Any] = {}                                                  # id -> the item as it stands in the part (the agent's version when it reworked one)
+        self._face_sigs = set()
+        self._unit = bl.unit
         for n, (p, rep) in enumerate(zip(prepared, report.items)):
             t0 = time.time()
             self._event("item_start", id=p.item.id, feature=p.item.feature)
@@ -305,6 +312,7 @@ class Runner:
             if result.ok:
                 self._finish_item(rep, t0, "ok", "")
                 built.update({i.id: i for i in covers[n]})
+                rep.measured = await self._record(ctx, p.item, rep.verdicts, base=n == 0, params=p.params)
                 await self._snapshot(n, p.item.id)
                 continue
             failure = self._classify(p, result)
@@ -314,6 +322,7 @@ class Runner:
                 self._finish_item(rep, t0, "check_failed", failure.message)
                 report.warnings.append(f"CHECK FAILED, look at it in the model: {p.item.id} ({p.item.feature}): {failure.message}"[:400])
                 built.update({i.id: i for i in covers[n]})
+                rep.measured = await self._record(ctx, p.item, rep.verdicts)
                 if await self._agent_fix(bl, ctx, built, covers[n], p, rep, mark, report):
                     return report
                 continue
@@ -429,7 +438,7 @@ class Runner:
             return {"status": "failed", "feature_call": True, "message": f"SolidWorks refused it: {refused.message}"[:500], **self._observed(result)}
         if not await self._usable(ctx, mark):
             return {"status": "failed", "feature_call": True, "message": "the part could not be analysed after this feature (an open sketch or a broken rebuild): taken out"}
-        seen = self._observed(result)
+        seen = {**self._observed(result), "steps_raw": [{k: v for k, v in x.record().items() if k not in ("before", "after")} for x in result.verdicts]}
         loose = self._made_loose_piece(result)
         if loose:
             await self._undo_to(mark)
@@ -466,6 +475,8 @@ class Runner:
             except ValidationError as ex:
                 return {"status": "refused", "feature_call": True, "message": str(ex)[:300]}
             out = await self._try_feature(bl, ctx, {k: v for k, v in built.items() if k != new_id}, item, mark_box[0])
+            if phase == "review" and out["status"] == "ok":
+                self._added_measured[new_id] = await self._record(ctx, item, out.get("steps_raw", []))
             if phase == "fix":
                 mark_box[1:] = [out["status"], item]                                 # what stands in the part for this step now
             if out["status"] == "ok":
@@ -507,6 +518,8 @@ class Runner:
         box = [mark, rep.status, p.item]                                                # [feature count before the step, its status in the part, the item that made it]
         end = await self.agent.fix(problem, self._tools(bl, ctx, built, "fix", p.item.id, box))
         why = str((end.get("args") or {}).get("reason") or end.get("why") or "")[:200]
+        if (end.get("result") or {}).get("status") in ("ok", "check_failed") and box[2] is not p.item:
+            rep.measured = await self._record(ctx, box[2], end["result"].get("steps_raw", []))
         if (end.get("result") or {}).get("status") == "ok":
             report.warnings.pop(warn)
             self._finish_item(rep, t0, "ok", f"reworked by the SolidWorks agent as {end['tool']}: {why}"[:400])
@@ -514,7 +527,8 @@ class Runner:
             for i in covers[1:]:
                 built.pop(i.id, None)
         elif end.get("tool") == "keep" and box[1] == "check_failed":                   # built, its check failed, the agent says the shape is right
-            if box[2] is not p.item:                                                    # it is the agent's version of the step that stands
+            if box[2] is not p.item:
+                rep.measured = await self._record(ctx, box[2], [])                                                    # it is the agent's version of the step that stands
                 built[p.item.id] = box[2]
                 for i in covers[1:]:
                     built.pop(i.id, None)
@@ -535,6 +549,7 @@ class Runner:
         if self.agent is None or not hasattr(bl, "model_copy") or "ext_feature_count" not in (getattr(self.sw, "tool_names", None) or []):
             return False
         self._review_box = [None]
+        self._added_measured = {}
         try:
             await self._agent_review_part(bl, ctx, built, report)
             return False
@@ -564,7 +579,8 @@ class Runner:
         end = await self.agent.review(state, self._tools(bl, ctx, built, "review", "-", self._review_box))
         for new_id in [k for k in built if k not in before]:
             item = built[new_id]
-            report.items.append(ItemReport(new_id, item.feature, "ok", message=f"added by the SolidWorks agent: {json.dumps(item.params)}"[:400]))
+            report.items.append(ItemReport(new_id, item.feature, "ok", message=f"added by the SolidWorks agent: {json.dumps(item.params)}"[:400],
+                                           measured=self._added_measured.get(new_id, {})))
             if self.progress is not None:
                 self.progress.add_step(item, "ok", "added by the AI agent")
         if end.get("tool") != "done":
@@ -608,27 +624,57 @@ class Runner:
         tail = f" -> {r.get('status')}: {str(r.get('message', ''))[:160]}" if r else ""
         self.progress.log("agent", f"AI agent{where} {what}" + (f" ({entry['why']})" if entry.get("why") else "") + tail)
 
+    async def _record(self, ctx, item, verdicts: list[dict], base: bool = False, params=None) -> dict:
+        """Drawing vs model for one step: the faces it added (read from SolidWorks) against the item's numbers. Never stops a build."""
+        try:
+            from app.features.base import fast_bbox
+            from .measure import signature, step_measurement
+            faces = (await self.sw.analyze_model("faces")).analysis_json()["faces"]
+            sigs = {signature(f) for f in faces}
+            new = [f for f in faces if signature(f) not in self._face_sigs]
+            self._face_sigs = sigs
+            bbox = size = None
+            if base:
+                bb = await fast_bbox(self.sw)
+                bbox = [[v * 1000 for v in bb.lo], [v * 1000 for v in bb.hi]] if bb is not None else None
+                if params is not None:
+                    (w, h), _, t = base_info(params, self._unit)
+                    size = (w, h, t)
+            return step_measurement(item, self._unit, new, verdicts, bbox, size)
+        except Exception as ex:                                                          # noqa: BLE001 - the comparison is information
+            return {"error": f"{type(ex).__name__}: {ex}"[:200]}
+
     async def _snapshot(self, n: int, step_id: str) -> None:
-        """A picture of the part after a step, drawn on another thread (the build goes on)."""
+        """A picture of the part after a step, drawn by a separate low-priority process: drawn on a thread of this process it held the
+        interpreter and every SolidWorks call of the build waited (measured: the clamp took 830 s instead of 180 s)."""
         if self.progress is None:
             return
+        self._show_finished_pictures()
         try:
             stl = self.progress.folder / "live" / f"s{n:02d}.stl"
             if "ext_clear_selection" in (getattr(self.sw, "tool_names", None) or []):
                 await self.sw.call("ext_clear_selection")
             r = await self.sw.export_document("STL", stl)
             if r.ok and stl.is_file():
-                asyncio.get_running_loop().run_in_executor(_render_pool(), self._draw_live, stl, step_id)
+                import subprocess
+                import sys
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+                proc = subprocess.Popen([sys.executable, "-c", "import sys; from app.preview import render_stl_png; render_stl_png(*sys.argv[1:4])",
+                                         str(stl), str(stl.with_suffix(".png")), f"after {step_id}"], cwd=str(config.PROJECT_ROOT),
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+                self._renders = [*getattr(self, "_renders", []), (proc, stl.with_suffix(".png"), step_id)]
         except Exception:                                                                # noqa: BLE001 - a picture is never worth stopping a build
             pass
 
-    def _draw_live(self, stl: Path, step_id: str) -> None:
-        try:
-            from app.preview import render_stl_png
-            png = render_stl_png(stl, stl.with_suffix(".png"), f"after {step_id}")
-            self.progress.image(png.name, step_id)
-        except Exception:                                                                # noqa: BLE001
-            pass
+    def _show_finished_pictures(self) -> None:
+        """The newest picture whose drawing has finished goes on the page."""
+        pending = []
+        for proc, png, step_id in getattr(self, "_renders", []):
+            if proc.poll() is None:
+                pending.append((proc, png, step_id))
+            elif png.is_file():
+                self.progress.image(png.name, step_id)
+        self._renders = pending
 
     @staticmethod
     def _classify(p: Prepared, result) -> Failure:

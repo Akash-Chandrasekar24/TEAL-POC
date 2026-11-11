@@ -57,6 +57,35 @@ namespace DrawingToSolidworks
             });
         }
 
+        // Drawing vs model in SolidWorks itself: a note with a leader on each measured face ("F2 Ø50.00 | drawing Ø50 | +0.00%"), saved in the part.
+        [HttpPost, Route("api/ext/annotate")]
+        public IHttpActionResult Annotate([FromBody] JObject body)
+        {
+            return Run(() =>
+            {
+                var model = Part();
+                model.Extension.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swDisplayAnnotations, 0, true);
+                model.Extension.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swDisplayNotes, 0, true);
+                var placed = new JArray();
+                foreach (JObject n in (JArray)body["notes"])
+                {
+                    var p = P(n["point"]);
+                    model.ClearSelection2(true);
+                    bool onFace = model.Extension.SelectByID2("", "FACE", p[0], p[1], p[2], false, 0, null, 0);
+                    var note = model.InsertNote(n.Value<string>("text")) as INote;
+                    if (note != null)
+                    {
+                        var ann = note.GetAnnotation() as IAnnotation;
+                        if (ann != null) ann.SetPosition2(p[0] + 0.02, p[1] + 0.02, p[2] + 0.02);   // a little off the face: the leader shows where
+                    }
+                    placed.Add(new JObject { ["text"] = n.Value<string>("text"), ["on_face"] = onFace, ["ok"] = note != null });
+                }
+                model.ClearSelection2(true);
+                model.GraphicsRedraw2();
+                return new JObject { ["ok"] = true, ["notes"] = placed };
+            });
+        }
+
         [HttpPost, Route("api/ext/revolve")]
         public IHttpActionResult Revolve([FromBody] JObject body) { return Run(() => DoRevolve(body)); }
 

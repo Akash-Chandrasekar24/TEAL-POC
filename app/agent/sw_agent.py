@@ -70,7 +70,7 @@ class AgentLog:
 def _short(result: dict | None) -> dict | None:
     if result is None:
         return None
-    return {k: v for k, v in result.items() if k not in ("image",)}
+    return {k: v for k, v in result.items() if k not in ("image", "steps_raw")}
 
 
 def side_by_side(top: bytes, bottom: bytes, width: int = 1600) -> bytes:

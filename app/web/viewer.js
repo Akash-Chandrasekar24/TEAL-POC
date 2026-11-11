@@ -38,7 +38,19 @@ globalThis.renderReviewMesh = async function (canvas, url) {
     const location=gl.getAttribLocation(program,name); gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location,3,gl.FLOAT,false,0,0);
   }
   const rotation=gl.getUniformLocation(program,"rotation"), fit=gl.getUniformLocation(program,"fit");
-  let yaw=-.7, pitch=.5, zoom=1.25, drag=null, disposed=false;
+  let yaw=-.7, pitch=.5, zoom=1.25, drag=null, disposed=false, overlay=null, pins=[];
+  // A model point (the mesh's own mm) -> its place on the canvas, with the same transform as the shader: markers follow every rotation and zoom.
+  function project(q) {
+    const v=[0,1,2].map((a) => (q[a]-(lo[a]+hi[a])/2)/span);
+    const c=Math.cos(yaw), s=Math.sin(yaw), cp=Math.cos(pitch), sp=Math.sin(pitch);
+    const r=[c*v[0]-s*v[1], cp*s*v[0]+cp*c*v[1]-sp*v[2], sp*s*v[0]+sp*c*v[1]+cp*v[2]];
+    const w=canvas.clientWidth, h=canvas.clientHeight, aspect=w/h;
+    const fx=zoom/Math.max(1,aspect), fy=zoom*Math.min(1,aspect);
+    return {x:(r[0]*fx+1)/2*w, y:(1-r[1]*fy)/2*h, front:r[2]};
+  }
+  function placePins() {
+    for (const pin of pins) { const at=project(pin.at); pin.node.style.left=`${at.x}px`; pin.node.style.top=`${at.y}px`; pin.node.classList.toggle("behind", at.front < -.05); }
+  }
   function draw() {
     if (disposed || !canvas.isConnected) return;
     const ratio=Math.min(devicePixelRatio || 1,2);
@@ -49,6 +61,7 @@ globalThis.renderReviewMesh = async function (canvas, url) {
     gl.uniformMatrix3fv(rotation,false,new Float32Array([c,cp*s,sp*s, -s,cp*c,sp*c, 0,-sp,cp]));
     const aspect=canvas.width/canvas.height;
     gl.uniform2f(fit,zoom/Math.max(1,aspect),zoom*Math.min(1,aspect)); gl.drawArrays(gl.TRIANGLES,0,vertices.length/3);
+    placePins();
   }
   canvas.addEventListener("pointerdown",(event) => {drag=[event.clientX,event.clientY];canvas.setPointerCapture(event.pointerId);});
   canvas.addEventListener("pointerup",() => {drag=null;});
@@ -63,5 +76,12 @@ globalThis.renderReviewMesh = async function (canvas, url) {
   draw();
   const resize = typeof ResizeObserver === "function" ? new ResizeObserver(draw) : null;
   resize?.observe(canvas);
-  return {dispose() { disposed=true; resize?.disconnect(); gl.getExtension("WEBGL_lose_context")?.loseContext(); }, view(name) { [yaw,pitch]=({Isometric:[-.7,.8],Front:[0,Math.PI/2],Top:[0,0],Right:[-Math.PI/2,Math.PI/2]})[name] || [-.7,.8]; zoom=1.25;draw(); }};
+  return {markers(list, onPick) {          // [{at:[x,y,z] mesh mm, label, cls}] drawn over the canvas; a click calls onPick(index)
+      overlay?.remove(); pins=[];
+      overlay=document.createElement("div"); overlay.className="mesh-pins"; canvas.after(overlay);
+      list.forEach((m, i) => { const b=document.createElement("button"); b.type="button"; b.className=`mesh-pin ${m.cls||""}`; b.textContent=m.label; b.title=m.title||m.label;
+        b.addEventListener("click", () => onPick(i)); overlay.append(b); pins.push({at:m.at, node:b}); });
+      placePins();
+    },
+    dispose() { disposed=true; overlay?.remove(); resize?.disconnect(); gl.getExtension("WEBGL_lose_context")?.loseContext(); }, view(name) { [yaw,pitch]=({Isometric:[-.7,.8],Front:[0,Math.PI/2],Top:[0,0],Right:[-Math.PI/2,Math.PI/2]})[name] || [-.7,.8]; zoom=1.25;draw(); }};
 };

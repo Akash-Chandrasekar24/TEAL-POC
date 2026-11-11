@@ -6,7 +6,24 @@ The HTTP call attaches to an already-running SolidWorks instance only.
 from typing import Literal
 
 
+def _local_http_without_tls() -> None:
+    """Every tool call makes a new httpx client, and each one built an SSL context: measured 0.65-0.87 s per call (a trivial call took 1 s, the
+    clamp build 314 s instead of 180 s). The execution server is plain http on this machine, so no TLS is needed: 0.003 s per client."""
+    import execution_client
+    if getattr(execution_client._http_client, "_no_tls", False):
+        return
+    original = execution_client._http_client
+
+    def client(**kwargs):
+        kwargs.setdefault("verify", False)
+        return original(**kwargs)
+    client._no_tls = True
+    execution_client._http_client = client
+
+
 def register(mcp):
+    _local_http_without_tls()
+
     @mcp.tool()
     def inspect_drawing() -> dict:
         """Read the active native drawing's model references, scales, bounds and dimensions; no COM startup."""
@@ -76,6 +93,11 @@ def register(mcp):
         """A plane at an angle to a reference plane, through an axis: spec {reference: plane, point: [x,y,z], along: x|y|z, angle_deg, normal: [x,y,z]}.
         The axis runs through `point` along `along`; the plane comes out with +normal along `normal` (rebuilt with the flip option if needed)."""
         return geometry("/api/ext/angled_plane", spec, 240)
+
+    @mcp.tool()
+    def ext_annotate(spec: dict) -> str:
+        """Notes with leaders on faces of the active part: spec {notes: [{point: [x,y,z] m on the face, text}]}. Annotations are switched on."""
+        return geometry("/api/ext/annotate", spec, 240)
 
     @mcp.tool()
     def ext_revolve(spec: dict) -> str:

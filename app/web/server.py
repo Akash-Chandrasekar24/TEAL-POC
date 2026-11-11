@@ -958,6 +958,56 @@ def _build_batch(rid, bid):
         _ACTIVE.discard(bid)
 
 
+def _general_tolerance(result: dict) -> str | None:
+    """The ISO 2768 class the drawing names (title block / notes), or None (then ISO 2768-m is assumed and said so)."""
+    from app.drawing.tolerance import general_class
+    return general_class(json.dumps([p.get("read") for p in result.get("pages", [])], ensure_ascii=False))
+
+
+def job_dimensions(jid: str) -> dict:
+    """Every built step's markers for the 3D review: where it is on the review mesh, its printed text, and drawing vs model numbers. The STL
+    is written shifted into positive space, so each anchor is moved by (STL box min - model box min)."""
+    record = WORKFLOW.load(jid)
+    graph = record.get("graph") or {}
+    report, finish = graph.get("report") or {}, graph.get("finish") or {}
+    model_box, stl_box = (report.get("final") or {}).get("bbox_mm"), finish.get("stl_bbox_mm")
+    shift = [s - m for s, m in zip(stl_box[0], model_box[0])] if model_box and stl_box else [0.0, 0.0, 0.0]
+    from app.runner.measure import judged
+    approved = graph.get("approved") or {}
+    printed = {i["id"]: i.get("printed", "") for i in approved.get("items", [])}
+    unit = approved.get("unit") or "mm"
+    try:
+        general = _general_tolerance(result_with_design(record["result_id"]))
+    except (ValueError, OSError, KeyError):
+        general = None
+    out = []
+    for it in report.get("items", []):
+        meas = it.get("measured") or {}
+        if not meas.get("anchor_mm"):
+            continue
+        checks = judged(meas.get("checks", []), printed.get(it["id"], ""), general, unit)
+        devs = [abs(c["deviation_pct"]) for c in checks if c.get("deviation_pct") is not None]
+        verdicts = [c["within"] for c in checks if c.get("within") is not None]
+        out.append({"id": it["id"], "feature": it["feature"], "status": it["status"], "printed": printed.get(it["id"], ""), "message": it.get("message", "")[:300],
+                    "anchor": [a + s for a, s in zip(meas["anchor_mm"], shift)], "checks": checks,
+                    "worst_pct": max(devs) if devs else None, "within": (all(verdicts) if verdicts else None)})
+    worst = [f["worst_pct"] for f in out if f["worst_pct"] is not None]
+    judged_all = [c for f in out for c in f["checks"] if c.get("within") is not None]
+    return {"features": out, "worst_pct": max(worst) if worst else None, "checked": len(judged_all),
+            "within": sum(1 for c in judged_all if c["within"]), "general_tolerance": general or "m (assumed)"}
+
+
+def _no_pause(job, rounds=4):
+    """Once a build has started nothing waits for the designer (the doubts were settled before it): the AI's own fix for a failed step is
+    accepted, a failed model call is retried. Each loop is capped; what is still wrong after that is reported on the page, not asked."""
+    for _ in range(rounds):
+        nxt = {"awaiting_fix_approval": "approve_fix", "llm_failed": "retry_llm"}.get(job.get("phase"))
+        if nxt is None:
+            break
+        job = WORKFLOW.action(job["id"], job["revision"], nxt)
+    return job
+
+
 def _build_each(rid):
     batch = load_batch(rid)
     for item in batch["items"]:
@@ -971,6 +1021,7 @@ def _build_each(rid):
             item["job_id"] = job["id"]                                           # the page shows this build's live progress
             _save_batch(rid, batch)
             job = WORKFLOW.action(job["id"], job["revision"], "build", accepted_gaps=item["accepted_gaps"])
+            job = _no_pause(job)
             item.update(status=job["phase"], job_id=job["id"], detail=job.get("detail") or "")
         except Exception as ex:                                                  # noqa: BLE001
             item.update(status="build_failed", detail=f"{type(ex).__name__}: {ex}")
@@ -1077,9 +1128,11 @@ def _part_picture(result: dict, part: dict) -> bytes:
 def _hand_drawing_to_agent(rid: str, part_id: str, job_id: str) -> None:
     """The SolidWorks agent compares the part with the drawing: its picture goes into the job folder (no picture: the agent stays off)."""
     try:
-        png = _part_picture(result_with_design(rid), _part(result_with_design(rid), part_id))
+        result = result_with_design(rid)
+        png = _part_picture(result, _part(result, part_id))
         folder = WORKFLOW.folder(job_id); folder.mkdir(parents=True, exist_ok=True)
         (folder / "drawing.png").write_bytes(png)
+        write_json(folder / "drawing.json", {"general_tolerance": _general_tolerance(result)})   # the notes in SolidWorks judge by it
     except Exception:                                                            # noqa: BLE001 - the build goes on without the agent
         pass
 
@@ -1307,6 +1360,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 return self._json(200, WORKFLOW.latest(m.group(1)))
             except (ValueError, OSError) as ex:
+                return self._json(409, {"error": str(ex)})
+        m = re.fullmatch(r"/api/workflow/([0-9a-f]{12})/dimensions", path)
+        if m:                                                                   # drawing vs model, per step, placed on the review mesh
+            try:
+                return self._json(200, job_dimensions(m.group(1)))
+            except (ValueError, OSError, KeyError) as ex:
                 return self._json(409, {"error": str(ex)})
         m = re.fullmatch(r"/api/workflow/([0-9a-f]{12})/(progress|live/([a-z0-9_]{1,40})\.png)", path)
         if m:                                                                   # a build's live progress and its pictures

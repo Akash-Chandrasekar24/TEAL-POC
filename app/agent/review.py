@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import uuid
 from dataclasses import asdict
@@ -29,6 +30,16 @@ async def _preview(approved, job_dir):
                               progress=Progress(job_dir)).run(plan)
         finish = None
         if report.ok:
+            from app.runner.measure import note_texts
+            info = Path(job_dir) / "drawing.json"
+            general = json.loads(info.read_text(encoding="utf-8")).get("general_tolerance") if info.is_file() else None
+            printed = {i.id: i.printed for i in plan.items}
+            notes = [n for it in report.items for n in note_texts(it.id, it.measured or {}, printed.get(it.id, ""), general, plan.unit)]
+            if notes and "ext_annotate" in (getattr(sw, "tool_names", None) or []):
+                try:                                                          # drawing vs model, readable in SolidWorks itself
+                    await sw.geometry("ext_annotate", {"notes": notes[:60]})
+                except Exception as ex:                                       # noqa: BLE001 - notes are information, never a reason to stop
+                    report.warnings.append(f"measurement notes not placed in SolidWorks: {ex}"[:300])
             # Private tessellation is needed to show a rotatable preview. No STEP
             # or downloadable native deliverable is produced at this stage.
             folder = job_dir / "private" / uuid.uuid4().hex[:12]
