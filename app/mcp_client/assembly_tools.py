@@ -35,6 +35,22 @@ def register(mcp):
         return geometry("/api/ext/command_in_progress", {"on": bool(on)}, 60)
 
     @mcp.tool()
+    def ext_drill(spec: dict) -> str:
+        """A hole along ANY direction: spec {point: [x,y,z] entry (m), direction: [x,y,z] into the material, cuts: [{radius (m), end: blind|through_all,
+        depth (m)}]}: the hole first, then any counterbore over it."""
+        return geometry("/api/ext/drill", spec, 240)
+
+    @mcp.tool()
+    def ext_feature_count() -> str:
+        """How many features the active part has (to undo one build step exactly with ext_delete_after)."""
+        return geometry("/api/ext/feature_count", {}, 60)
+
+    @mcp.tool()
+    def ext_delete_after(count: int) -> str:
+        """Delete every feature after the first `count` (and the sketches they absorbed): undoes the steps made since ext_feature_count."""
+        return geometry("/api/ext/delete_after", {"count": int(count)}, 120)
+
+    @mcp.tool()
     def ext_bbox() -> str:
         """Exact world bounding box (metres) of the active part's solid bodies: {lo, hi, bodies}."""
         return geometry("/api/ext/bbox", {}, 120)

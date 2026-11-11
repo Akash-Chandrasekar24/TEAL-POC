@@ -24,6 +24,35 @@ namespace DrawingToSolidworks
         [HttpPost, Route("api/ext/angled_plane")]
         public IHttpActionResult AngledPlane([FromBody] JObject body) { return Run(() => DoAngledPlane(body)); }
 
+        [HttpPost, Route("api/ext/drill")]
+        public IHttpActionResult Drill([FromBody] JObject body) { return Run(() => DoDrill(body)); }
+
+        // Undo one build step exactly: how many features the part has, and delete every feature (and the sketches it absorbed) after that count.
+        [HttpPost, Route("api/ext/feature_count")]
+        public IHttpActionResult FeatureCountRoute([FromBody] JObject body) { return Run(() => new JObject { ["ok"] = true, ["count"] = FeatureCount(Part()) }); }
+
+        [HttpPost, Route("api/ext/delete_after")]
+        public IHttpActionResult DeleteAfter([FromBody] JObject body)
+        {
+            return Run(() =>
+            {
+                var model = Part();
+                int keep = body.Value<int>("count");
+                var deleted = new JArray();
+                for (int guard = 0; guard < 200 && FeatureCount(model) > keep; guard++)
+                {
+                    var last = LastFeature(model);
+                    model.ClearSelection2(true);
+                    if (last == null || !last.Select2(false, 0)) throw new InvalidOperationException("could not select the feature to remove");
+                    string name = last.Name;
+                    if (!model.Extension.DeleteSelection2((int)swDeleteSelectionOptions_e.swDelete_Absorbed)) throw new InvalidOperationException("could not delete " + name);
+                    deleted.Add(name);
+                }
+                model.ForceRebuild3(false);
+                return new JObject { ["ok"] = true, ["deleted"] = deleted, ["count"] = FeatureCount(model) };
+            });
+        }
+
         [HttpPost, Route("api/ext/sketch_extrude")]
         public IHttpActionResult SketchExtrude([FromBody] JObject body) { return Run(() => DoSketchExtrude(body)); }
 
@@ -379,6 +408,58 @@ namespace DrawingToSolidworks
             result["sketch"] = sketch;
             result["reversed"] = reverse;
             return result;
+        }
+
+        /// <summary>A hole along ANY direction: a plane square to `direction` through `point` (a 3D-sketch line and a "perpendicular to the
+        /// line at its start point" reference plane), then the hole and its counterbore as circle cuts on it, going along `direction`.</summary>
+        private static JObject DoDrill(JObject body)
+        {
+            var model = Part();
+            var p = P(body["point"]); var d = P(body["direction"]);
+            double len = Math.Sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            if (!(len > 1e-12)) throw new InvalidOperationException("direction must not be zero");
+            for (int i = 0; i < 3; i++) d[i] /= len;
+            model.ClearSelection2(true);
+            if (model.SketchManager.ActiveSketch != null) model.SketchManager.InsertSketch(true);   // no other sketch may be open
+            model.SketchManager.Insert3DSketch(true);
+            model.SketchManager.AddToDB = true;
+            var seg = model.SketchManager.CreateLine(p[0], p[1], p[2], p[0] + d[0] * 0.01, p[1] + d[1] * 0.01, p[2] + d[2] * 0.01) as ISketchSegment;
+            model.SketchManager.AddToDB = false;
+            var sk3 = model.SketchManager.ActiveSketch;
+            if (seg == null || sk3 == null) throw new InvalidOperationException("could not draw the drill axis");
+            string axisSketch = ((IFeature)sk3).Name;
+            model.SketchManager.Insert3DSketch(true);
+            if (model.SketchManager.ActiveSketch != null) model.SketchManager.InsertSketch(true);   // make sure the 3D sketch is closed
+            if (model.SketchManager.ActiveSketch != null) throw new InvalidOperationException("could not close the drill-axis sketch");
+            var feat = ((IPartDoc)model).FeatureByName(axisSketch) as IFeature;
+            var line = (((ISketch)feat.GetSpecificFeature2()).GetSketchSegments() as object[])[0] as ISketchSegment;
+            var start = ((ISketchLine)line).GetStartPoint2() as ISketchPoint;
+            var mgr = (ISelectionMgr)model.SelectionManager;
+            model.ClearSelection2(true);
+            var sd = mgr.CreateSelectData(); sd.Mark = 0;
+            if (!line.Select4(false, sd)) throw new InvalidOperationException("could not select the drill axis");
+            sd = mgr.CreateSelectData(); sd.Mark = 1;
+            if (!start.Select4(true, sd)) throw new InvalidOperationException("could not select the drill entry point");
+            var plane = model.FeatureManager.InsertRefPlane((int)swRefPlaneReferenceConstraints_e.swRefPlaneReferenceConstraint_Perpendicular, 0,
+                (int)swRefPlaneReferenceConstraints_e.swRefPlaneReferenceConstraint_Coincident, 0, 0, 0) as IFeature;
+            if (plane == null) throw new InvalidOperationException("could not make the plane square to the drill axis");
+            var pn = PlaneNormal(model, plane.Name);
+            double dot = pn[0] * d[0] + pn[1] * d[1] + pn[2] * d[2];
+            if (Math.Abs(dot) < 0.9999)                                          // the plane must be square to the axis, or the hole goes wrong
+                throw new InvalidOperationException("the drill plane is not square to the axis (normal " + pn[0].ToString("F4") + ", " + pn[1].ToString("F4") + ", " + pn[2].ToString("F4") + ")");
+            var dir = new JArray(d[0], d[1], d[2]);
+            var cuts = new JArray();
+            foreach (JObject hole in (JArray)body["cuts"])                       // the hole first, then a counterbore over it
+            {
+                var spec = new JObject
+                {
+                    ["operation"] = "cut", ["plane"] = new JObject { ["name"] = plane.Name },
+                    ["entities"] = new JArray(new JObject { ["kind"] = "circle", ["center"] = new JArray(p[0], p[1], p[2]), ["radius"] = hole.Value<double>("radius") }),
+                    ["direction"] = dir, ["end"] = hole.Value<string>("end") ?? "blind", ["depth"] = hole.Value<double?>("depth") ?? 0.0,
+                };
+                cuts.Add(DoSketchExtrude(spec));
+            }
+            return new JObject { ["ok"] = true, ["plane"] = plane.Name, ["axis_sketch"] = axisSketch, ["cuts"] = cuts };
         }
 
         /// <summary>The sketch's +normal in model space (third axis of its sketch-to-model transform).</summary>

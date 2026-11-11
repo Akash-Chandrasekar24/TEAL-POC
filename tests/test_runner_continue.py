@@ -44,3 +44,36 @@ def test_the_base_failing_or_solidworks_failing_still_stops():
     assert run([step("F1", ok=False, verdict="wrong_delta"), step("F2")]).failure.item_id == "F1"
     rep = run([step("F1"), step("F2", ok=False, verdict="timeout"), step("F3")])
     assert not rep.ok and rep.failure.kind == "environment" and rep.items[2].status == "not_run"
+
+
+def test_a_step_that_leaves_a_floating_piece_is_taken_out_again_and_the_rest_is_built():
+    from app.verify.step_verifier import Snapshot
+    snap = lambda bodies: Snapshot(doc="P", volume=1e-3, area=0, cog=(0, 0, 0), bodies=bodies, faces=6, edges=12, vertices=8)
+
+    def boss(name, before, after):
+        class F:
+            async def apply(self, ctx):
+                v = StepVerdict(name, True, "ok", "volume ok"); v.before, v.after = snap(before), snap(after)
+                return FeatureResult(name, verdicts=[v])
+        return Prepared(SimpleNamespace(id=name, feature="extrude_profile_boss"), None, F(), name)
+
+    calls = []
+
+    async def call(tool, args=None, **kw):
+        calls.append((tool, args))
+        return SimpleNamespace(ok=True, text="ok", json=lambda: {"count": 7})
+
+    r = Runner.__new__(Runner)
+    r.sw, r.log, r.expected_docs = SimpleNamespace(call=call, tool_names=["ext_feature_count", "ext_delete_after"]), None, ()
+
+    async def opened(unit, report):
+        return "Part1"
+
+    async def final(verifier, report):
+        return {}
+    r._open_part, r._final = opened, final
+    bl = SimpleNamespace(part_name="p", unit="mm", unsupported=[], accepted_gaps=[], expected_final=None)
+    with patch.object(runner_mod, "predicted_check", lambda *a, **k: None):
+        rep = asyncio.run(r._run_once(bl, [boss("F1", 0, 1), boss("F8", 1, 2), boss("F9", 1, 1)]))
+    assert [i.status for i in rep.items] == ["ok", "removed", "ok"] and rep.ok
+    assert ("ext_delete_after", {"count": 7}) in calls and any("would float" in w for w in rep.warnings)

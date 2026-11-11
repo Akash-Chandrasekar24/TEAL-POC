@@ -1119,7 +1119,7 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
         from app.geometry import profile_bounds
         from app.menu import parse_reply as _pr
         from app.runner import prepare as _prep
-        bl = _pr(draft)
+        bl = _pr({**draft, "items": (draft.get("items") or [])[:1]})          # the base alone: a problem in a later item must not skip this pass
         first = _prep(bl)[0].feature if getattr(bl, "items", None) else None
         length = None
         if first is not None and hasattr(first, "profile"):
@@ -1127,6 +1127,16 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
         found = elevation_pass(client if client is not None else make_client(provider, reasoning_effort="medium"), png, draft, length) if length else None
         if found:
             draft = apply_elevation(draft, found)
+            # the side shape is now one cut: anything the first list added only to build up height (ring bosses, stacked blocks) would float
+            # below it (measured: the triple clamp's end rings hung in the air). One short edit, at medium effort, makes the list consistent.
+            note = ("\nThe part's SIDE shape (its heights along its length) is now made by item E1, a side_profile_cut, on a base extruded to the "
+                    "FULL height. Remove every item that was there only to build up height or thickness (bosses, rings or blocks added on the front or "
+                    "back face that the side outline already contains). Keep E1, the base and every hole, cut and other item exactly. Return the COMPLETE "
+                    "list in the same format:\n" + json.dumps({"items": draft["items"]}, ensure_ascii=False))
+            editor = client if client is not None else make_client(provider, reasoning_effort="medium")
+            fixed = Orchestrator(extraction=ExtractionAgent(editor)).read_list([FilePart(png, "image/png"), context + note]).data
+            if isinstance(fixed, dict) and any(i.get("feature") == "side_profile_cut" for i in fixed.get("items") or []):
+                draft = {**draft, "items": fixed["items"], **{k: fixed[k] for k in ("unsupported", "needs_human") if k in fixed}}
     except Exception:                                                           # noqa: BLE001 - the pass only adds; a failure keeps the list as it was
         pass
     try:

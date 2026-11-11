@@ -219,6 +219,7 @@ class Runner:
         for n, (p, rep) in enumerate(zip(prepared, report.items)):
             t0 = time.time()
             self._event("item_start", id=p.item.id, feature=p.item.feature)
+            mark = await self._feature_count() if n > 0 else None
             try:
                 result = await p.feature.apply(ctx)
             except FeatureRequestError as ex:
@@ -242,6 +243,14 @@ class Runner:
                 v.pop("after", None)
             rep.probes = [{"name": q.name, "ok": q.ok, "detail": q.detail} for q in result.probes]
             rep.notes = list(result.notes)
+            loose = self._made_loose_piece(result)
+            if n > 0 and loose and mark is not None:
+                # the step left the part in MORE pieces (a boss floating clear of the part): take it out again and build the rest on the clean part
+                undo = await self.sw.call("ext_delete_after", {"count": mark})
+                msg = f"removed: it made a separate piece ({loose}); undo {'ok' if undo.ok else 'FAILED: ' + undo.text[:120]}"
+                self._finish_item(rep, t0, "removed", msg)
+                report.warnings.append(f"NOT BUILT, it would float: {p.item.id} ({p.item.feature}): {loose}"[:400])
+                continue
             if result.ok:
                 self._finish_item(rep, t0, "ok", "")
                 continue
@@ -268,6 +277,24 @@ class Runner:
             report.final["expected_checks"] = checks
             report.warnings += [f"EXPECTED FINAL CHECK FAILED: {c['name']}: {c['detail']}" for c in checks if not c["ok"]]
         return report
+
+    async def _feature_count(self):
+        if "ext_feature_count" not in (getattr(self.sw, "tool_names", None) or []):
+            return None
+        r = await self.sw.call("ext_feature_count")
+        try:
+            return int(r.json()["count"]) if r.ok else None
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    @staticmethod
+    def _made_loose_piece(result) -> str:
+        """'' or why: the part has more separate bodies after the step than before it (checked for EVERY feature, whatever it expects)."""
+        steps = [v for v in result.verdicts if getattr(v, "before", None) is not None and getattr(v, "after", None) is not None]
+        if not steps:
+            return ""
+        before, after = steps[0].before.bodies, steps[-1].after.bodies
+        return f"{before} body before, {after} after" if before >= 1 and after > before else ""
 
     def _finish_item(self, rep: ItemReport, t0: float, status: str, message: str) -> None:
         rep.status, rep.message, rep.seconds = status, message, time.time() - t0

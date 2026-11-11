@@ -22,7 +22,7 @@ class BackendUnavailable(RuntimeError):
 
 
 APPLICATION_TOOL_PARAMETERS = {"inspect_assembly": {"inspection_type"}, "inspect_drawing": set(),
-                               "ext_sweep": {"spec"}, "ext_shell": {"spec"}, "ext_clear_selection": set(), "ext_bbox": set(), "ext_command_in_progress": {"on"}, "ext_angled_plane": {"spec"}, "ext_sketch_extrude": {"spec"}}
+                               "ext_sweep": {"spec"}, "ext_shell": {"spec"}, "ext_clear_selection": set(), "ext_feature_count": set(), "ext_delete_after": {"count"}, "ext_drill": {"spec"}, "ext_bbox": set(), "ext_command_in_progress": {"on"}, "ext_angled_plane": {"spec"}, "ext_sketch_extrude": {"spec"}}
 
 
 def extension_hashes() -> dict[str, str]:
@@ -147,6 +147,9 @@ def catalog(tools: list | None = None) -> dict:
                                   {"name": "inspect_drawing", "kind": "read", "layer": "application_mcp",
                                    "purpose": "Native sheet, model references, view layout/scale and dimension readback"},
                                   {"name": "ext_sweep", "kind": "model", "layer": "application_mcp", "purpose": "Swept boss or swept CUT along a path sketch"},
+                                  {"name": "ext_drill", "kind": "model", "layer": "application_mcp", "purpose": "A hole along any direction, with counterbore"},
+                                  {"name": "ext_feature_count", "kind": "read", "layer": "application_mcp", "purpose": "Feature count (to undo a step)"},
+                                  {"name": "ext_delete_after", "kind": "model", "layer": "application_mcp", "purpose": "Undo the features after a count"},
                                   {"name": "ext_bbox", "kind": "read", "layer": "application_mcp", "purpose": "Exact part bounding box (extreme points)"},
                                   {"name": "ext_clear_selection", "kind": "model", "layer": "application_mcp", "purpose": "Clear the selection before save / export"},
                                   {"name": "ext_command_in_progress", "kind": "model", "layer": "application_mcp", "purpose": "Fast COM while a build runs (off at the end)"},
