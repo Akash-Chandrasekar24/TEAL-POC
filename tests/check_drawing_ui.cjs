@@ -192,7 +192,8 @@ async function main() {
                                            {key:"P1.u2",page:1,question:"q2",can_answer:false,answer:"",measurement:null,view:null,basis:"too small"}]},hostEl);
   assert.equal(all(hostEl,(e) => e.attrs["aria-label"]==="Accept P1.u1")[0].checked,false,"a draft that proposes changing a reading is never pre-ticked");
   assert.equal(all(hostEl,(e) => e.attrs["aria-label"]==="Also set the reading for P1.u1")[0].checked,false,"adding a reading is opt-in");
-  assert.equal(all(hostEl,(e) => e.attrs["aria-label"]==="Accept P1.u2").length,0,"an unanswerable question has nothing to accept");
+  assert.equal(all(hostEl,(e) => e.attrs["aria-label"]==="Accept P1.u2")[0].checked,true,"a question not verifiable in the image gets a ticked draft, not a dead end");
+  assert.ok(all(hostEl,(e) => e.attrs["aria-label"]==="AI answer P1.u2")[0].value.startsWith("Keep the reading as extracted"),"the draft keeps the reading (never an invented value)");
   const host2=new Host("div");
   context.suggestionCards(rs,{suggestions:[{key:"P1.u1",page:1,question:"a",can_answer:true,answer:"A label",measurement:null,view:null,basis:"b"},
                                            {key:"P1.u3",page:1,question:"c",can_answer:true,answer:"A scale",measurement:null,view:null,basis:"d"}]},host2);
@@ -201,9 +202,9 @@ async function main() {
   assert.ok(hostEl.textContent.includes("Is this OK?") && hostEl.textContent.includes("Nothing is saved until you confirm"),"the reviewer is asked before anything is saved");
   assert.ok(hostEl.textContent.includes("Check this reading against the view"),"a proposed reading carries a caution");
   assert.equal(all(hostEl,(e) => e.attrs.class==="ai-crop").length,1,"a draft shows the view it refers to");
-  assert.equal(all(hostEl,(e) => e.tagName==="button" && e.textContent==="Confirm and save the accepted answers").length,1);
+  assert.equal(all(hostEl,(e) => e.tagName==="button" && e.textContent==="Confirm and save 1 answer").length,1,"the kept-reading draft is ticked; the proposed reading is not");
   const sum=context.summaryText([{accept:{checked:true},sg:{can_answer:true,measurement:null}},{accept:{checked:false},sg:{can_answer:true,measurement:"22"}}],[{can_answer:true},{can_answer:true},{can_answer:false}]);
-  assert.equal(sum,"1 draft is ticked for you. 1 draft proposes a corrected reading and is left unticked for your own check. The AI could not tell 1 question. Nothing is saved until you confirm. Edit or untick anything first.","the summary reads correctly");
+  assert.equal(sum,"1 draft is ticked for you. 1 draft proposes a corrected reading and is left unticked for your own check. 1 question could not be verified in the image: its draft keeps the reading as extracted. Nothing is saved until you confirm. Edit or untick anything first.","the summary reads correctly");
   const gated=context.designCard(confidenceResult);
   assert.ok(all(gated,(e) => e.tagName==="button" && /^Approve all measurements \(\d+\)$/.test(e.textContent)).length===1,"one button approves every reading");
   const sections=all(gated,(e) => (e.attrs.class||"").startsWith("m-navbtn") && !(e.attrs.class||"").includes("m-qnav"));

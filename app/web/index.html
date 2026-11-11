@@ -1124,7 +1124,7 @@ function summaryText(cards, items) {
   const ticked = cards.filter((c) => c.accept.checked).length, risky = cards.filter((c) => c.sg.can_answer && c.sg.measurement).length, unsure = items.filter((x) => !x.can_answer).length;
   return [`${plural(ticked, "draft is", "drafts are")} ticked for you.`,
     risky ? `${plural(risky, "draft proposes", "drafts propose")} a corrected reading and ${risky === 1 ? "is" : "are"} left unticked for your own check.` : "",
-    unsure ? `The AI could not tell ${plural(unsure, "question", "questions")}.` : "",
+    unsure ? `${plural(unsure, "question", "questions")} could not be verified in the image: ${unsure === 1 ? "its draft keeps" : "their drafts keep"} the reading as extracted.` : "",
     "Nothing is saved until you confirm. Edit or untick anything first."].filter(Boolean).join(" ");
 }
 
@@ -1132,9 +1132,11 @@ function suggestionCards(r, res, host, drafted) {
   const items = res.suggestions || [];
   const cards = items.map((sg) => {
     const answer = el("textarea", { class: "q-input", rows: "2", maxlength: 4000, "aria-label": `AI answer ${sg.key}` });
-    answer.value = sg.answer || "";
+    // Not verifiable in the image (a blurred digit, a remark about the image itself): the AI never invents a value, so its draft keeps
+    // what was read from the drawing. The question is then settled instead of left as a dead end; the build checks every feature in SolidWorks.
+    answer.value = sg.can_answer ? (sg.answer || "") : `Keep the reading as extracted: the AI could not verify it in the image${sg.basis ? ` (${sg.basis.replace(/\.$/, "")})` : ""}.`;
     const accept = el("input", { type: "checkbox", "aria-label": `Accept ${sg.key}` });
-    accept.checked = Boolean(sg.can_answer && !sg.measurement);      // ticked for you unless it proposes changing a reading, which needs your own look
+    accept.checked = Boolean(!sg.can_answer || !sg.measurement);     // ticked for you unless it proposes changing a reading, which needs your own look
     const withReading = el("input", { type: "checkbox", "aria-label": `Also set the reading for ${sg.key}` });
     withReading.checked = false;                       // adding a reading changes the measurements: only if the reviewer opts in
     const reading = sg.measurement ? el("label", { class: "ai-reading" }, withReading, ` Also add the corrected reading "${sg.measurement}" (${sg.view})`) : null;
@@ -1142,7 +1144,8 @@ function suggestionCards(r, res, host, drafted) {
     const crop = spot && !spot.whole ? questionCrop(r, sg.key, sg.question) : sg.view ? viewCrop(r, sg.view) : questionCrop(r, sg.key, sg.question);
     const body = sg.can_answer
       ? [el("label", { class: "ai-accept" }, accept, " Accept this answer"), answer, reading]
-      : [el("p", { class: "hint", text: "The AI could not tell from the image. Answer it yourself above or in the assistant." })];
+      : [el("p", { class: "hint", text: "Not verifiable in the image, so the AI keeps what was read from the drawing. Edit the answer if you know the value." }),
+         el("label", { class: "ai-accept" }, accept, " Accept this answer"), answer];
     return { sg, answer, accept, withReading, node: el("li", { class: `q-card ai-card${sg.can_answer ? "" : " muted"}`, "data-question": sg.key },
       el("small", { class: "q-where", text: `Page ${sg.page} · ${sg.key}` }), el("p", { class: "q-text", text: sg.question }),
       sg.basis ? el("p", { class: "ai-basis", text: `AI saw: ${sg.basis}` }) : null,
@@ -1156,7 +1159,7 @@ function suggestionCards(r, res, host, drafted) {
   cards.forEach((c) => { c.accept.addEventListener("change", label); c.answer.addEventListener("input", label); });
   label();
   const all = el("button", { type: "button", class: "m-link", text: "Tick all drafts" });
-  all.addEventListener("click", () => { cards.forEach((c) => { if (c.sg.can_answer) c.accept.checked = true; }); label(); });
+  all.addEventListener("click", () => { cards.forEach((c) => { c.accept.checked = true; }); label(); });
   const cancel = el("button", { type: "button", class: "m-link", text: "Discard drafts" });
   cancel.addEventListener("click", () => { if (state.result === r) show(r); });
   confirm.addEventListener("click", async () => {
@@ -1176,9 +1179,10 @@ function suggestionCards(r, res, host, drafted) {
     } catch (error) { status.textContent = `${error.message} (${saved} saved before this)`; confirm.disabled = false; }
     finally { if (saved && state.result === r) show(r); }
   });
-  if (drafted) drafted(new Set(items.filter((x) => x.can_answer).flatMap((x) => [x.key, ...(x.also || [])])));
+  if (drafted) drafted(new Set(items.flatMap((x) => [x.key, ...(x.also || [])])));
+  const verified = items.filter((x) => x.can_answer).length;
   host.replaceChildren(
-    el("h4", { text: `AI answered ${items.filter((x) => x.can_answer).length} of ${items.length} questions. Is this OK?` }),
+    el("h4", { text: `AI drafted answers for all ${items.length} questions${verified < items.length ? ` (${verified} verified in the image)` : ""}. Is this OK?` }),
     el("p", { class: "hint", text: summaryText(cards, items) }),
     el("ul", { class: "q-list" }, cards.map((c) => c.node)), el("div", { class: "q-actions" }, confirm, all, cancel), status);
 }
