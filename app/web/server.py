@@ -1114,6 +1114,21 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
     draft = response.data if isinstance(response.data, dict) else {}
     if effort == "medium" and previous and draft.get("items"):                  # an edit: the format fields it was not shown come from the earlier list
         draft = {**{k: v for k, v in previous["draft"].items() if k not in ("accepted_gaps", "designer_answers")}, **draft}
+    try:                                                                        # the elevation pass: a focused second look at the side view
+        from app.drawing.elevation import apply_elevation, elevation_pass
+        from app.geometry import profile_bounds
+        from app.menu import parse_reply as _pr
+        from app.runner import prepare as _prep
+        bl = _pr(draft)
+        first = _prep(bl)[0].feature if getattr(bl, "items", None) else None
+        length = None
+        if first is not None and hasattr(first, "profile"):
+            x0, x1, _, _ = profile_bounds(first.profile); length = x1 - x0
+        found = elevation_pass(client if client is not None else make_client(provider, reasoning_effort="medium"), png, draft, length) if length else None
+        if found:
+            draft = apply_elevation(draft, found)
+    except Exception:                                                           # noqa: BLE001 - the pass only adds; a failure keeps the list as it was
+        pass
     try:
         parse_reply(draft)
     except ValueError:
