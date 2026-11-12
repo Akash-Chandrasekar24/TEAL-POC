@@ -29,6 +29,8 @@ def panel_jobs(root: Path) -> list[dict]:
 def _get(obj, name, *args):
     """A COM member read late-bound: pywin32 hands some SolidWorks methods back as properties (a value, not callable)."""
     v = getattr(obj, name)
+    if hasattr(v, "_oleobj_"):                  # a COM object already returned (e.g. GetSurface): calling it again fails "Member not found"
+        return v
     return v(*args) if callable(v) else v
 
 
@@ -54,11 +56,11 @@ def read_selection() -> list[dict]:
         for i in range(1, int(_get(sel, "GetSelectedObjectCount2", -1)) + 1):
             kind = int(_get(sel, "GetSelectedObjectType3", i, -1))
             obj, pt = _get(sel, "GetSelectedObject6", i, -1), _get(sel, "GetSelectionPoint2", i, -1)
-            item = {"kind": {1: "face", 2: "edge", 3: "vertex", 22: "feature"}.get(kind, f"type {kind}")}
+            item = {"kind": {2: "face", 1: "edge", 3: "vertex", 22: "feature"}.get(kind, f"type {kind}")}   # swSelectType_e: 1 edges, 2 faces
             if pt:
                 item["at_model_mm"] = _mm(pt[:3])
             try:
-                if kind == 1:
+                if kind == 2:
                     surface, outward = _get(obj, "GetSurface"), 1 if _get(obj, "FaceInSurfaceSense") else -1
                     if _get(surface, "IsCylinder"):
                         c = _get(surface, "CylinderParams")
@@ -67,7 +69,7 @@ def read_selection() -> list[dict]:
                         p = _get(surface, "PlaneParams")
                         item.update(shape="flat", outward_normal=[round(v * outward, 4) for v in p[0:3]])
                     item["made_by"] = _get(_get(obj, "GetFeature"), "Name")
-                elif kind == 2:
+                elif kind == 1:
                     curve = _get(obj, "GetCurve")
                     if _get(curve, "IsCircle"):
                         c = _get(curve, "CircleParams")

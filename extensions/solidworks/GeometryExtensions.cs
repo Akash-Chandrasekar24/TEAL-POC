@@ -447,8 +447,8 @@ namespace DrawingToSolidworks
             var sketch = model.SketchManager.ActiveSketch;
             if (sketch == null) throw new InvalidOperationException("cannot open a sketch on the new plane");
             string name = ((IFeature)sketch).Name;
+            var n = NormalOf(sketch);                    // read while it is open: SolidWorks drops an EMPTY sketch when it is closed
             model.SketchManager.InsertSketch(true);
-            var n = SketchNormal(model, name);
             model.ClearSelection2(true);
             if (model.Extension.SelectByID2(name, "SKETCH", 0, 0, 0, false, 0, null, 0)) model.EditDelete();
             return n;
@@ -654,7 +654,10 @@ namespace DrawingToSolidworks
             double dot = pn[0] * d[0] + pn[1] * d[1] + pn[2] * d[2];
             if (Math.Abs(dot) < 0.9999)                                          // the plane must be square to the axis, or the hole goes wrong
                 throw new InvalidOperationException("the drill plane is not square to the axis (normal " + pn[0].ToString("F4") + ", " + pn[1].ToString("F4") + ", " + pn[2].ToString("F4") + ")");
-            var dir = new JArray(d[0], d[1], d[2]);
+            // DoSketchExtrude's CUT goes opposite to the direction it is given (measured live on a 20 mm block: a cut on the top face "toward
+            // +z" removed material below it). Its other callers are tuned to that and verified, so the drill passes the negated axis.
+            // ponytail: one inverted convention in the shared cut path; fix it there and in all 5 cut callers together, never one alone
+            var dir = new JArray(-d[0], -d[1], -d[2]);
             var cuts = new JArray();
             foreach (JObject hole in (JArray)body["cuts"])                       // the hole first, then a counterbore over it
             {
@@ -673,7 +676,11 @@ namespace DrawingToSolidworks
         private static double[] SketchNormal(IModelDoc2 model, string sketchName)
         {
             var feat = ((IPartDoc)model).FeatureByName(sketchName) as IFeature;
-            var sk = feat?.GetSpecificFeature2() as ISketch;
+            return NormalOf(feat?.GetSpecificFeature2() as ISketch);
+        }
+
+        private static double[] NormalOf(ISketch sk)
+        {
             var s2m = sk?.ModelToSketchTransform?.IInverse();
             var d = s2m?.ArrayData as double[];
             if (d == null || d.Length < 9) throw new InvalidOperationException("cannot read the sketch plane");

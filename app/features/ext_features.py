@@ -619,7 +619,8 @@ class Drill:
         self.validate()
         f = factor(self.unit)
         n = math.hypot(*self.direction)
-        cuts = [{"radius": self.diameter / 2 * f, "end": "through_all" if self.depth is None else "blind", "depth": 0.0 if self.depth is None else self.depth * f}]
+        # 'through' = a blind cut 1 m long: SolidWorks refused through_all on the drill's reference plane (measured); 1 m passes any part here
+        cuts = [{"radius": self.diameter / 2 * f, "end": "blind", "depth": 1.0 if self.depth is None else self.depth * f}]
         if self.counterbore is not None:
             cuts.append({"radius": self.counterbore[0] / 2 * f, "end": "blind", "depth": self.counterbore[1] * f})
         return {"point": [v * f for v in self.entry], "direction": [v / n for v in self.direction], "cuts": cuts}
@@ -630,7 +631,9 @@ class Drill:
         removed = math.pi / 4 * self.diameter ** 2 * length
         if self.counterbore is not None:
             removed += math.pi / 4 * (self.counterbore[0] ** 2 - self.diameter ** 2) * self.counterbore[1]
-        return Expect(bound_mm3=-removed * k, bodies=None)                   # at most: the drill may start in the air or cross a pocket
+        # at most: the drill may start in the air or cross a pocket; at least 1 %: a cut going the wrong way leaves only a sliver (seen live:
+        # 6 mm3 of 46 169 passed as ok)
+        return Expect(bound_mm3=-removed * k, range_mm3=(-removed * k, -0.01 * removed * k), bodies=None)
 
     def expected_delta_mm3(self) -> float:
         return self.expected().bound_mm3
