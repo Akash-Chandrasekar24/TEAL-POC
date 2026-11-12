@@ -129,6 +129,7 @@ def test_a_correction_is_made_on_the_built_part_not_built_again():
             edits.append((source, prior))
             out = build(approved, folder)
             out["report"]["items"] = [{"id": "A1", "feature": "hole", "status": "ok", "message": "added by the SolidWorks agent: {}"}]
+            out["report"]["agent"] = {"added": ["A1"], "review": {"summary": "added the hole"}}
             return out
         app.editor = editor
         job = app.create(artifact["result_id"], artifact["id"])

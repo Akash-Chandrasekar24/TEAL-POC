@@ -582,12 +582,18 @@ def _outline_centre(ctx: BuildContext) -> tuple[float, float]:
 def build_drill(p: P.DrillParams, ctx: BuildContext, label: str) -> Drill:
     ctx.need_base("a drill")
     f = factor(ctx.unit)
-    sx, sy = _position(p.entry).to_sketch_m(ctx.unit, ctx.outline_wh)
+    if p.at_model_mm is not None:                                       # the point the designer selected in SolidWorks: model coordinates, mm
+        entry = tuple(v / 1000 / f for v in p.at_model_mm)
+    elif p.entry is not None and p.entry_height is not None:
+        sx, sy = _position(p.entry).to_sketch_m(ctx.unit, ctx.outline_wh)
+        entry = (sx / f, sy / f, p.entry_height)
+    else:
+        raise FeatureRequestError("a drill needs its entry point: `entry` + `entry_height`, or `at_model_mm`")
     if (p.counterbore_diameter is None) != (p.counterbore_depth is None):
         raise FeatureRequestError("a counterbore needs both its diameter and its depth")
     W, H = ctx.outline_wh
     reach = math.sqrt(W * W + H * H + ctx.thickness ** 2)
-    return Drill(ctx.unit, (sx / f, sy / f, p.entry_height), tuple(p.direction), p.diameter, None if p.depth == "through" else p.depth,
+    return Drill(ctx.unit, entry, tuple(p.direction), p.diameter, None if p.depth == "through" else p.depth,
                  (p.counterbore_diameter, p.counterbore_depth) if p.counterbore_diameter else None, reach, label=label)
 
 
@@ -828,6 +834,16 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
          "the boss foot must stay on the face and the plate be thick enough to seat it"),
         {"position": {"x": 0, "y": 0}, "diameter": 20, "height": 25, "tilt_deg": 20, "lean": "up", "hole_diameter": 10, "hole_depth": 15},
         build_angled_boss, _COMMON),
+    MenuEntry(
+        "drill", P.DrillParams,
+        "A round hole along ANY direction from an entry point: angled holes, holes in side faces, a bore down a boss that sticks out sideways.",
+        "Give the entry point (as a top-view position + its height above the back face, or `at_model_mm` straight from a point the designer "
+        "selected in SolidWorks), the direction INTO the material ([x, y, z] in the top view's axes, which are the model's axes), the diameter "
+        "and 'through' or a depth from the entry; an optional counterbore. For a bore down a cylinder: enter at the centre of its end face, "
+        "direction along its axis, depth = its length (a 'through' hole also cuts whatever lies further along the axis).",
+        ("round holes only", "the entry point should lie on the part's surface", "a counterbore needs both its diameter and its depth"),
+        {"entry": {"x": 0, "y": 0}, "entry_height": 5, "direction": [1, 0, 0], "diameter": 6, "depth": 20},
+        build_drill, _COMMON),
     MenuEntry(
         "side_profile_cut", P.SideProfileCutParams,
         "Right after an extruded base: give the part's outline in the SIDE view (elevation) and everything of the base outside it is cut away, "

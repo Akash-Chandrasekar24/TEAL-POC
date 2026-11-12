@@ -462,8 +462,11 @@ class SideCutParams(Strict):
 
 
 class DrillParams(Strict):
-    entry: Pos = Field(description="where the hole axis enters the part, as seen in the TOP view (placed like any position)")
-    entry_height: float = Field(description="height of the entry point above the back face of the base (e.g. half the thickness for a hole in a side face)")
+    entry: Pos | None = Field(None, description="where the hole axis enters the part, as seen in the TOP view (placed like any position)")
+    entry_height: float | None = Field(None, description="height of the entry point above the back face of the base (e.g. half the thickness for a hole in a side face)")
+    at_model_mm: Annotated[list[float], Field(min_length=3, max_length=3)] | None = Field(
+        None, description="instead of entry + entry_height: the entry point in SolidWorks MODEL coordinates in mm, e.g. the point the designer "
+                          "selected in SolidWorks (`designer_selection`)")
     direction: Annotated[list[float], Field(min_length=3, max_length=3)] = Field(
         description="the drilling direction INTO the material, in the top view's axes: [x right, y up, z toward the viewer]. Straight down from the "
                     "front face is [0, 0, -1]; a hole drilled along the arm at angle a in the top view is [cos a, sin a, 0]; tilted holes have all three")

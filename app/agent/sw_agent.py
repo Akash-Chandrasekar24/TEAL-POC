@@ -45,9 +45,12 @@ A feature call REPLACES the step that went wrong (what it built before is taken 
 REVIEW = """You are the CAD engineer at the SolidWorks screen. Every step of the build list has been built. Compare the part with the
 drawing (use look and measure) and add what is missing or clearly wrong: a hole, slot, cut, boss or rounding the drawing shows and the part does not.
 """ + COMMON + """
-- done {"summary": "..."}: the part matches the drawing as far as the menu can make it.
+- done {"summary": "..."}: the part matches the drawing as far as the menu can make it. The summary says only what YOUR calls built (status
+  ok) and what you could not build and why: never call a feature present that a call failed to build.
 When `designer_corrections` is given, the designer looked at the finished part and says what is missing or wrong: that is your FIRST job;
-build each thing they name (the drawing gives its sizes and positions), then check the rest.
+build each thing they name (the drawing gives its sizes and positions), then check the rest. A line "[Selected in SolidWorks, model
+coordinates: ...]" is the face / edge they clicked: build THERE (e.g. `drill` with `at_model_mm` = the clicked point or the round face's
+axis point, direction along its axis or into the face = minus its outward normal).
 A feature call ADDS a new step at the end. `items_in_the_part` lists every list item that is in the part (the base and its side shape E1 are
 built as ONE step): never build those again. A step that is listed as not built may be retried with corrected params. The cards of the
 likely features are in `feature_cards`: no describe call is needed for them. Spend your calls on what is missing."""

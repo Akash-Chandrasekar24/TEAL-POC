@@ -553,7 +553,7 @@ function fixChat(job, action) {
   const thread = el("div", {class:"fix-thread"});
   for (const m of job.corrections || []) thread.append(el("p", {class:"fix-you", text:m}));
   const reply = job.agent_reply;
-  if (reply) thread.append(el("p", {class:"fix-agent", text:[reply.added?.length ? `Added: ${reply.added.join(", ")}.` : "Nothing new was added.", reply.says].filter(Boolean).join(" ")}));
+  if (reply) thread.append(el("p", {class:"fix-agent", text:reply.added?.length ? `Added: ${reply.added.join(", ")}. ${reply.says || ""}` : (reply.says || "Nothing new was added.")}));
   if (job.corrections?.length && job.detail) thread.append(el("p", {class:"fix-agent", text:job.detail}));
   if (thread.childElementCount) chat.append(thread);
   const message = el("textarea", {"aria-label":"Message to the SolidWorks agent", rows:3, placeholder:"What is missing or wrong in the 3D model?"});

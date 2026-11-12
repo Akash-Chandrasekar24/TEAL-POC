@@ -1364,6 +1364,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/panel/jobs":
             from .sw_panel import panel_jobs
             return self._json(200, {"jobs": panel_jobs(WORKFLOW.root)})
+        if path == "/api/panel/selection":                                      # what the designer has selected in SolidWorks now
+            from .sw_panel import read_selection, say_selection
+            sel = read_selection()
+            return self._json(200, {"items": sel, "text": say_selection(sel)})
         if path == "/viewer.js":
             return self._static("viewer.js", "text/javascript; charset=utf-8")
         if path == "/solidworks.js":
@@ -1527,6 +1531,11 @@ class Handler(BaseHTTPRequestHandler):
                         job = WORKFLOW.action(job["id"], job["revision"], "build", accepted_gaps=gaps)
                     return self._json(200, job)
                 decision = {key: body[key] for key in ("review_hash", "compared_drawing", "checked_measurements", "message", "params", "accepted_gaps") if key in body}
+                if body.get("action") == "correct" and body.get("use_selection") is True and str(decision.get("message", "")).strip():
+                    from .sw_panel import read_selection, say_selection        # read NOW, as the designer presses Send (the panel's view may be old)
+                    picked = say_selection(read_selection())
+                    if picked:
+                        decision["message"] = f"{decision['message'].strip()}\n[Selected in SolidWorks, model coordinates: {picked}]"
                 return self._json(200, WORKFLOW.action(str(body.get("job_id", "")), body.get("revision"), str(body.get("action", "")), **decision))
             if self.path == "/api/parts/build-in-solidworks":
                 if not self._same_origin_json():

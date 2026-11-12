@@ -82,7 +82,7 @@ class Workflow:
         result = {key: record.get(key) for key in ("id", "result_id", "attempt", "revision", "questions", "events", "review_hash", "proposal", "detail", "corrections")}
         report = (record.get("graph") or {}).get("report") or {}
         review = (report.get("agent") or {}).get("review") or {}
-        added = [i["id"] for i in report.get("items", []) if "added by the SolidWorks agent" in str(i.get("message", ""))]
+        added = (report.get("agent") or {}).get("added", [])                  # what the LAST review / edit added (not earlier ones)
         result.update(phase=phase, stale=stale, exports=[], preview=None, final=report.get("final"),
                       agent_reply={"says": review.get("summary") or review.get("reason") or "", "added": added} if record.get("corrections") else None)
         if record.get("receipt") and not stale:

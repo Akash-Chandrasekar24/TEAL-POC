@@ -26,7 +26,9 @@
 <select id="jobs" aria-label="Part to edit"></select>
 <p class="hint" id="state"></p>
 <div id="thread"></div>
-<textarea id="text" placeholder="What is missing or wrong in this part?"></textarea>
+<div id="sel" class="msg agent" style="display:none"></div>
+<label id="usewrap" class="hint" style="display:none"><input type="checkbox" id="use" checked> Tell the agent about my selection</label>
+<textarea id="text" placeholder="Select a face or edge in SolidWorks, then say what to do there. Or just say what is missing or wrong."></textarea>
 <button id="send" disabled>Send: fix it in SolidWorks</button>
 <div id="log"></div>
 <script>
@@ -67,7 +69,7 @@ function loadJob() {
     var c = job.corrections || [];
     for (var i = 0; i < c.length; i++) th.appendChild(line("msg you", c[i]));
     var r = job.agent_reply;
-    if (r) th.appendChild(line("msg agent", (r.added && r.added.length ? "Added: " + r.added.join(", ") + ". " : "Nothing new was added. ") + (r.says || "")));
+    if (r) th.appendChild(line("msg agent", r.added && r.added.length ? "Added: " + r.added.join(", ") + ". " + (r.says || "") : (r.says || "Nothing new was added.")));
     if (c.length && job.detail) th.appendChild(line("msg agent", job.detail));
     var editing = job.phase === "resuming";
     $("state").innerHTML = editing ? "The agent is editing this part in SolidWorks..." : job.phase === "awaiting_review" ? "Ready. Describe what is missing or wrong." : job.phase;
@@ -91,7 +93,8 @@ $("send").onclick = function () {
   busy = true; $("send").disabled = true;
   $("thread").appendChild(line("msg you", text));
   $("state").innerHTML = "The agent is editing this part in SolidWorks...";
-  req("POST", "/api/workflow/decision", {job_id: job.id, revision: job.revision, action: "correct", review_hash: job.review_hash, message: text},
+  req("POST", "/api/workflow/decision", {job_id: job.id, revision: job.revision, action: "correct", review_hash: job.review_hash, message: text,
+                                          use_selection: $("usewrap").style.display !== "none" && $("use").checked},
     function (status, data) {
       busy = false;
       if (status !== 200) $("thread").appendChild(line("msg agent", "Not sent: " + ((data && data.error) || ("error " + status))));
@@ -99,7 +102,17 @@ $("send").onclick = function () {
       loadJob(); loadLog();
     });
 };
+function loadSelection() {
+  if (busy || (job && job.phase === "resuming")) return;              // SolidWorks is busy with the agent: do not ask it
+  req("GET", "/api/panel/selection", null, function (status, data) {
+    var text = status === 200 && data ? data.text : "";
+    $("sel").style.display = $("usewrap").style.display = text ? "" : "none";
+    $("sel").innerHTML = "";
+    if (text) $("sel").appendChild(document.createTextNode("Selected in SolidWorks: " + text));
+  });
+}
 loadJobs();
+setInterval(loadSelection, 3000);
 setInterval(function () { if (busy || (job && job.phase === "resuming")) loadJob(); }, 3000);
 setInterval(function () { if (!busy) loadJobs(); }, 30000);
 </script>

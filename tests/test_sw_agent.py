@@ -302,3 +302,55 @@ def test_an_edit_works_on_the_built_part_and_only_adds_what_the_designer_asked()
     assert rep.ok and rep.document == "clamp" and tried == [("A1", ["F1"])]
     assert [i.id for i in rep.items] == ["F1", "F2", "A1"] and rep.final["dimensions_in_solidworks"] == {"added": 5}
     assert "a 6 mm hole is missing" in llm.seen[0] and not any(c[0] == "open_new_part" for c in calls)
+
+
+def test_an_edit_that_built_nothing_says_so_whatever_the_model_claims():
+    """Seen live: six refused tries, then done 'present with the shown bore'. The reply now comes from what was built."""
+    bl = _list()
+    llm = Says({"tool": "hole", "args": GOOD_HOLE, "why": "the bore"}, {"tool": "done", "args": {"summary": "the bore is present"}})
+
+    async def try_feature(bl_, ctx, built, item, mark):
+        return {"status": "refused", "feature_call": True, "message": "a side-view hole lies outside the part"}
+    agent = SolidWorksAgent(llm, b"png", "", review_turns=3)
+    agent.corrections = ["the bore is missing"]
+    r, _ = _runner(agent, try_feature)
+    r.progress = None
+
+    async def look(ctx):
+        return {"status": "ok"}
+    r._look = look
+
+    class Ver:
+        def __init__(self, *a, **k):
+            self.doc = None
+
+        async def current(self):
+            return SimpleNamespace(doc="clamp")
+    with patch.object(runner_mod, "StepVerifier", Ver):
+        rep = asyncio.run(r.edit(bl, {"items": [{"id": "F1", "feature": "extrude_profile_boss", "status": "ok"}]}))
+    review = rep.agent["review"]
+    assert rep.agent["added"] == [] and review["summary"].startswith("Nothing was added. 1 feature try, none built")
+    assert "outside the part" in review["summary"] and review["agent_said"] == "the bore is present"
+
+
+def test_a_drill_at_the_point_the_designer_selected():
+    from app.menu.params import DrillParams
+    from app.menu.registry import BuildContext, build_drill
+    ctx = BuildContext("mm")
+    ctx.need_base = lambda what: None
+    ctx.outline_wh, ctx.thickness = (100, 80), 10
+    d = build_drill(DrillParams(at_model_mm=[-97, 89, 40], direction=[1, 0, 0], diameter=28, depth=75), ctx, "A4")
+    spec = d.spec()
+    assert [round(v, 6) for v in spec["point"]] == [-0.097, 0.089, 0.04] and spec["cuts"][0]["radius"] == 0.014
+    try:
+        build_drill(DrillParams(direction=[1, 0, 0], diameter=6), ctx, "A5")
+        raise AssertionError("a drill without an entry point must be refused")
+    except Exception as ex:                                                    # noqa: BLE001
+        assert "entry point" in str(ex)
+
+
+def test_the_selection_is_said_in_words_the_agent_can_use():
+    from app.web.sw_panel import say_selection
+    text = say_selection([{"kind": "face", "shape": "cylinder", "diameter_mm": 48.0, "axis": [1, 0, 0], "axis_point_mm": [-97, 89, 40],
+                           "made_by": "Sweep1", "at_model_mm": [-60, 89, 64]}])
+    assert text == "round face Ø48.0 mm, axis [1, 0, 0] through [-97, 89, 40] mm, made by Sweep1, clicked at [-60, 89, 64] mm"

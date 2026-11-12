@@ -610,7 +610,7 @@ class Runner:
     async def _agent_review_part(self, bl, ctx, built: dict, report: RunReport) -> None:
         """Every step is done: the agent looks at the part beside the drawing and adds what is missing."""
         from app.menu.text import feature_card
-        likely = {*(i.feature for i in bl.items), "hole", "cut", "profile_cut", "side_cut", "circle_boss", "fillet_chamfer_edges"}
+        likely = {*(i.feature for i in bl.items), "hole", "cut", "profile_cut", "side_cut", "circle_boss", "fillet_chamfer_edges", "drill"}
         state = {"steps": [{"id": i.id, "feature": i.feature, "status": i.status, "message": i.message[:200]} for i in report.items],
                  "items_in_the_part": sorted(built),                        # every list item that stands in the part (a merged step builds two: F1 + E1)
                  "list": [i.model_dump() for i in bl.items], "warnings": report.warnings[-10:], "part_now": await self._measure(ctx),
@@ -619,8 +619,17 @@ class Runner:
         if self.progress is not None:
             self.progress.data["current"] = "review"
             self.progress.log("agent", "AI agent compares the part with the drawing")
+        first_call = len(self.agent.log.calls)
         end = await self.agent.review(state, self._tools(bl, ctx, built, "review", "-", self._review_box))
-        for new_id in [k for k in built if k not in before]:
+        added = [k for k in built if k not in before]
+        if not added and self.agent.corrections:
+            # the model's own summary is not trusted for what was built: an edit that added nothing says so, with why each try failed
+            tries = [c for c in self.agent.log.calls[first_call:] if c["tool"] in MENU]
+            why = "; ".join(f"{c['tool']}: {str((c['result'] or {}).get('message', ''))[:120]}" for c in tries[-4:])
+            end = {**end, "args": {"summary": f"Nothing was added. {len(tries)} feature tr{'y' if len(tries) == 1 else 'ies'}, none built"
+                                              + (f" ({why})" if why else "") + ".",
+                                   "agent_said": (end.get("args") or {}).get("summary") or (end.get("args") or {}).get("reason")}}
+        for new_id in added:
             item = built[new_id]
             report.items.append(ItemReport(new_id, item.feature, "ok", message=f"added by the SolidWorks agent: {json.dumps(item.params)}"[:400],
                                            measured=self._added_measured.get(new_id, {})))
@@ -628,7 +637,7 @@ class Runner:
                 self.progress.add_step(item, "ok", "added by the AI agent")
         if end.get("tool") != "done":
             report.warnings.append(f"SolidWorks agent review ended: {(end.get('args') or {}).get('reason', end.get('tool'))}"[:300])
-        report.agent = {"turns": self.agent.log.turns, "calls": self.agent.log.calls, "review": end.get("args")}
+        report.agent = {"turns": self.agent.log.turns, "calls": self.agent.log.calls, "review": end.get("args"), "added": added}
 
     async def _feature_count(self):
         if "ext_feature_count" not in (getattr(self.sw, "tool_names", None) or []):
