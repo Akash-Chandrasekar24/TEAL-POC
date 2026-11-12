@@ -10,7 +10,8 @@ Build the ribs BEFORE any bore through the boss: a rib end buried in the wall wo
 Expected volume added per side (exact, numeric): the integral over x of  height(x) x width(x)  where height(x) is the slope and
 width(x) = thickness minus the chord of the boss cylinder at that x (the part of the rib that lies inside the boss adds nothing).
 Refused (needs_human, never approximated): ribs along y or at an angle, curved or stepped profiles, ribs on a non-round boss,
-a rib that would stick out of the plate, rise above the boss top, or be wider than the boss.
+a rib that would stick out of the plate, meet the wall above the boss top, or be wider than the boss. A steep slope whose buried
+part would rise past the boss top stops flat at the boss top inside the boss.
 """
 from __future__ import annotations
 
@@ -71,9 +72,6 @@ class Rib:
             raise FeatureRequestError("rib: foot_distance must be larger than the boss radius (the foot lies outside the boss)")
         if self.foot_fillet is not None and not (0 < self.foot_fillet < self.thickness):
             raise FeatureRequestError("rib: foot_fillet must be positive and smaller than the rib thickness")
-        if self.inner_height() > self.boss_height + 1e-9:
-            raise FeatureRequestError(f"rib: its slope would reach {self.inner_height():.3f} above the face inside the boss, higher than the boss "
-                                      f"({self.boss_height}): needs_human")
         if self.height_at_boss > self.boss_height:
             raise FeatureRequestError("rib: height_at_boss is higher than the boss")
         if self.outline_wh is not None:
@@ -90,7 +88,7 @@ class Rib:
     def side_volume_mm3(self) -> float:
         """Volume one rib adds (drawing unit^3 -> mm3): the triangle prism minus its overlap with the boss cylinder."""
         R, t, F, d0, H = self.radius, self.thickness, self.foot_distance, self.inner_distance(), self.inner_height()
-        h = lambda x: H * (F - x) / (F - d0)
+        h = lambda x: min(H * (F - x) / (F - d0), self.boss_height)    # flat at the boss top inside the boss (graph)
         xw = math.sqrt(R * R - t * t / 4)                       # up to here the rib is completely inside the boss
         n = 20000
         dx = (R - xw) / n
@@ -112,6 +110,11 @@ class Rib:
         z0, z1 = self.plate_thickness * f, (self.plate_thickness + self.inner_height()) * f
         xi, xf = ax + side * self.inner_distance() * f, ax + side * self.foot_distance * f
         pts = [(xi, -z0), (xf, -z0), (xi, -z1)]
+        if self.inner_height() > self.boss_height:
+            # a steep slope (meets the wall at or near the boss top): inside the boss the rib stops flat at the boss top, still buried
+            zt = (self.plate_thickness + self.boss_height) * f
+            xc = ax + side * (self.foot_distance - self.boss_height * (self.foot_distance - self.radius) / self.height_at_boss) * f
+            pts = [(xi, -z0), (xf, -z0), (xc, -zt), (xi, -zt)]
         seg = [{"kind": "line", "x1": a[0], "y1": a[1], "x2": b[0], "y2": b[1]} for a, b in zip(pts, pts[1:] + pts[:1])]
         ext = {"id": "n2", "type": "extrude", "sketch": "n1", "operation": "boss", "end": "mid_plane", "depth": self.thickness * f}
         return graph_of([sketch_node("n1", "top", ay, seg), ext])
