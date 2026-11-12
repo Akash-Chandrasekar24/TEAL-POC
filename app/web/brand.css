@@ -598,3 +598,12 @@ body[data-step="2"].chat-wide #agent-chat{height:100%!important}
 .dev-ok td:last-child,.dim-worst.dev-ok{color:#2e7d50}.dev-warn td:last-child,.dim-worst.dev-warn{color:#9d701f}.dev-bad td:last-child,.dim-worst.dev-bad{color:#b3412f}
 .dev-ok td:last-child{color:#2e7d50}
 .dim-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.dim-head h3{margin:0}
+
+/* chat with the SolidWorks agent on the compare page */
+.fix-chat{margin-top:16px;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--brand-soft)}
+.fix-chat h3{margin:0 0 4px}
+.fix-chat textarea{width:100%;box-sizing:border-box;margin-top:8px;font:inherit}
+.fix-thread{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.fix-you,.fix-agent{margin:0;padding:8px 12px;border-radius:10px;max-width:85%}
+.fix-you{align-self:flex-end;background:var(--brand);color:#fff}
+.fix-agent{align-self:flex-start;background:#fff;border:1px solid var(--line)}

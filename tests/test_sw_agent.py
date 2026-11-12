@@ -247,3 +247,23 @@ def test_a_failing_review_keeps_the_finished_part():
     report = runner_mod.RunReport("p", "mm")
     stop = asyncio.run(r._agent_review(bl, SimpleNamespace(verifier=Ver()), {}, report))
     assert stop is False and report.failure is None and any("part is kept" in w for w in report.warnings)
+
+
+def test_the_designers_chat_message_is_the_reviews_first_job():
+    """The compare page's chat: corrections.json in the job reaches the agent's review, with more turns to build what is missing."""
+    async def run(tool, args):
+        return {"status": "ok"}
+    llm = Says({"tool": "done", "args": {"summary": "added the cross boss"}})
+    agent = SolidWorksAgent(llm, None, "")
+    agent.corrections = ["the Ø48 cross boss is missing"]
+    asyncio.run(agent.review({"steps": []}, run))
+    assert "designer_corrections" in llm.seen[0] and "cross boss is missing" in llm.seen[0]
+
+    import tempfile
+    from pathlib import Path
+    from app.agent import sw_agent
+    with tempfile.TemporaryDirectory() as d, patch("app.llm.make_client", lambda *a, **k: llm):
+        (Path(d) / "drawing.png").write_bytes(b"png")
+        (Path(d) / "corrections.json").write_text(json.dumps(["add the R12.5 hole"]), encoding="utf-8")
+        a = sw_agent.agent_for(Path(d))
+    assert a.corrections == ["add the R12.5 hole"] and a.review_turns == 12 and a.total_turns == 22

@@ -46,6 +46,8 @@ REVIEW = """You are the CAD engineer at the SolidWorks screen. Every step of the
 drawing (use look and measure) and add what is missing or clearly wrong: a hole, slot, cut, boss or rounding the drawing shows and the part does not.
 """ + COMMON + """
 - done {"summary": "..."}: the part matches the drawing as far as the menu can make it.
+When `designer_corrections` is given, the designer looked at the finished part and says what is missing or wrong: that is your FIRST job;
+build each thing they name (the drawing gives its sizes and positions), then check the rest.
 A feature call ADDS a new step at the end. `items_in_the_part` lists every list item that is in the part (the base and its side shape E1 are
 built as ONE step): never build those again. A step that is listed as not built may be retried with corrected params. The cards of the
 likely features are in `feature_cards`: no describe call is needed for them. Spend your calls on what is missing."""
@@ -96,6 +98,7 @@ class SolidWorksAgent:
         self.fix_turns, self.review_turns = fix_turns, review_turns
         self.total_turns = total_turns          # one budget for the whole part (stress test: 71 model calls, 22 minutes on one part with many failing steps)
         self.log = AgentLog()
+        self.corrections: list[str] = []        # the designer's chat messages from the compare page (corrections.json)
 
     async def _ask(self, system: str, context: dict, image: bytes | None) -> dict:
         parts: list = []
@@ -145,7 +148,8 @@ class SolidWorksAgent:
             return {"tool": "skip", "args": {"reason": "no review turns"}}
         first = await run("look", {})                                           # the picture comes with the first turn: no call spent on asking for it
         image = Path(first["image"]).read_bytes() if first.get("image") else None
-        return await self._loop("review", "-", REVIEW, {"build": state}, run, self.review_turns, {"done"}, lambda act, res: False, image)
+        context = {"designer_corrections": self.corrections, "build": state} if self.corrections else {"build": state}
+        return await self._loop("review", "-", REVIEW, context, run, self.review_turns, {"done"}, lambda act, res: False, image)
 
 
 def agent_for(job_dir: Path) -> SolidWorksAgent | None:
@@ -156,6 +160,11 @@ def agent_for(job_dir: Path) -> SolidWorksAgent | None:
     from app import config
     from app.llm import make_client
     from app.menu.text import menu_overview
-    return SolidWorksAgent(make_client(config.WORKER_LLM_PROVIDER, reasoning_effort="medium"), picture.read_bytes(), menu_overview(),
-                           fix_turns=int(os.getenv("SW_AGENT_FIX_TURNS", "5")), review_turns=int(os.getenv("SW_AGENT_REVIEW_TURNS", "6")),
-                           total_turns=int(os.getenv("SW_AGENT_TOTAL_TURNS", "16")))
+    notes = Path(job_dir) / "corrections.json"
+    corrections = json.loads(notes.read_text(encoding="utf-8")) if notes.is_file() else []
+    extra = 6 if corrections else 0                                     # the designer asked for more: the review gets room to build it
+    agent = SolidWorksAgent(make_client(config.WORKER_LLM_PROVIDER, reasoning_effort="medium"), picture.read_bytes(), menu_overview(),
+                            fix_turns=int(os.getenv("SW_AGENT_FIX_TURNS", "5")), review_turns=int(os.getenv("SW_AGENT_REVIEW_TURNS", "6")) + extra,
+                            total_turns=int(os.getenv("SW_AGENT_TOTAL_TURNS", "16")) + extra)
+    agent.corrections = corrections
+    return agent

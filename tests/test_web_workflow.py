@@ -120,14 +120,16 @@ def test_changed_source_or_private_model_invalidates_acceptance():
         assert not exports
 
 
-def test_requested_corrections_cannot_be_accepted_or_exported():
+def test_a_correction_goes_to_the_solidworks_agent_and_the_part_is_built_again():
     with tempfile.TemporaryDirectory() as directory:
         app, artifact, _, _ = service(Path(directory))
         job = app.create(artifact["result_id"], artifact["id"])
         job = app.action(job["id"], 0, "build")
+        raises(lambda: app.action(job["id"], job["revision"], "correct", review_hash=job["review_hash"], message=" "), "Describe")
         job = app.action(job["id"], job["revision"], "correct", review_hash=job["review_hash"], message="Hole diameter must be 8")
-        assert job["phase"] == "changes_requested" and job["questions"] == ["Hole diameter must be 8"]
-        raises(lambda: app.action(job["id"], job["revision"], "accept"), "not available")
+        assert job["phase"] == "awaiting_review" and job["corrections"] == ["Hole diameter must be 8"]      # rebuilt, ready to compare again
+        assert json.loads((app.folder(job["id"]) / "corrections.json").read_text(encoding="utf-8")) == ["Hole diameter must be 8"]
+        raises(lambda: app.action(job["id"], job["revision"], "export", review_hash=job["review_hash"]), "not available")
 
 
 def test_unreadable_source_clarifications_are_explicit_provenance_not_silent_dismissal():

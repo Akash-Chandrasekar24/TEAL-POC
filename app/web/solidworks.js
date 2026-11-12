@@ -391,7 +391,7 @@ async function startBuild(r, attempt) {
 async function jobDecision(r, action, decision = {}) {
   const job = r.workflowJob;
   r.workflowBusy = true;
-  if (["build","approve_fix","edit_fix","retry_llm"].includes(action)) job.phase = "building";
+  if (["build","approve_fix","edit_fix","retry_llm","correct"].includes(action)) job.phase = "building";
   if (action === "export") job.phase = "exporting";
   window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:true,title:action === "export" ? "Preparing your exports" : "SolidWorks is building your model",message:action === "export" ? "Checking the confirmed model and preparing files…" : "The CAD agent is executing the approved plan in SolidWorks…"}}));
   const body = {job_id:job.id, revision:job.revision, action, review_hash:job.review_hash, ...decision};
@@ -530,11 +530,9 @@ function workflowCard(r) {
     accept.disabled = true;
     const ready = () => { accept.disabled = !compared.checked || !measured.checked || Boolean(r.workflowBusy); };
     compared.addEventListener("change", ready); measured.addEventListener("change", ready);
-    const correction = el("textarea", {"aria-label":"Correction after model review", placeholder:"Describe any measurement or feature that differs from the drawing", style:"width:100%"});
     card.append(el("label", {class:"row"}, compared, " I compared the 3D model with the 2D drawing"),
       el("label", {class:"row"}, measured, " I verified the measurements and features"),
-      el("div", {class:"actions"}, accept), correction,
-      action("Request correction", "correct", () => ({message:correction.value}), true));
+      el("div", {class:"actions"}, accept), fixChat(job, action));
   }
   if (["needs_human","changes_requested"].includes(job.phase)) {
     const back = el("button", {class:"btn secondary", type:"button", text:"Return to measurement review"});
@@ -546,6 +544,23 @@ function workflowCard(r) {
   if (job.phase === "accepted") card.append(action("Export confirmed model", "export"));
   if (job.phase === "exported") card.append(el("div", {class:"actions"}, (job.exports || []).map((f) => el("a", {class:"btn", href:f.url, download:`model.${f.format === "BUNDLE" ? "zip" : f.format.toLowerCase()}`, text:f.format === "BUNDLE" ? "Download assembly with components" : `Download ${f.format}`}))));
   return card;
+}
+
+// The designer tells the SolidWorks agent what is missing or wrong; the part is built again and the agent's review builds it first.
+function fixChat(job, action) {
+  const chat = el("div", {class:"fix-chat"}, el("h3", {text:"Tell the SolidWorks agent what is wrong"}),
+    el("p", {class:"hint", text:"Name what is missing or wrong (for example: the Ø48 cross boss with the R12.5 hole on top of the hub is missing). The part is built again in SolidWorks and the agent fixes it first."}));
+  const thread = el("div", {class:"fix-thread"});
+  for (const m of job.corrections || []) thread.append(el("p", {class:"fix-you", text:m}));
+  const reply = job.agent_reply;
+  if (reply) thread.append(el("p", {class:"fix-agent", text:[reply.added?.length ? `Added: ${reply.added.join(", ")}.` : "Nothing new was added.", reply.says].filter(Boolean).join(" ")}));
+  if (thread.childElementCount) chat.append(thread);
+  const message = el("textarea", {"aria-label":"Message to the SolidWorks agent", rows:3, placeholder:"What is missing or wrong in the 3D model?"});
+  const send = action("Send: fix it in SolidWorks", "correct", () => ({message:message.value}), true);
+  send.disabled = true;
+  message.addEventListener("input", () => { send.disabled = !message.value.trim(); });
+  chat.append(message, el("div", {class:"actions"}, send));
+  return chat;
 }
 
 function assemblyCard(r) {

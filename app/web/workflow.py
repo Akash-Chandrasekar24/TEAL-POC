@@ -78,8 +78,12 @@ class Workflow:
         phase = record["phase"]
         if phase in {"building", "exporting", "resuming"} and record.get("boot") != BOOT:
             phase = "needs_human"
-        result = {key: record.get(key) for key in ("id", "result_id", "attempt", "revision", "questions", "events", "review_hash", "proposal", "detail")}
-        result.update(phase=phase, stale=stale, exports=[], preview=None, final=(record.get("graph") or {}).get("report", {}).get("final"))
+        result = {key: record.get(key) for key in ("id", "result_id", "attempt", "revision", "questions", "events", "review_hash", "proposal", "detail", "corrections")}
+        report = (record.get("graph") or {}).get("report") or {}
+        review = (report.get("agent") or {}).get("review") or {}
+        added = [i["id"] for i in report.get("items", []) if "added by the SolidWorks agent" in str(i.get("message", ""))]
+        result.update(phase=phase, stale=stale, exports=[], preview=None, final=report.get("final"),
+                      agent_reply={"says": review.get("summary") or review.get("reason") or "", "added": added} if record.get("corrections") else None)
         if record.get("receipt") and not stale:
             try:
                 verify_receipt(self.folder(record["id"]), record["receipt"])
@@ -139,8 +143,15 @@ class Workflow:
                     if set(record["exports"]) != expected:
                         raise ValueError("The export set is incomplete")
                     record["phase"] = "exported"
-                elif action == "correct":
+                elif action == "correct" and record["kind"] == "assembly":
                     record.update(phase="changes_requested", questions=[str(decision["message"]).strip()])
+                elif action == "correct":
+                    # the designer's chat message goes to the SolidWorks agent (corrections.json, read by agent_for) and the same approved
+                    # list is built again: the agent's review gets the message as its first job
+                    record["corrections"] = [*record.get("corrections", []), str(decision["message"]).strip()[:2000]]
+                    (self.folder(jid) / "corrections.json").write_text(json.dumps(record["corrections"]), encoding="utf-8")
+                    gaps = ((record.get("graph") or {}).get("approved") or {}).get("accepted_gaps", [])
+                    self._advance(record, "build", {"accepted_gaps": gaps})
                 elif action == "abort":
                     record["phase"] = "aborted"
                 else:
