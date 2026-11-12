@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta charset="utf-8">
+<title>GWC SolidWorks agent</title>
+<!-- Shown inside SolidWorks' Task Pane by the Windows web browser control (the Internet Explorer engine): plain ES5, no fetch, no modules. -->
+<style>
+  body{font:13px "Segoe UI",Arial,sans-serif;color:#0f1729;background:#fff;margin:0;padding:10px}
+  h1{font-size:15px;margin:0 0 8px;color:#6f2b8b}
+  select,textarea,button{font:inherit;width:100%;box-sizing:border-box}
+  textarea{height:70px;margin-top:8px}
+  button{margin-top:6px;padding:7px;border:0;border-radius:6px;background:#6f2b8b;color:#fff;cursor:pointer}
+  button[disabled]{background:#b9a3c4;cursor:default}
+  .msg{margin:6px 0;padding:7px 9px;border-radius:8px}
+  .you{background:#6f2b8b;color:#fff;margin-left:18px}
+  .agent{background:#f3ecf7;margin-right:18px}
+  .hint{color:#65758b;font-size:12px}
+  #log{margin-top:8px;font-size:12px;max-height:220px;overflow:auto;border-top:1px solid #ddddd5}
+  #log div{padding:3px 0;border-bottom:1px solid #f0f0ea}
+  .k-agent{color:#6f2b8b}.k-warn{color:#b45309}
+</style>
+</head>
+<body>
+<h1>SolidWorks agent</h1>
+<select id="jobs" aria-label="Part to edit"></select>
+<p class="hint" id="state"></p>
+<div id="thread"></div>
+<textarea id="text" placeholder="What is missing or wrong in this part?"></textarea>
+<button id="send" disabled>Send: fix it in SolidWorks</button>
+<div id="log"></div>
+<script>
+var job = null, busy = false;
+function $(id) { return document.getElementById(id); }
+function req(method, url, body, done) {
+  var x = new XMLHttpRequest();
+  x.open(method, url + (method === "GET" ? (url.indexOf("?") < 0 ? "?" : "&") + "t=" + new Date().getTime() : ""), true);
+  if (body) x.setRequestHeader("Content-Type", "application/json");
+  x.onreadystatechange = function () {
+    if (x.readyState !== 4) return;
+    var data = null; try { data = JSON.parse(x.responseText); } catch (e) {}
+    done(x.status, data);
+  };
+  x.send(body ? JSON.stringify(body) : null);
+}
+function line(cls, text) { var p = document.createElement("div"); p.className = cls; p.appendChild(document.createTextNode(text)); return p; }
+function loadJobs() {
+  req("GET", "/api/panel/jobs", null, function (status, data) {
+    var sel = $("jobs"), keep = sel.value;
+    sel.innerHTML = "";
+    var list = (data && data.jobs) || [];
+    for (var i = 0; i < list.length; i++) {
+      var o = document.createElement("option"); o.value = list[i].id; o.text = list[i].name + " (" + list[i].id + ")"; sel.appendChild(o);
+    }
+    if (!list.length) { $("state").innerHTML = "No built part is waiting for review. Build one from the app first."; return; }
+    if (keep) sel.value = keep;
+    if (!sel.value) sel.value = list[0].id;
+    loadJob();
+  });
+}
+function loadJob() {
+  var id = $("jobs").value; if (!id) return;
+  req("GET", "/api/workflow/" + id, null, function (status, data) {
+    if (status !== 200 || !data) return;
+    job = data;
+    var th = $("thread"); th.innerHTML = "";
+    var c = job.corrections || [];
+    for (var i = 0; i < c.length; i++) th.appendChild(line("msg you", c[i]));
+    var r = job.agent_reply;
+    if (r) th.appendChild(line("msg agent", (r.added && r.added.length ? "Added: " + r.added.join(", ") + ". " : "Nothing new was added. ") + (r.says || "")));
+    if (c.length && job.detail) th.appendChild(line("msg agent", job.detail));
+    var editing = job.phase === "resuming";
+    $("state").innerHTML = editing ? "The agent is editing this part in SolidWorks..." : job.phase === "awaiting_review" ? "Ready. Describe what is missing or wrong." : job.phase;
+    $("send").disabled = busy || editing || job.phase !== "awaiting_review" || !$("text").value.replace(/\s/g, "");
+    if (editing || busy) loadLog();
+  });
+}
+function loadLog() {
+  req("GET", "/api/workflow/" + job.id + "/progress", null, function (status, p) {
+    if (status !== 200 || !p || !p.log) return;
+    var box = $("log"); box.innerHTML = "";
+    var rows = p.log.slice(-15);
+    for (var i = rows.length - 1; i >= 0; i--) box.appendChild(line("k-" + rows[i].kind, rows[i].text));
+  });
+}
+$("text").onkeyup = function () { $("send").disabled = busy || !job || job.phase !== "awaiting_review" || !this.value.replace(/\s/g, ""); };
+$("jobs").onchange = function () { $("log").innerHTML = ""; loadJob(); };
+$("send").onclick = function () {
+  var text = $("text").value;
+  if (!job || !text.replace(/\s/g, "")) return;
+  busy = true; $("send").disabled = true;
+  $("thread").appendChild(line("msg you", text));
+  $("state").innerHTML = "The agent is editing this part in SolidWorks...";
+  req("POST", "/api/workflow/decision", {job_id: job.id, revision: job.revision, action: "correct", review_hash: job.review_hash, message: text},
+    function (status, data) {
+      busy = false;
+      if (status !== 200) $("thread").appendChild(line("msg agent", "Not sent: " + ((data && data.error) || ("error " + status))));
+      else $("text").value = "";
+      loadJob(); loadLog();
+    });
+};
+loadJobs();
+setInterval(function () { if (busy || (job && job.phase === "resuming")) loadJob(); }, 3000);
+setInterval(function () { if (!busy) loadJobs(); }, 30000);
+</script>
+</body>
+</html>

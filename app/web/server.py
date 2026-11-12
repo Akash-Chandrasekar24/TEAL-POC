@@ -1359,6 +1359,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("index.html", "text/html; charset=utf-8")
         if path == "/assembly.html":
             return self._static("assembly.html", "text/html; charset=utf-8")
+        if path == "/panel":                                                    # the chat inside SolidWorks' Task Pane (sw_panel)
+            return self._static("panel.html", "text/html; charset=utf-8")
+        if path == "/api/panel/jobs":
+            from .sw_panel import panel_jobs
+            return self._json(200, {"jobs": panel_jobs(WORKFLOW.root)})
         if path == "/viewer.js":
             return self._static("viewer.js", "text/javascript; charset=utf-8")
         if path == "/solidworks.js":
@@ -1665,6 +1670,9 @@ def main(port: int = 8765) -> None:
                     make_client("domo",reasoning_effort=config.EXTRACTION_REASONING_EFFORT)
             except Exception as error: print(f"OCR initialization deferred: {type(error).__name__}")
         threading.Thread(target=warm_ocr,daemon=True,name="ocr-startup").start()
+        if os.getenv("SW_PANEL", "on").strip().lower() not in ("off", "0", "false", "no"):
+            from .sw_panel import keep_panel
+            keep_panel(port)                                                    # the chat tab in SolidWorks' Task Pane
     print(f"open http://127.0.0.1:{port}   (Ctrl+C to stop)")
     try:
         server.serve_forever()
