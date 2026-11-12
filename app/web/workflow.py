@@ -17,7 +17,7 @@ from langgraph.types import Command
 
 from app.agent.graph import Deps, build_graph, new_job_state
 from app.agent.orchestrator import Orchestrator
-from app.agent.review import export_reviewed, preview_assembly, preview_build, verify_receipt
+from app.agent.review import edit_preview, export_reviewed, preview_assembly, preview_build, verify_receipt
 from app.agent.guards import list_hash
 from app.assembly.jobs import write_json
 from app.drawing.model import fingerprint
@@ -28,9 +28,10 @@ BOOT = uuid.uuid4().hex
 
 
 class Workflow:
-    def __init__(self, root, plan, *, build=preview_build, exporter=export_reviewed, workers=None, assets=None, assembly_build=preview_assembly):
+    def __init__(self, root, plan, *, build=preview_build, exporter=export_reviewed, workers=None, assets=None, assembly_build=preview_assembly,
+                 editor=edit_preview):
         self.root, self.plan = Path(root), plan
-        self.build, self.exporter, self.workers = build, exporter, workers
+        self.build, self.exporter, self.workers, self.editor = build, exporter, workers, editor
         self.assets, self.assembly_build = assets, assembly_build
 
     def folder(self, jid):
@@ -146,12 +147,24 @@ class Workflow:
                 elif action == "correct" and record["kind"] == "assembly":
                     record.update(phase="changes_requested", questions=[str(decision["message"]).strip()])
                 elif action == "correct":
-                    # the designer's chat message goes to the SolidWorks agent (corrections.json, read by agent_for) and the same approved
-                    # list is built again: the agent's review gets the message as its first job
+                    # the designer's chat message goes to the SolidWorks agent (corrections.json, read by agent_for), which edits the part
+                    # already built (its saved SLDPRT): nothing is built again from the start
                     record["corrections"] = [*record.get("corrections", []), str(decision["message"]).strip()[:2000]]
                     (self.folder(jid) / "corrections.json").write_text(json.dumps(record["corrections"]), encoding="utf-8")
-                    gaps = ((record.get("graph") or {}).get("approved") or {}).get("accepted_gaps", [])
-                    self._advance(record, "build", {"accepted_gaps": gaps})
+                    graph = record["graph"]
+                    try:
+                        out = self.editor(graph["approved"], self.folder(jid), graph.get("report") or {}, record["receipt"]["files"]["SLDPRT"]["path"])
+                    except Exception as ex:                                     # noqa: BLE001 - shown in the chat, the part stays reviewable
+                        out = {"report": {"ok": False, "failure": {"message": f"{type(ex).__name__}: {ex}"}}, "finish": None}
+                    record["graph"] = {**graph, "report": out["report"], "finish": out["finish"]}
+                    finish = out["finish"]
+                    if not out["report"]["ok"] or not finish or set(finish["files"]) != {"SLDPRT", "STL", "PREVIEW"} or not finish.get("configuration"):
+                        # the saved part on disk is untouched (an edit is only saved when it finished): it stays the one to review
+                        failure = (out["report"].get("failure") or {}).get("message") or "the edited part could not be saved for review"
+                        record.update(graph=graph, phase="awaiting_review", detail=f"The SolidWorks agent's edit stopped, the part is as before: {failure}"[:600])
+                    else:
+                        self._receipt(record, finish["files"], finish["configuration"])
+                        record.update(phase="awaiting_review", questions=[], detail="")
                 elif action == "abort":
                     record["phase"] = "aborted"
                 else:

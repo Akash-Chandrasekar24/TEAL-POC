@@ -228,6 +228,49 @@ class Runner:
                 return report
             self._event("environment_retry", failure=report.failure.message)
 
+    async def edit(self, bl: BuildList, prior: dict) -> RunReport:
+        """The part from the last build is open in SolidWorks: the agent adds or fixes what the designer says (agent.corrections) ON it.
+        Nothing is built again. `prior` = the last build's report (asdict). The steps it built are known again from the list and its
+        status per step; steps the agent added then come back from their recorded params."""
+        report = RunReport(bl.part_name, bl.unit, ok=True, log_dir=str(self.log.dir) if self.log else "", gaps=list(prior.get("gaps", [])),
+                           warnings=list(prior.get("warnings", [])))
+        report.items = [ItemReport(**i) for i in prior.get("items", [])]
+        verifier = StepVerifier(self.sw, self.log)
+        verifier.doc = report.document = (await verifier.current()).doc                 # the saved part, opened / active
+        ctx = FeatureContext(self.sw, verifier, self.log)
+        prepared = prepare(bl)
+        covers = self._covers(bl, prepared)
+        self._cover_ids = {p.item.id: [i.id for i in c] for p, c in zip(prepared, covers)}
+        status = {i.id: i.status for i in report.items}
+        built: dict[str, Any] = {}
+        for p, c in zip(prepared, covers):
+            if status.get(p.item.id) in ("ok", "check_failed"):
+                built.update({i.id: i for i in c})
+        for i in report.items:
+            head = "added by the SolidWorks agent: "
+            if i.id not in built and i.message.startswith(head):
+                try:
+                    built[i.id] = Item(id=i.id, feature=i.feature, params=json.loads(i.message[len(head):]), derived=True, note="by the SolidWorks agent")
+                except (ValueError, ValidationError):                                   # a long message was cut: that step is still in the part
+                    pass
+        self._unit = bl.unit
+        try:
+            from .measure import signature
+            self._face_sigs = {signature(f) for f in (await self.sw.analyze_model("faces")).analysis_json()["faces"]}
+        except Exception:                                                               # noqa: BLE001 - only the drawing-vs-model table needs it
+            self._face_sigs = set()
+        if self.progress is not None:
+            self.progress.plan(list(built.values()))
+            self.progress.step(list(built), "ok")
+            self.progress.log("agent", "AI agent edits the built part: " + " | ".join(self.agent.corrections)[:300])
+        if await self._agent_review(bl, ctx, built, report):
+            report.ok = False
+        else:
+            report.final = {**prior.get("final", {}), **await self._final(verifier, report)}
+        if self.progress is not None:
+            self.progress.finish(report.ok)
+        return report
+
     # ---------------------------------------------------------------- internals
     def _event(self, kind: str, **data: Any) -> None:
         if self.log:

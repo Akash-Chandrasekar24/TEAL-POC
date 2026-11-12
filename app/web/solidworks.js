@@ -393,7 +393,7 @@ async function jobDecision(r, action, decision = {}) {
   r.workflowBusy = true;
   if (["build","approve_fix","edit_fix","retry_llm","correct"].includes(action)) job.phase = "building";
   if (action === "export") job.phase = "exporting";
-  window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:true,title:action === "export" ? "Preparing your exports" : "SolidWorks is building your model",message:action === "export" ? "Checking the confirmed model and preparing files…" : "The CAD agent is executing the approved plan in SolidWorks…"}}));
+  window.dispatchEvent(new CustomEvent("studio:processing", {detail:{busy:true,title:action === "export" ? "Preparing your exports" : action === "correct" ? "The SolidWorks agent is editing your part" : "SolidWorks is building your model",message:action === "export" ? "Checking the confirmed model and preparing files…" : action === "correct" ? "It opens the built part and fixes what you described…" : "The CAD agent is executing the approved plan in SolidWorks…"}}));
   const body = {job_id:job.id, revision:job.revision, action, review_hash:job.review_hash, ...decision};
   show(r); pollJob(r);
   try {
@@ -546,14 +546,15 @@ function workflowCard(r) {
   return card;
 }
 
-// The designer tells the SolidWorks agent what is missing or wrong; the part is built again and the agent's review builds it first.
+// The designer tells the SolidWorks agent what is missing or wrong; the agent edits the part already built (nothing is built again).
 function fixChat(job, action) {
   const chat = el("div", {class:"fix-chat"}, el("h3", {text:"Tell the SolidWorks agent what is wrong"}),
-    el("p", {class:"hint", text:"Name what is missing or wrong (for example: the Ø48 cross boss with the R12.5 hole on top of the hub is missing). The part is built again in SolidWorks and the agent fixes it first."}));
+    el("p", {class:"hint", text:"Name what is missing or wrong (for example: the Ø48 cross boss with the R12.5 hole on top of the hub is missing). The agent opens this part in SolidWorks and edits it; nothing is built again from the start."}));
   const thread = el("div", {class:"fix-thread"});
   for (const m of job.corrections || []) thread.append(el("p", {class:"fix-you", text:m}));
   const reply = job.agent_reply;
   if (reply) thread.append(el("p", {class:"fix-agent", text:[reply.added?.length ? `Added: ${reply.added.join(", ")}.` : "Nothing new was added.", reply.says].filter(Boolean).join(" ")}));
+  if (job.corrections?.length && job.detail) thread.append(el("p", {class:"fix-agent", text:job.detail}));
   if (thread.childElementCount) chat.append(thread);
   const message = el("textarea", {"aria-label":"Message to the SolidWorks agent", rows:3, placeholder:"What is missing or wrong in the 3D model?"});
   const send = action("Send: fix it in SolidWorks", "correct", () => ({message:message.value}), true);

@@ -120,16 +120,32 @@ def test_changed_source_or_private_model_invalidates_acceptance():
         assert not exports
 
 
-def test_a_correction_goes_to_the_solidworks_agent_and_the_part_is_built_again():
+def test_a_correction_is_made_on_the_built_part_not_built_again():
     with tempfile.TemporaryDirectory() as directory:
-        app, artifact, _, _ = service(Path(directory))
+        app, artifact, build, _ = service(Path(directory))
+        edits = []
+
+        def editor(approved, folder, prior, source):
+            edits.append((source, prior))
+            out = build(approved, folder)
+            out["report"]["items"] = [{"id": "A1", "feature": "hole", "status": "ok", "message": "added by the SolidWorks agent: {}"}]
+            return out
+        app.editor = editor
         job = app.create(artifact["result_id"], artifact["id"])
         job = app.action(job["id"], 0, "build")
+        first = app.load(job["id"])["receipt"]["files"]["SLDPRT"]["path"]
         raises(lambda: app.action(job["id"], job["revision"], "correct", review_hash=job["review_hash"], message=" "), "Describe")
         job = app.action(job["id"], job["revision"], "correct", review_hash=job["review_hash"], message="Hole diameter must be 8")
-        assert job["phase"] == "awaiting_review" and job["corrections"] == ["Hole diameter must be 8"]      # rebuilt, ready to compare again
+        assert len(build.calls) == 2 and edits[0][0] == first and edits[0][1]["ok"]          # the editor got the BUILT part and its report
+        assert job["phase"] == "awaiting_review" and job["corrections"] == ["Hole diameter must be 8"] and job["agent_reply"]["added"] == ["A1"]
         assert json.loads((app.folder(job["id"]) / "corrections.json").read_text(encoding="utf-8")) == ["Hole diameter must be 8"]
+        assert app.load(job["id"])["receipt"]["files"]["SLDPRT"]["path"] != first             # the edited part is the one to review now
         raises(lambda: app.action(job["id"], job["revision"], "export", review_hash=job["review_hash"]), "not available")
+
+        app.editor = lambda *a: (_ for _ in ()).throw(RuntimeError("SolidWorks is busy"))
+        before = app.load(job["id"])["receipt"]
+        job = app.action(job["id"], job["revision"], "correct", review_hash=job["review_hash"], message="and the slot")
+        assert job["phase"] == "awaiting_review" and "SolidWorks is busy" in job["detail"] and app.load(job["id"])["receipt"] == before
 
 
 def test_unreadable_source_clarifications_are_explicit_provenance_not_silent_dismissal():

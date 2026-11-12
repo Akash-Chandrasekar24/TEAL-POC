@@ -1522,8 +1522,7 @@ class Handler(BaseHTTPRequestHandler):
                         job = WORKFLOW.action(job["id"], job["revision"], "build", accepted_gaps=gaps)
                     return self._json(200, job)
                 decision = {key: body[key] for key in ("review_hash", "compared_drawing", "checked_measurements", "message", "params", "accepted_gaps") if key in body}
-                job = WORKFLOW.action(str(body.get("job_id", "")), body.get("revision"), str(body.get("action", "")), **decision)
-                return self._json(200, _no_pause(job) if body.get("action") == "correct" else job)   # a correction rebuild runs end to end
+                return self._json(200, WORKFLOW.action(str(body.get("job_id", "")), body.get("revision"), str(body.get("action", "")), **decision))
             if self.path == "/api/parts/build-in-solidworks":
                 if not self._same_origin_json():
                     return self._json(403, {"error": "Start builds from this drawing workspace"})

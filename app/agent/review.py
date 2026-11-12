@@ -34,18 +34,47 @@ async def _preview(approved, job_dir):
             info = Path(job_dir) / "drawing.json"
             general = json.loads(info.read_text(encoding="utf-8")).get("general_tolerance") if info.is_file() else None
             await dimension_part(sw, plan, general, report)
-            # Private tessellation is needed to show a rotatable preview. No STEP
-            # or downloadable native deliverable is produced at this stage.
-            folder = job_dir / "private" / uuid.uuid4().hex[:12]
-            prepared = await finish_part(sw, folder, safe_name(plan.part_name or job_dir.name), plan.unit,
-                                         expected_bbox_mm=report.final.get("bbox_mm"), review_only=True)
-            apply_expected_final(prepared, report.final, plan.expected_final)
-            finish = asdict(prepared)
-            workspace = await sw.inspect_assembly("workspace")
-            if not workspace.ok:
-                raise ValueError("Cannot verify the saved preview's active configuration")
-            finish["configuration"] = workspace.json()["configuration"]
+            finish = await _save_for_review(sw, plan, job_dir, report)
     return {"report": asdict(report), "finish": finish}
+
+
+async def _save_for_review(sw, plan, job_dir, report) -> dict:
+    # Private tessellation is needed to show a rotatable preview. No STEP
+    # or downloadable native deliverable is produced at this stage.
+    folder = job_dir / "private" / uuid.uuid4().hex[:12]
+    prepared = await finish_part(sw, folder, safe_name(plan.part_name or job_dir.name), plan.unit,
+                                 expected_bbox_mm=report.final.get("bbox_mm"), review_only=True)
+    apply_expected_final(prepared, report.final, plan.expected_final)
+    finish = asdict(prepared)
+    workspace = await sw.inspect_assembly("workspace")
+    if not workspace.ok:
+        raise ValueError("Cannot verify the saved preview's active configuration")
+    finish["configuration"] = workspace.json()["configuration"]
+    return finish
+
+
+async def _edit(approved, job_dir, prior, source):
+    """The designer's correction, made ON the part already built (the saved SLDPRT is opened, or activated when it is still open)."""
+    from .sw_agent import agent_for
+    from app.runner.progress import Progress
+    plan = parse_reply(approved)
+    agent = agent_for(job_dir)
+    if agent is None:
+        raise ValueError("The SolidWorks agent is off (SW_AGENT=off) or the job has no drawing: it cannot edit the part")
+    async with SolidWorksClient() as sw:
+        opened = await sw.open_document(str(source))
+        if not opened.ok:
+            raise ValueError(f"Could not open the built part in SolidWorks: {opened.text[:300]}")
+        report = await Runner(sw, log=RunLog(f"edit_{job_dir.name}"), agent=agent, look_dir=job_dir / "looks",
+                              progress=Progress(job_dir)).edit(plan, prior)
+        # ponytail: no new SolidWorks dimensions on an edit (the old sketches already carry theirs; dimensioning them again would add doubles)
+        finish = await _save_for_review(sw, plan, job_dir, report) if report.ok else None
+    return {"report": asdict(report), "finish": finish}
+
+
+def edit_preview(approved, job_dir, prior, source):
+    with cad_execution(Path(job_dir), "part_edit", list_hash(approved)):
+        return asyncio.run(_edit(approved, Path(job_dir), prior, source))
 
 
 async def dimension_part(sw, plan, general, report) -> None:

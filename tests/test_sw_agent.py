@@ -267,3 +267,38 @@ def test_the_designers_chat_message_is_the_reviews_first_job():
         (Path(d) / "corrections.json").write_text(json.dumps(["add the R12.5 hole"]), encoding="utf-8")
         a = sw_agent.agent_for(Path(d))
     assert a.corrections == ["add the R12.5 hole"] and a.review_turns == 12 and a.total_turns == 22
+
+
+def test_an_edit_works_on_the_built_part_and_only_adds_what_the_designer_asked():
+    """The compare page's chat edits the part already built: no new part is opened, the list is not built again, the agent builds on the
+    steps that stand in the part (F2 failed in the build, so it is not one of them)."""
+    bl = _list()
+    llm = Says({"tool": "hole", "args": {**GOOD_HOLE, "diameter": 6}, "why": "the designer says a 6 mm hole is missing"},
+               {"tool": "done", "args": {"summary": "added the 6 mm hole"}})
+    tried = []
+
+    async def try_feature(bl_, ctx, built, item, mark):
+        tried.append((item.id, sorted(built)))
+        return {"status": "ok", "feature_call": True, "message": "built"}
+    agent = SolidWorksAgent(llm, b"png", "", review_turns=3)
+    agent.corrections = ["a 6 mm hole is missing"]
+    r, calls = _runner(agent, try_feature)
+    r.progress = None
+
+    async def look(ctx):
+        return {"status": "ok"}
+    r._look = look
+
+    class Ver:
+        def __init__(self, *a, **k):
+            self.doc = None
+
+        async def current(self):
+            return SimpleNamespace(doc="clamp")
+    prior = {"items": [{"id": "F1", "feature": "extrude_profile_boss", "status": "ok"}, {"id": "F2", "feature": "hole", "status": "failed"}],
+             "final": {"dimensions_in_solidworks": {"added": 5}}}
+    with patch.object(runner_mod, "StepVerifier", Ver):
+        rep = asyncio.run(r.edit(bl, prior))
+    assert rep.ok and rep.document == "clamp" and tried == [("A1", ["F1"])]
+    assert [i.id for i in rep.items] == ["F1", "F2", "A1"] and rep.final["dimensions_in_solidworks"] == {"added": 5}
+    assert "a 6 mm hole is missing" in llm.seen[0] and not any(c[0] == "open_new_part" for c in calls)
