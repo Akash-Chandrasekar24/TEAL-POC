@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from app.drawing.model import Strict
 from app.llm.base import FilePart
@@ -153,8 +153,14 @@ def draft_placements(llm, picture: bytes, parts: list[dict], feedback: dict | No
     prompt = PROMPT + (ROUND_FACES if any(p.get("round_faces") for p in parts) else "")
     if feedback and feedback.get("overlaps"):
         prompt += FEEDBACK.format(overlaps=json.dumps(feedback["overlaps"]), previous=json.dumps(feedback.get("previous", []))[:12000])
-    reply = llm.generate_json(prompt, [FilePart(picture, "image/png"), json.dumps({"parts": context}, ensure_ascii=False)])
-    return DraftAssembly.model_validate(reply.data)
+    parts_json = json.dumps({"parts": context}, ensure_ascii=False)
+    reply = llm.generate_json(prompt, [FilePart(picture, "image/png"), parts_json])
+    try:
+        return DraftAssembly.model_validate(reply.data)
+    except ValidationError as ex:                                   # one more try with the error (seen: a reply that did not fit the format)
+        again = llm.generate_json(prompt, [FilePart(picture, "image/png"), parts_json,
+                                           f"Your previous answer did not fit the JSON format: {str(ex)[:1500]}. Answer again, complete, in the format."])
+        return DraftAssembly.model_validate(again.data)
 
 
 def _world(origin, rot, p):
@@ -259,9 +265,23 @@ def plan_from_parts(name: str, source_hash: str, unit: str, built: list[dict], d
         problems.append(f"the AI placed parts that were not built: {', '.join(unknown)} (ignored)")
     # no overall-size check from the AI: its size is an estimate (an engine failed on 577 vs its own guess of 566 mm, the drawing prints
     # no overall length); the placements come from the measured faces, and the size is reported as a note
+    # the expected size is COMPUTED: every part's measured box at its placement. The final check then proves SolidWorks put each part
+    # where the plan says (the run requires a reviewed size; the drawing prints none)
+    boxes = {f"item-{p['id']}"[:40]: p["bbox_mm"] for p in built}
+    corners = []
+    for occ in occurrences:
+        bb = boxes.get(occ.bom_id)
+        if bb and occ.placement:
+            lo, hi = bb
+            for c in ((x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])):
+                corners.append(_world(occ.placement.translation, occ.placement.rotation, c))
     expected = Expectations()
+    if corners:
+        size = [round(max(c[k] for c in corners) - min(c[k] for c in corners), 3) for k in range(3)]
+        expected = Expectations(size=size, size_evidence="computed: each built part's measured bounding box at its placement")
     if draft.size:
-        problems.append(f"AI estimate of the overall size: {draft.size} mm ({draft.size_evidence[:200]}): not checked")
+        problems.append(f"AI estimate of the overall size: {draft.size} mm ({draft.size_evidence[:200]}); the checked size is computed: "
+                        f"{expected.size}")
     plan = AssemblyPlan(name=name, source_hash=source_hash, unit=unit, bom=rows, models=models, occurrences=occurrences, expected=expected)
     return plan, problems + [f"AI note: {n}" for n in draft.notes]
 

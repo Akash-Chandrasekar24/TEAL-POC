@@ -1190,10 +1190,10 @@ def approve_assembly(rid: str, attempt: str) -> dict:
     for key in ("left_out", "problems", "frame"):
         if key in latest:
             saved[key] = latest[key]
+    if saved["blockers"]:                                                       # before it replaces the latest plan: a retry would
+        raise ValueError("The assembly cannot be built yet: " + "; ".join(saved["blockers"][:6]))   # only hear "the plan changed"
     write_json(ASSEMBLIES / rid / f"{saved['id']}.json", saved)
     write_json(ASSEMBLIES / rid / "latest.json", saved)
-    if saved["blockers"]:
-        raise ValueError("The assembly cannot be built yet: " + "; ".join(saved["blockers"][:6]))
     with _BATCH_LOCK:
         batch = load_batch(rid) or {"id": uuid.uuid4().hex[:12], "result_id": rid, "items": [], "phase": "done"}
         batch["assembly"] = {"status": "building", "attempt": saved["id"]}

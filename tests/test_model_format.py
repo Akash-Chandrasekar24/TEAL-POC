@@ -58,3 +58,30 @@ def test_two_crankpins_on_one_axis_line_are_two_cylinders_not_one():
     pin = lambda z: {"kind": "cylinder", "origin": [0, 0.044, 0], "axis": [0, 0, 1], "radius": r, "point": [r, 0.044, z]}
     got = round_faces([pin(0.12), pin(0.42)], edges)
     assert sorted((c["from"][2], c["to"][2]) for c in got) == [(100.0, 146.0), (400.0, 446.0)]
+
+
+def test_a_placement_reply_that_does_not_fit_gets_one_more_try_with_the_error():
+    from types import SimpleNamespace
+    from app.assembly.from_parts import draft_placements
+    good = {"placements": [{"part": "p", "copy": 1, "origin": [0, 0, 0], "x_to": "+X", "y_to": "+Y", "evidence": "e"}]}
+    seen = []
+
+    class LLM:
+        def generate_json(self, prompt, parts):
+            seen.append(parts[-1])
+            return SimpleNamespace(data={"placements": [{"part": "p"}]} if len(seen) == 1 else good)
+    draft = draft_placements(LLM(), b"png", [{"id": "p", "name": "P", "quantity": 1, "bbox_mm": [[0, 0, 0], [1, 1, 1]]}])
+    assert len(draft.placements) == 1 and "did not fit" in seen[1]
+
+
+def test_an_exact_fit_touching_is_not_an_interference_but_a_real_overlap_is():
+    from app.assembly.runner import check_inspection
+    from types import SimpleNamespace
+    plan = SimpleNamespace(scale=0.001, unit="mm", expected=SimpleNamespace(fully_constrained=False, size=[10, 10, 10], length_tolerance=0.1))
+    base = {"rebuild_ok": True, "feature_errors": [], "constraints": [{"name": "a-1", "fixed": True}], "interference_complete": True,
+            "bounds_m": [0, 0, 0, 0.01, 0.01, 0.01]}
+    touching = [{"components": ["a-1", "b-1"], "volume_m3": 0.9384e-9, "possible": False}]       # a Ø33.8 pin in its Ø33.8 bore
+    assert check_inspection(plan, {**base, "interferences": touching}, {"a": "a-1"}) == []
+    inside = [{"components": ["a-1", "b-1"], "volume_m3": 3.8e-6, "possible": False}]            # a piston through its rod
+    assert check_inspection(plan, {**base, "interferences": inside}, {"a": "a-1"})
+    assert check_inspection(plan, {**base, "interferences": [{**touching[0], "possible": True}]}, {"a": "a-1"})

@@ -13,6 +13,8 @@ from pathlib import Path
 
 from .model import AssemblyPlan, Surface, cross, dot, validate_plan
 
+CONTACT_M3 = 1e-9           # up to 1 mm3 of "interference" between two parts is an exact fit touching (rounding), not overlap
+
 
 class AssemblyError(RuntimeError):
     pass
@@ -144,7 +146,11 @@ def check_inspection(plan: AssemblyPlan, data: dict, names: dict[str, str]) -> l
         for c in constraints:
             if not c.get("fixed") and c.get("constrained_status") not in (2, 3):
                 errors.append(f"{c['name']}: invalid/unknown mate solver state")
-    if data.get("interference_complete") is not True or data.get("interferences") != []:
+    # an exact fit touches: a Ø33.8 pin in its Ø33.8 bore reports 0.94 mm3 (0.2 um of rounding over the pin's surface). Up to 1 mm3 is
+    # contact; anything more, and every "possible" intersection, is a part inside another.
+    real = [i for i in (data.get("interferences") or []) if i.get("possible") or not isinstance(i.get("volume_m3"), (int, float))
+            or i["volume_m3"] > CONTACT_M3]
+    if data.get("interference_complete") is not True or not isinstance(data.get("interferences"), list) or real:
         errors.append("Interference check is incomplete or reports intersections (including possible intersections)")
     try:
         bounds = _finite(data.get("bounds_m"), 6)
