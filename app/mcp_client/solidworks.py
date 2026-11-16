@@ -56,6 +56,7 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "ext_annotate": 250.0,
     "ext_dimension_sketches": 620.0,
     "ext_set_tolerances": 250.0,
+    "ext_sheet_metal": 620.0,
 }
 _LOG_ARG_CHARS = 1500
 _LOG_RESULT_CHARS = 600
@@ -334,7 +335,7 @@ class SolidWorksClient(ToolsMixin):
 
     async def geometry(self, tool: str, spec: dict) -> ToolResult:
         """One of the application geometry tools (ext_sweep, ext_shell, ext_angled_plane, ext_sketch_extrude); spec in model metres."""
-        if tool not in ("ext_sweep", "ext_shell", "ext_angled_plane", "ext_sketch_extrude", "ext_drill", "ext_revolve", "ext_annotate", "ext_dimension_sketches", "ext_set_tolerances"):
+        if tool not in ("ext_sweep", "ext_shell", "ext_angled_plane", "ext_sketch_extrude", "ext_drill", "ext_revolve", "ext_annotate", "ext_dimension_sketches", "ext_set_tolerances", "ext_sheet_metal"):
             raise ValueError(f"not a geometry tool: {tool}")
         return await self.call(tool, {"spec": spec})
 

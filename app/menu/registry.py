@@ -25,6 +25,7 @@ from app.features.extrude_profile_boss import ExtrudeProfileBoss
 from app.features.anchors import AnchorView
 from app.features.faces import FaceView
 from app.features.hole import Hole
+from app.features.sheet_metal import SheetMetalPart
 from app.features.rib import Rib
 from app.features.revolve_base import RevolveBase, turned_base_info
 from app.features.revolve_on_face import RevolveOnFace
@@ -275,6 +276,10 @@ def base_info(params: Any, unit: str) -> tuple[tuple[float, float], tuple[float,
         return wh, (wh[0] / 2, wh[1] / 2), params.height
     if isinstance(params, P.SheetMetalBaseParams):
         return (params.width, params.height), (params.width / 2, params.height / 2), params.thickness
+    if isinstance(params, P.SheetMetalPartParams):                         # its flat pattern's footprint (a standalone part: for reports)
+        segs, centred = _raw_outline(params.outline, BuildContext(unit))
+        x0, x1, y0, y1 = profile_bounds(segs)
+        return (x1 - x0, y1 - y0), ((-x0, -y0) if centred else _own_shift(segs)), params.thickness
     ctx = BuildContext(unit)
     segs, centred = _raw_outline(params.profile, ctx)
     x0, x1, y0, y1 = profile_bounds(segs)
@@ -513,6 +518,38 @@ def build_sheet_metal_base(p: P.SheetMetalBaseParams, ctx: BuildContext, label: 
                           p.k_factor, label=label)
 
 
+def _slot(x1: float, y1: float, x2: float, y2: float, w: float) -> list[dict]:
+    """A closed slot (two straight sides, two round ends) as segments."""
+    L = math.hypot(x2 - x1, y2 - y1)
+    if L < 1e-9:
+        return [{"kind": "circle", "cx": x1, "cy": y1, "diameter": w}]
+    r, (ux, uy) = w / 2, ((x2 - x1) / L, (y2 - y1) / L)
+    nx, ny = -uy * r, ux * r
+    return [{"kind": "line", "x1": x1 + nx, "y1": y1 + ny, "x2": x2 + nx, "y2": y2 + ny},
+            {"kind": "arc", "cx": x2, "cy": y2, "x1": x2 + nx, "y1": y2 + ny, "x2": x2 - nx, "y2": y2 - ny, "dir": -1},
+            {"kind": "line", "x1": x2 - nx, "y1": y2 - ny, "x2": x1 - nx, "y2": y1 - ny},
+            {"kind": "arc", "cx": x1, "cy": y1, "x1": x1 - nx, "y1": y1 - ny, "x2": x1 + nx, "y2": y1 + ny, "dir": -1}]
+
+
+def build_sheet_metal_part(p: P.SheetMetalPartParams, ctx: BuildContext, label: str) -> SheetMetalPart:
+    _standalone(ctx, "a sheet-metal part")
+    segs, centred = _raw_outline(p.outline, ctx)
+    dx, dy = (0.0, 0.0) if centred else _own_shift(segs)          # everything is moved by the same amount: the flat pattern centred
+    cutouts = []
+    for c in p.cutouts:
+        if isinstance(c, P.FlatCircle):
+            cut = [{"kind": "circle", "cx": c.x, "cy": c.y, "diameter": c.diameter}]
+        elif isinstance(c, P.FlatSlot):
+            cut = _slot(c.x1, c.y1, c.x2, c.y2, c.width)
+        else:
+            cut = _raw_outline(c, ctx)[0]
+        cutouts.append(tuple(_shift(cut, dx, dy)))
+    bends = tuple(((b.line[0][0] - dx, b.line[0][1] - dy, b.line[1][0] - dx, b.line[1][1] - dy), b.direction == "up", b.angle_deg, b.radius, b.tag)
+                  for b in p.bends)
+    fixed = (p.fixed_point[0] - dx, p.fixed_point[1] - dy) if p.fixed_point else (0.0, 0.0)
+    return SheetMetalPart(ctx.unit, tuple(_shift(segs, dx, dy)), tuple(cutouts), p.thickness, p.bend_radius, bends, fixed, p.k_factor, label=label)
+
+
 def build_swept_passage(p: P.SweptPassageParams, ctx: BuildContext, label: str) -> SweptPassage:
     ctx.need_base("a swept passage")
     size = (*ctx.outline_wh, ctx.thickness)
@@ -647,7 +684,7 @@ class MenuEntry:
                 "profile_cut": ExtrudeProfileCut, "rib": Rib, "fillet_chamfer_edges": FilletChamferEdges,
                 "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole,
                 "radial_blades": RadialBlades, "turned_keyway": TurnedKeyway,
-                "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase,
+                "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase, "sheet_metal_part": SheetMetalPart,
                 "swept_passage": SweptPassage, "shell": Shell, "angled_boss": AngledBoss, "side_profile_cut": SideProfileCut, "side_cut": SideCut, "drill": Drill}[self.name]
 
 
@@ -807,6 +844,22 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
          "no holes, cut-outs or reliefs yet", "the volume is checked as a range (SolidWorks' own flange-length convention)"),
         {"width": 120, "height": 80, "thickness": 2, "bend_radius": 3, "flanges": [{"edge": "top", "length": 30}, {"edge": "bottom", "length": 30}]},
         build_sheet_metal_base, _COMMON),
+    MenuEntry(
+        "sheet_metal_part", P.SheetMetalPartParams,
+        "A WHOLE PART in sheet metal from its FLAT PATTERN: any outline, any holes / slots / cut-outs, any number of bends up or down (brackets, "
+        "enclosures, chassis, clips, covers, trays, panels; flanges on flanges, tabs and feet).",
+        "Read it from the flat pattern view and the bend table: the flat outline (the pattern's outer boundary), every cut-out in it, the sheet "
+        "thickness and inside bend radius, every bend line drawn on the flat pattern with its direction (up / down), angle and radius, and a "
+        "point on the face that stays put (the 'fixed face'). Holes in walls that are bent up are drawn where they lie on the flat pattern. "
+        "The app bends the outermost bends first, so give the bends in any order. It is the only item of the list.",
+        ("the only item: nothing can be added to it", "bend lines are straight and run across the sheet",
+         "no forming tools (louvers, lances, embosses, extruded holes), hems or jogs: list those as unsupported",
+         "the volume is checked against the flat area x thickness (bending keeps it)"),
+        {"outline": {"shape": "polygon", "points": [[0, 0], [110, 0], [110, 40], [0, 40]]},
+         "cutouts": [{"shape": "circle", "x": 55, "y": 20, "diameter": 10}], "thickness": 2, "bend_radius": 2,
+         "bends": [{"line": [[25, 0], [25, 40]], "direction": "up", "tag": "A"}, {"line": [[85, 0], [85, 40]], "direction": "up", "tag": "B"}],
+         "fixed_point": [55, 30]},
+        build_sheet_metal_part, _COMMON),
     MenuEntry(
         "swept_passage", P.SweptPassageParams,
         "After a base: a round passage CUT (or a round rod boss) along a path in a plane parallel to the front face: straight runs with bends, "

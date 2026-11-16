@@ -461,6 +461,48 @@ class SideCutParams(Strict):
                                                            "edge of the top-view outline")
 
 
+class FlatCircle(Strict):
+    shape: Literal["circle"]
+    x: float
+    y: float
+    diameter: float = Field(gt=0)
+
+
+class FlatSlot(Strict):
+    shape: Literal["slot"]
+    x1: float = Field(description="centre of one round end")
+    y1: float
+    x2: float = Field(description="centre of the other round end")
+    y2: float
+    width: float = Field(gt=0, description="slot width (the diameter of its round ends)")
+
+
+FlatCutout = Annotated[Union[FlatCircle, FlatSlot, Polygon, Segments], Field(discriminator="shape")]
+
+
+class SheetBend(Strict):
+    line: Annotated[list[Annotated[list[float], Field(min_length=2, max_length=2)]], Field(min_length=2, max_length=2)] = Field(
+        description="the bend line on the FLAT PATTERN: [[x1, y1], [x2, y2]], across the whole width of the sheet there (the bend's centre line)")
+    direction: Literal["up", "down"] = Field(description="as the flat pattern's bend table / notes give it: up = the moving side folds toward the "
+                                                         "viewer of the flat pattern, down = away")
+    angle_deg: float = Field(90, gt=0, le=180, description="bend angle (90 = a right angle)")
+    radius: float | None = Field(None, gt=0, description="inside bend radius of THIS bend, when it differs from the part's")
+    tag: str = Field("", description="the bend's label on the drawing (A, B, ...)")
+
+
+class SheetMetalPartParams(Strict):
+    outline: Annotated[Union[Polygon, Segments], Field(discriminator="shape")] = Field(
+        description="the FLAT PATTERN's outer boundary (frame base_lower_left: x right, y up from the lower-left corner of its box)")
+    cutouts: list[FlatCutout] = Field([], description="holes, slots and cut-outs inside the flat pattern, in the same frame: they are cut flat "
+                                                      "and bend with the sheet (holes in a wall that is bent up are drawn where they lie on the flat pattern)")
+    thickness: float = Field(gt=0, description="sheet thickness")
+    bend_radius: float = Field(gt=0, description="inside bend radius (the bend table's radius)")
+    k_factor: float | None = Field(None, gt=0, lt=1, description="K-factor when the drawing gives one")
+    bends: list[SheetBend] = Field([], description="every bend line of the flat pattern (any order: the app bends the outermost first)")
+    fixed_point: Annotated[list[float], Field(min_length=2, max_length=2)] | None = Field(
+        None, description="a point on the face that stays put (the drawing's 'fixed face'), same frame; default: the middle of the flat pattern")
+
+
 class DrillParams(Strict):
     entry: Pos | None = Field(None, description="where the hole axis enters the part, as seen in the TOP view (placed like any position)")
     entry_height: float | None = Field(None, description="height of the entry point above the back face of the base (e.g. half the thickness for a hole in a side face)")

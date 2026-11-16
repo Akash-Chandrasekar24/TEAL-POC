@@ -106,6 +106,12 @@ def register(mcp):
         return geometry("/api/ext/set_tolerances", spec, 240)
 
     @mcp.tool()
+    def ext_sheet_metal(spec: dict) -> str:
+        """A whole sheet-metal part from its flat pattern: spec {thickness, radius, k_factor?, entities (the flat outline + cut-outs, model
+        coordinates on the front plane), bends: [{p1, p2, fixed: [x, y], angle (rad), radius, up}]} in metres, outermost bend first."""
+        return geometry("/api/ext/sheet_metal", spec, 600)
+
+    @mcp.tool()
     def ext_annotate(spec: dict) -> str:
         """Notes with leaders on faces of the active part: spec {notes: [{point: [x,y,z] m on the face, text}]}. Annotations are switched on."""
         return geometry("/api/ext/annotate", spec, 240)

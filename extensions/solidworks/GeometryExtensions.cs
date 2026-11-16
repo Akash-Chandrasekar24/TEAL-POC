@@ -44,18 +44,186 @@ namespace DrawingToSolidworks
                 // mass properties then fail, and the build was lost)
                 bool closedSketch = model.SketchManager.ActiveSketch != null;
                 if (closedSketch) model.SketchManager.InsertSketch(true);
-                for (int guard = 0; guard < 200 && FeatureCount(model) > keep; guard++)
-                {
-                    var last = LastFeature(model);
-                    model.ClearSelection2(true);
-                    if (last == null || !last.Select2(false, 0)) throw new InvalidOperationException("could not select the feature to remove");
-                    string name = last.Name;
-                    if (!model.Extension.DeleteSelection2((int)swDeleteSelectionOptions_e.swDelete_Absorbed)) throw new InvalidOperationException("could not delete " + name);
-                    deleted.Add(name);
-                }
-                model.ForceRebuild3(false);
+                DeleteAfterCount(model, keep, deleted);
                 return new JObject { ["ok"] = true, ["deleted"] = deleted, ["count"] = FeatureCount(model), ["closed_open_sketch"] = closedSketch };
             });
+        }
+
+        private static void DeleteAfterCount(IModelDoc2 model, int keep, JArray deleted)
+        {
+            for (int guard = 0; guard < 200 && FeatureCount(model) > keep; guard++)
+            {
+                var last = LastFeature(model);
+                model.ClearSelection2(true);
+                if (last == null || !last.Select2(false, 0)) throw new InvalidOperationException("could not select the feature to remove");
+                string name = last.Name;
+                if (!model.Extension.DeleteSelection2((int)swDeleteSelectionOptions_e.swDelete_Absorbed)) throw new InvalidOperationException("could not delete " + name);
+                if (deleted != null) deleted.Add(name);
+            }
+            model.ForceRebuild3(false);
+        }
+
+        // A WHOLE sheet-metal part from its flat pattern: the flat outline with its holes / cut-outs (one sketch) becomes the base flange, then
+        // every bend is a sketched bend along its line. The caller orders the bends from the outermost to the fixed face, so each bend line
+        // still lies on the flat sheet when it is bent. Each bend's direction is checked on the part's box (up = it grows above the sheet,
+        // down = below) and redone flipped when SolidWorks bent it the other way.
+        // spec {thickness, radius, k_factor?, entities: [...] (model coords, z = 0), bends: [{p1, p2, fixed: [x, y], angle (rad), radius, up}]}
+        [HttpPost, Route("api/ext/sheet_metal")]
+        public IHttpActionResult SheetMetal([FromBody] JObject body) { return Run(() => DoSheetMetal(body)); }
+
+        private static HashSet<string> FeatureNames(IModelDoc2 model)
+        {
+            var names = new HashSet<string>();
+            foreach (var o in (model.FeatureManager.GetFeatures(true) as object[]) ?? new object[0])
+            {
+                var f = o as IFeature;
+                if (f != null) names.Add(f.Name);
+            }
+            return names;
+        }
+
+        /// <summary>Delete the features made since `before` (newest first). A sheet-metal part keeps its Flat-Pattern LAST, so "everything
+        /// after N" would hit it: only the new features are taken out.</summary>
+        private static void DeleteNewFeatures(IModelDoc2 model, HashSet<string> before)
+        {
+            if (model.SketchManager.ActiveSketch != null) model.SketchManager.InsertSketch(true);
+            var all = (model.FeatureManager.GetFeatures(true) as object[]) ?? new object[0];
+            for (int i = all.Length - 1; i >= 0; i--)
+            {
+                var f = all[i] as IFeature;
+                if (f == null || before.Contains(f.Name)) continue;
+                model.ClearSelection2(true);
+                if (f.Select2(false, 0)) model.Extension.DeleteSelection2((int)swDeleteSelectionOptions_e.swDelete_Absorbed);
+            }
+            model.ForceRebuild3(false);
+        }
+
+/// <summary>The planar face of the part that contains the point (SelectByID2 by a coordinate missed the top face of a flat sheet).</summary>
+        private static IFace2 FaceAt(IModelDoc2 model, double x, double y, double z)
+        {
+            foreach (object o in (((IPartDoc)model).GetBodies2((int)swBodyType_e.swSolidBody, true) as object[]) ?? new object[0])
+                foreach (object fo in (((IBody2)o).GetFaces() as object[]) ?? new object[0])
+                {
+                    var f = (IFace2)fo;
+                    var s = f.IGetSurface();
+                    if (s == null || !s.IsPlane()) continue;
+                    var p = f.GetClosestPointOn(x, y, z) as double[];
+                    if (p != null && Math.Abs(p[0] - x) + Math.Abs(p[1] - y) + Math.Abs(p[2] - z) < 1e-7) return f;
+                }
+            return null;
+        }
+
+/// <summary>Select the sheet's face AT a point, as a click does: a ray straight down onto it. A bend line splits one face in two, and
+        /// SolidWorks keeps still the side that was clicked (selecting the face object carries no click point: it kept the wrong side).</summary>
+        private static bool SelectFaceAt(IModelDoc2 model, double x, double y, double z, bool append, int mark)
+        {
+            return model.Extension.SelectByRay(x, y, z + 0.05, 0, 0, -1, 0.0001, (int)swSelectType_e.swSelFACES, append, mark, 0);
+        }
+
+        private static double[][] Box(IModelDoc2 model)
+        {
+            var bodies = ((IPartDoc)model).GetBodies2((int)swBodyType_e.swSolidBody, true) as object[];
+            if (bodies == null || bodies.Length == 0) throw new InvalidOperationException("the part has no solid body");
+            double[] lo = { double.MaxValue, double.MaxValue, double.MaxValue }, hi = { double.MinValue, double.MinValue, double.MinValue };
+            foreach (object o in bodies)
+            {
+                var b = (IBody2)o;
+                for (int axis = 0; axis < 3; axis++)
+                    foreach (int sign in new[] { -1, 1 })
+                    {
+                        double[] d = { 0, 0, 0 }; d[axis] = sign;
+                        double x, y, z;
+                        if (!b.GetExtremePoint(d[0], d[1], d[2], out x, out y, out z)) throw new InvalidOperationException("GetExtremePoint failed");
+                        double v = axis == 0 ? x : axis == 1 ? y : z;
+                        if (sign < 0) lo[axis] = Math.Min(lo[axis], v); else hi[axis] = Math.Max(hi[axis], v);
+                    }
+            }
+            return new[] { lo, hi };
+        }
+
+        private static JObject DoSheetMetal(JObject body)
+        {
+            var model = Part();
+            double t = body.Value<double>("thickness"), r = body.Value<double>("radius");
+            if (!(t > 0) || !(r > 0)) throw new InvalidOperationException("sheet metal needs a positive thickness and bend radius");
+            CustomBendAllowance cba = null;
+            double? k = body.Value<double?>("k_factor");
+            if (k.HasValue)
+            {
+                cba = model.FeatureManager.CreateCustomBendAllowance();
+                cba.Type = (int)swBendAllowanceTypes_e.swBendAllowanceKFactor;
+                cba.KFactor = k.Value;
+            }
+            string flat = DrawSketch(model, new JObject { ["datum"] = "front" }, (JArray)body["entities"]);
+            model.ClearSelection2(true);
+            if (!model.Extension.SelectByID2(flat, "SKETCH", 0, 0, 0, false, 0, null, 0)) throw new InvalidOperationException("flat pattern sketch not selectable");
+            int before = FeatureCount(model);
+            var baseFlange = model.FeatureManager.InsertSheetMetalBaseFlange2(t, false, r, 0, 0, false, 0, 0, 0, cba, true,
+                (int)swSheetMetalReliefTypes_e.swSheetMetalReliefRectangular, 0, 0, 0.5, true, false, false, false) as IFeature;
+            Done(model, baseFlange, before);
+            var box = Box(model);
+            double zTop = box[1][2], zBottom = box[0][2];             // the flat sheet: its top face is the side "up" bends rise from
+            var made = new JArray();
+            int n = 0;
+            foreach (JObject bend in (JArray)body["bends"])
+            {
+                n++;
+                var a = P(bend["p1"]); var b = P(bend["p2"]); var fx = (JArray)bend["fixed"];
+                double fixX = fx[0].Value<double>(), fixY = fx[1].Value<double>();
+                bool up = bend.Value<bool>("up");
+                double angle = bend.Value<double>("angle"), radius = bend.Value<double?>("radius") ?? r;
+                JObject done = null; var why = new List<string>();
+                // measured live: SolidWorks makes a sketched bend from the sketch + the fixed face both at mark 0, bend position 1 (position 4
+                // is refused); the other direction is the flip
+                var tries = new List<int[]> { new[] { 0, 0, 1, 0 }, new[] { 0, 0, 1, 1 } };
+                foreach (var tr in tries)
+                {
+                    bool flip = tr[3] == 1;
+                    var mark = FeatureNames(model);
+                    try
+                    {
+                        model.ClearSelection2(true);
+                        if (FaceAt(model, fixX, fixY, zTop) == null || !SelectFaceAt(model, fixX, fixY, zTop, false, 0))
+                            throw new InvalidOperationException("no flat face of the sheet at the fixed point (" + (fixX * 1000).ToString("F2") + ", " + (fixY * 1000).ToString("F2") + ") mm");
+                        model.SketchManager.InsertSketch(true);
+                        var sk = model.SketchManager.ActiveSketch;
+                        if (sk == null) throw new InvalidOperationException("could not open a sketch on the sheet");
+                        var frame = new Frame(sk);
+                        var sa = frame.ToSketch(new[] { a[0], a[1], zTop }); var sb = frame.ToSketch(new[] { b[0], b[1], zTop });
+                        model.SketchManager.AddToDB = true;
+                        var line = model.SketchManager.CreateLine(sa[0], sa[1], 0, sb[0], sb[1], 0);
+                        model.SketchManager.AddToDB = false;
+                        if (line == null) throw new InvalidOperationException("could not draw the bend line");
+                        string sketchName = ((IFeature)sk).Name;
+                        model.SketchManager.InsertSketch(true);
+                        model.ClearSelection2(true);
+                        if (!model.Extension.SelectByID2(sketchName, "SKETCH", 0, 0, 0, false, tr[0], null, 0)) throw new InvalidOperationException("bend sketch not selectable");
+                        if (!SelectFaceAt(model, fixX, fixY, zTop, true, tr[1])) throw new InvalidOperationException("the fixed face is not selectable");
+                        var f = model.FeatureManager.InsertSheetMetal3dBend(angle, false, radius, flip, (short)tr[2], cba) as IFeature;
+                        if (f == null) throw new InvalidOperationException("SolidWorks did not make the sketched bend (marks " + tr[0] + "/" + tr[1] + ", position " + tr[2] + ")");
+                        var after = Box(model);
+                        bool rose = after[1][2] > zTop + t * 0.5, sank = after[0][2] < zBottom - t * 0.5;
+                        if (up ? rose : sank)
+                        {
+                            done = new JObject { ["feature"] = f.Name, ["flipped"] = flip, ["marks"] = tr[0] + "/" + tr[1], ["position"] = tr[2] };
+                            break;
+                        }
+                        why.Add((flip ? "flipped: " : "") + "it bent " + (rose ? "up" : sank ? "down" : "nowhere") + ", not " + (up ? "up" : "down"));
+                        DeleteNewFeatures(model, mark);
+                    }
+                    catch (Exception ex)
+                    {
+                        why.Add((flip ? "flipped: " : "") + ex.Message);
+                        DeleteNewFeatures(model, mark);
+                    }
+                }
+                if (done == null) throw new InvalidOperationException("bend " + n + ": " + string.Join(" | ", why));
+                made.Add(done);
+            }
+            model.EditRebuild3();
+            var final = Box(model);
+            return new JObject { ["ok"] = true, ["base"] = baseFlange.Name, ["bends"] = made,
+                                 ["lo"] = new JArray(final[0][0], final[0][1], final[0][2]), ["hi"] = new JArray(final[1][0], final[1][1], final[1][2]) };
         }
 
         // Drawing vs model in SolidWorks itself: a note with a leader on each measured face ("F2 Ø50.00 | drawing Ø50 | +0.00%"), saved in the part.
