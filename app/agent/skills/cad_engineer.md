@@ -51,7 +51,15 @@ Decide this BEFORE writing items. The family decides the base feature and the or
 - One round view (concentric circles) + one elevation with a centre line = turned. Base: `revolve_base` from the half-section
   (the outline ABOVE the axis, all diameters / 2, all shoulders' positions along the axis).
 - Then: `turned_axial` (an eccentric section: crankpins, cam lobes, offset bosses), `cross_hole` (pin bores across), `turned_keyway`,
-  `radial_blades` (impellers, fins), `drill` for anything else. Webs that are not round: build them as plate features if needed.
+  `radial_blades` (impellers, fins), `drill` for anything else.
+
+**Stacked along an axis, with sections that are NOT round** (crankshafts, camshafts with webs, stepped levers, rotors with arms): build it
+as a STACK of plate features along the axis, not as a revolve. The first web is the base (`extrude_profile_boss` with the web's outline,
+its thickness as depth); then, face after face, `circle_boss` for a journal or a pin (`on` the previous item's top face, at its own axis:
+the main axis for a journal, offset by the throw for a crankpin), `extrude_profile_boss` `on` that face for the next web, and so on to the
+end; flanges and end shafts are `circle_boss` too. A web drawn in a section (R around the pin, R around the counterweight, the angle
+between its sides) is one outline: lines and arcs, or a `tangent_chain` of its circles. Throws that alternate (+44, -44) turn each web.
+Never answer 'cannot follow a revolve': choose this stack instead.
 
 **Sheet metal** (constant thickness everywhere, bends with an inside radius, a flat pattern view, a bend table, "K-factor", "fixed face",
 relief cuts, flanges, tabs, louvers). Bending keeps the thickness; walls meet at rounded bends, never at sharp solid corners.

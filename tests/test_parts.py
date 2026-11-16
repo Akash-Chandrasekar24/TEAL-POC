@@ -238,12 +238,14 @@ def test_let_ai_handle_every_doubt_confirms_at_once_or_rewrites_in_the_backgroun
     with tempfile.TemporaryDirectory() as d, patch.object(server, "PART_LISTS", Path(d)), patch.object(server, "_BATCH_POOL", Now()), patch.object(server, "_PREP_POOL", Now()), patch.object(server, "_PREP_POOL", Now()), \
          patch.object(server, "create_part_list", fake_create), patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)):
         p = lambda pid: {"id": pid, "name": pid, "item": "", "quantity": 1}
-        parts.save_part_list(Path(d), "abcdef123456", p("gear"), asked, "ai")                     # only doubts: confirmed, no model call
+        parts.save_part_list(Path(d), "abcdef123456", p("gear"), asked, "ai")                     # only doubts: the AI decides them (one look), confirmed
         parts.save_part_list(Path(d), "abcdef123456", p("shaft"), {"list_version": "1", "unit": "mm", "projection": "third", "items": [],
                                                                     "needs_human": ["Shaft length?"]}, "ai")   # no steps: the AI rewrites it
         server.resolve_with_ai("abcdef123456", ["gear", "shaft"])
         lists = parts.latest_lists(Path(d), "abcdef123456")
-        assert [c[0] for c in calls] == ["shaft"] and calls[0][1] == [{"question": "Shaft length?", "answer": "AI decides"}] and calls[0][2] is True
+        assert [c[0] for c in calls] == ["gear", "shaft"]                                         # the gear's doubt is DECIDED by the AI, not just confirmed
+        assert calls[0][1] == [{"question": "Gear width: assumed 20?", "answer": server.DECIDE}]
+        assert calls[1][1] == [{"question": "Shaft length?", "answer": server.DECIDE}] and calls[1][2] is True
         assert lists["gear"]["source"] == "designer" and lists["gear"]["check"]["status"] == "ready"
         assert lists["shaft"]["source"] == "designer" and lists["shaft"]["check"]["status"] == "ready"
         assert server.load_batch("abcdef123456")["phase"] == "awaiting_approval"                 # still waits for the build approval
@@ -280,8 +282,19 @@ def test_one_button_builds_everything_without_a_pause_and_does_not_rebuild_an_un
         parts.save_part_list(Path(d), "abcdef123456", {"id": "gear", "name": "gear", "item": "", "quantity": 1}, doubt, "ai")
         server.build_in_solidworks("abcdef123456")
         b = server.load_batch("abcdef123456")
-        assert b["phase"] == "done" and created == ["shaft"] and len(built) == 2          # the gear's doubt was decided, not asked
+        assert b["phase"] == "done" and sorted(created) == ["gear", "shaft"] and len(built) == 2   # the gear's doubt was decided by the AI, not asked
         assert {i["part_id"]: i["status"] for i in b["items"]} == {"gear": "awaiting_review", "shaft": "awaiting_review"}
         assert assembled == ["abcdef123456"] and b["assembly"]["status"] == "build_failed"  # two parts built: the assembly step ran
         server.build_in_solidworks("abcdef123456")                                        # again, nothing changed: nothing is rebuilt
         assert len(built) == 2 and all("built earlier" in i["detail"] for i in server.load_batch("abcdef123456")["items"])
+
+
+def test_a_refused_list_is_sent_back_with_only_the_real_errors_and_the_ai_decides_instead_of_confirming():
+    """Self-repair gets the checker's real errors (an impossible outline), not the questions or gaps the build settles; 'AI decides' tells
+    the AI to look at the drawing again and use a printed value (an engine ring stayed a 'catalogue' Ø100 while Ø85 / Ø79 were printed)."""
+    art = {"draft": {"items": [{"id": "F1"}]}, "check": {"blocking": [
+        "needs_human is not empty (1 items)", "uncertain items: ['F1']", "unsupported items not accepted by a human: ['U1']",
+        "F1 (extrude_profile_boss) params: profile.tangent_chain: Value error, circles C -> D: no tangent line exists"]}}
+    assert server._list_errors(art) == ["F1 (extrude_profile_boss) params: profile.tangent_chain: Value error, circles C -> D: no tangent line exists"]
+    assert server._list_errors({"draft": {"items": []}, "check": {"blocking": []}}) == ["the list has no 3D steps"]
+    assert "printed" in server.DECIDE and "Do not ask again" in server.DECIDE and "segments" in server.REPAIR_HINT

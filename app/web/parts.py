@@ -277,7 +277,10 @@ def part_sheet(result: dict, part: dict, page_png) -> bytes:
                 if (v["page"], no) not in mine and no - 1 < len(boxes) and boxes[no - 1]:
                     ImageDraw.Draw(page).rectangle(tuple(int(round(c)) for c in boxes[no - 1]), fill="white")
             x0, y0, x1, y1 = (int(round(c)) for c in v["box"])
-            crop = page.crop((max(0, x0 - 8), max(0, y0 - 8), x1 + 8, y1 + 8))
+            # a view's box often leaves out its own dimension text (a ring's Ø85 / Ø79 sat beside its round view: the AI then assumed a
+            # 'catalogue' Ø100 ring): the crop reaches 5 % of the page beyond the box; the other parts' views are blanked above
+            pad = max(8, int(0.05 * max(page.size)))
+            crop = page.crop((max(0, x0 - pad), max(0, y0 - pad), min(page.width, x1 + pad), min(page.height, y1 + pad)))   # past the edge: black
         if max(crop.size) < 900:                                            # a small view of a low-resolution scan: enlarge it to be readable
             k = 900 / max(crop.size)
             crop = crop.resize((int(crop.width * k), int(crop.height * k)), Image.LANCZOS)

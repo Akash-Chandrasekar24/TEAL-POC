@@ -751,8 +751,26 @@ def _only_doubts(art) -> bool:
         and all(_DOUBTS_ONLY.search(b) for b in art["check"]["blocking"])
 
 
+DECIDE = ("Decide this yourself, now: look again at EVERY view of the drawing and the dimension text printed near it (a size is often "
+          "printed beside the view, in a section or a detail). Use the printed value when it is there; otherwise choose the most sensible value "
+          "from the parts it fits and the views' proportions, mark it ASSUMED and say why. Do not ask again.")
+
+
 def _ai_decides(art) -> list[dict]:
-    return [{"question": q, "answer": "AI decides"} for q in (art or {}).get("draft", {}).get("needs_human", [])]
+    return [{"question": q, "answer": DECIDE} for q in (art or {}).get("draft", {}).get("needs_human", [])]
+
+
+def _decide_doubts(rid: str, part_id: str, llm_name, art: dict) -> dict:
+    """The AI answers its own questions by looking at the drawing again (one edit of the list), then the list is confirmed. Before this,
+    'AI decides' only confirmed the assumptions as written (an engine's ring stayed a 'catalogue' Ø100 while Ø85 / Ø79 were printed)."""
+    if art["draft"].get("needs_human"):
+        try:
+            again = create_part_list(rid, part_id, llm_name, answers=_ai_decides(art))
+            if again["draft"].get("items") and (again["check"]["status"] == "ready" or _only_doubts(again)):
+                art = again
+        except Exception:                                                        # noqa: BLE001 - the earlier list is still confirmed
+            pass
+    return art if art["check"]["status"] == "ready" else confirm_part_list(rid, part_id, _ai_decides(art))
 
 
 def resolve_with_ai(rid, part_ids, llm_name=None):
@@ -770,7 +788,7 @@ def resolve_with_ai(rid, part_ids, llm_name=None):
     for pid in wanted:
         art = lists.get(pid)
         if _only_doubts(art):
-            confirm_part_list(rid, pid, _ai_decides(art))
+            _decide_doubts(rid, pid, llm_name, art)
         elif not (art and art["check"]["status"] == "ready"):
             rewrite.append(pid)
     with _BATCH_LOCK:
@@ -807,7 +825,7 @@ def _prepare_batch(rid, bid, llm_name):
                     fix = [{"question": "The offline checker refused your last build list. Fix exactly this and keep everything else",
                             "answer": "; ".join(wrong) or "the list had no 3D steps"}]
                     art = create_part_list(rid, item["part_id"], llm_name, answers=(item.get("answers") or []) + fix, work_it_out=True)
-                if _only_doubts(art):
+                if _only_doubts(art):                                            # it was just rewritten WITH the decide answers: confirm
                     confirm_part_list(rid, item["part_id"], _ai_decides(art))
             else:
                 create_part_list(rid, item["part_id"], llm_name)
@@ -911,7 +929,7 @@ def _one_flow(rid, bid, llm_name):
                     art = create_part_list(rid, item["part_id"], llm_name)
                 if art["check"]["status"] != "ready":
                     if _only_doubts(art):
-                        art = confirm_part_list(rid, item["part_id"], _ai_decides(art))
+                        art = _decide_doubts(rid, item["part_id"], llm_name, art)
                     else:
                         art = create_part_list(rid, item["part_id"], llm_name, answers=_ai_decides(art), work_it_out=True)
                         wrong = [b for b in art["check"]["blocking"] if not _DOUBTS_ONLY.search(b)]
@@ -919,7 +937,7 @@ def _one_flow(rid, bid, llm_name):
                             fix = [{"question": "The offline checker refused your last build list. Fix exactly this and keep everything else",
                                     "answer": "; ".join(wrong) or "the list had no 3D steps"}]
                             art = create_part_list(rid, item["part_id"], llm_name, answers=_ai_decides(art) + fix, work_it_out=True)
-                        if _only_doubts(art):
+                        if _only_doubts(art):                                    # rewritten WITH the decide answers already: confirm
                             art = confirm_part_list(rid, item["part_id"], _ai_decides(art))
                 if art["check"]["status"] == "ready":
                     mark(item, status="listed", list_id=art["id"], accepted_gaps=[u["id"] for u in art["check"]["unsupported"]])
@@ -1275,7 +1293,7 @@ def _part(result: dict, part_id: str) -> dict:
     return part
 
 
-def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers=None, work_it_out=False) -> dict:
+def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers=None, work_it_out=False, repair=True) -> dict:
     """One model call: the part's views (or, with none of its own, the assembly views) + the reviewed measurements + the designer's answers
     -> a build list (full feature menu). work_it_out: the AI may infer unprinted sizes, each marked ASSUMED for the designer to confirm.
     Validated offline; nothing is built."""
@@ -1350,7 +1368,30 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
         parse_reply(draft)
     except ValueError:
         pass                                                                    # kept and reported by the check: the reviewer sees why it is not buildable
-    return save_part_list(PART_LISTS, rid, part, draft, "ai", provider)
+    art = save_part_list(PART_LISTS, rid, part, draft, "ai", provider)
+    if client is None and repair:
+        # the offline check refused the list (an impossible outline, a wrong parameter): the AI gets the exact words and corrects it, at most
+        # twice. Seen: a connecting rod's base was a tangent_chain whose circles had no tangent line, and the whole part was not built.
+        for _ in range(2):
+            wrong = _list_errors(art)
+            if not wrong:
+                break
+            fix = [{"question": "The app's offline check REFUSED your build list. Correct exactly this and keep every other item",
+                    "answer": "; ".join(wrong)[:1500] + ". " + REPAIR_HINT}]
+            art = create_part_list(rid, part_id, llm_name, answers=(answers or []) + fix, work_it_out=work_it_out, repair=False)
+    return art
+
+
+REPAIR_HINT = ("Change only what the error names. An outline that cannot be made as written (a tangent_chain whose circles have no tangent "
+               "line, an arc that does not close) is written another way from the same printed sizes: explicit line and arc segments, or a "
+               "polygon with corner radii. A parameter out of range is corrected from the drawing. Never drop the base: the part must still be built.")
+
+
+def _list_errors(art: dict) -> list[str]:
+    """What the check refused, other than the AI's questions / assumptions and the gaps (those are settled at build time)."""
+    if not art["draft"].get("items") and art["draft"].get("status") != "stopped":
+        return ["the list has no 3D steps"]
+    return [b for b in art["check"].get("blocking", []) if not _DOUBTS_ONLY.search(b) and not b.startswith("unsupported items")]
 
 
 def confirm_part_list(rid: str, part_id: str, answers=None) -> dict:
