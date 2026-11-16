@@ -30,7 +30,12 @@ carefully the first time.
    other faces of the base (top, bottom, left, right), or for an irregular layout, write EVERY position explicitly in `positions` and mark the item `derived` when you worked a position out.
    Check the copy count against the drawing ("6X" = `count` 6). If the drawing does not show how the copies are spaced, mark the item `uncertain`.
 9. **Do not invent features.** Write only what is drawn or noted.
-10. **Projection must be stated.** Look for the first-angle or third-angle symbol. If it is missing, set `projection` to `"unknown"` and add it to `needs_human`.
+10. **Projection must be decided, by you.** Use the first- or third-angle symbol when it is readable. When it is missing or unreadable (and the
+    designer gave none), work it out from the sheet and DECIDE: where the plan (top) view sits relative to the front view (above = third angle,
+    below = first angle), which side the side view is on (the right side drawn to the right of the front = third angle, to the left = first
+    angle), which edges are hidden (dashed) in each view, the section arrows and the pictorial view. Set `projection` to `"first"` or `"third"`
+    and write the evidence in `projection_reasoning` (one or two sentences). `"unknown"` only for a sheet with a single view, where the
+    projection changes nothing. Never put the projection in `needs_human`.
 11. **Keep it short.** Notes are one short sentence. No explanations of your work.
 12. **List what you see before you use it.** First copy every dimension text you can read into `seen_dimensions`, exactly as printed
     (for example `"100"`, `"Ø8 THRU"`, `"R5"`, `"4X Ø8"`). Every number you then use in `params` must appear in `seen_dimensions`, or the item must be
@@ -168,6 +173,7 @@ The tab F6 uses the plain `right` face of the base and sits in the middle of tha
   "part_name": "",
   "unit": "mm | inch",
   "projection": "first | third | unknown",
+  "projection_reasoning": "the symbol, or the layout evidence you decided from",
   "seen_dimensions": [],
   "items": [
     {"id": "F1", "feature": "<a menu name>", "printed": "", "uncertain": false, "derived": false, "derived_from": "", "note": "", "params": {}}
@@ -190,7 +196,7 @@ is added by a human at approval: **never write it.** The same goes for a hole's 
 
 ## When to ask a human
 
-Add one short line to `needs_human` for: an unknown projection, an unclear unit, any unreadable or conflicting number, a note you cannot understand,
+Add one short line to `needs_human` for: an unclear unit, any unreadable or conflicting number, a note you cannot understand,
 anything in `unsupported`. Keep writing the rest of the list.
 
 ## Checklist before you reply

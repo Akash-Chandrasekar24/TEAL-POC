@@ -23,7 +23,10 @@ SolidWorks (volume, bodies, positions) and tells you what really happened.
    - Third angle (US, most CAD templates): the TOP view is drawn ABOVE the front view, the RIGHT side view to the RIGHT of the front.
      Symbol: the truncated cone drawn with its small end toward the circles.
    - First angle (ISO / Europe, India): the TOP view is drawn BELOW the front view, the RIGHT side view to the LEFT.
-   - No symbol or unreadable: decide from the layout (where the plan view sits relative to the elevation) and say so.
+   - No symbol or unreadable, and the designer said nothing: YOU decide. Reason from the layout (the plan view above or below the front
+     view, the side view on the same or the opposite side), the hidden (dashed) edges each view must show, section arrows and the
+     pictorial view; check the conclusion by matching two or three features between views. Commit to first or third angle, write the
+     evidence, and build. An unknown projection never stops the work.
    - The same edge has the same length in every view where it is seen true size: use that to match features between views.
 4. **Sections**: the cutting line (A-A with arrows: the arrows show the viewing direction) is in the PARENT view; hatching = solid
    material that was cut; an unhatched region inside a section is a hole or cavity. Different hatch angles = different parts (assemblies).

@@ -163,7 +163,7 @@ namespace DrawingToSolidworks
             Done(model, baseFlange, before);
             var box = Box(model);
             double zTop = box[1][2], zBottom = box[0][2];             // the flat sheet: its top face is the side "up" bends rise from
-            var made = new JArray();
+            var made = new JArray(); var skipped = new JArray();
             int n = 0;
             foreach (JObject bend in (JArray)body["bends"])
             {
@@ -217,12 +217,17 @@ namespace DrawingToSolidworks
                         DeleteNewFeatures(model, mark);
                     }
                 }
-                if (done == null) throw new InvalidOperationException("bend " + n + ": " + string.Join(" | ", why));
+                if (done == null)
+                {
+                    // one refused bend must not lose the part: bending keeps the volume, so the rest is built and this bend is reported
+                    skipped.Add(new JObject { ["n"] = n, ["tag"] = bend.Value<string>("tag") ?? "", ["why"] = string.Join(" | ", why) });
+                    continue;
+                }
                 made.Add(done);
             }
             model.EditRebuild3();
             var final = Box(model);
-            return new JObject { ["ok"] = true, ["base"] = baseFlange.Name, ["bends"] = made,
+            return new JObject { ["ok"] = true, ["base"] = baseFlange.Name, ["bends"] = made, ["skipped"] = skipped,
                                  ["lo"] = new JArray(final[0][0], final[0][1], final[0][2]), ["hi"] = new JArray(final[1][0], final[1][1], final[1][2]) };
         }
 

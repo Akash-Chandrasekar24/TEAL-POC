@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from app.geometry import profile_area
 from app.verify import Expect
-from .base import FeatureContext, FeatureRequestError, FeatureResult, check_closed, factor
+from .base import FeatureContext, FeatureRequestError, FeatureResult, Probe, check_closed, factor
 from .ext_features import _mid
 from .turned_ops import MM3_PER_UNIT3
 
@@ -99,7 +99,7 @@ class SheetMetalPart:
                     break
             if point is None:
                 raise FeatureRequestError(f"bend {tag or k + 1}: no spot of sheet beside its line on the fixed side (holes everywhere)")
-            out.append((depth, k, (x1, y1, x2, y2), up, angle, radius, point))
+            out.append((depth, k, (x1, y1, x2, y2), up, angle, radius, point, tag))
         return sorted(out, key=lambda o: (-o[0], o[1]))
 
     def flat_area(self) -> float:
@@ -128,7 +128,7 @@ class SheetMetalPart:
             return out
         entities = ents(self.outline) + [e for cut in self.cutouts for e in ents(cut)]
         bends = [{"p1": P(l[0], l[1]), "p2": P(l[2], l[3]), "fixed": [pt[0] * f, pt[1] * f], "angle": math.radians(angle),
-                  "radius": (radius or self.bend_radius) * f, "up": bool(up)} for _, _, l, up, angle, radius, pt in self.order()]
+                  "radius": (radius or self.bend_radius) * f, "up": bool(up), "tag": tag or ""} for _, _, l, up, angle, radius, pt, tag in self.order()]
         spec = {"thickness": self.thickness * f, "radius": self.bend_radius * f, "entities": entities, "bends": bends}
         if self.k_factor is not None:
             spec["k_factor"] = self.k_factor
@@ -145,5 +145,16 @@ class SheetMetalPart:
     async def apply(self, ctx: FeatureContext) -> FeatureResult:
         spec = self.spec()
         res = FeatureResult(self.NAME)
-        res.verdicts.append(await ctx.verifier.run_step(self.label, lambda: ctx.sw.geometry("ext_sheet_metal", spec), self.expected()))
+        got = {}
+
+        async def action():
+            got["r"] = await ctx.sw.geometry("ext_sheet_metal", spec)
+            return got["r"]
+        res.verdicts.append(await ctx.verifier.run_step(self.label, action, self.expected()))
+        try:                                                      # a bend SolidWorks refused is left out (the rest is built): flagged here
+            skipped = got["r"].json().get("skipped", []) if got.get("r") is not None and got["r"].ok else []
+        except Exception:                                         # noqa: BLE001 - only the report
+            skipped = []
+        for b in skipped:
+            res.probes.append(Probe(f"bend {b.get('tag') or b.get('n')}", False, f"not bent: {str(b.get('why'))[:300]}"))
         return res

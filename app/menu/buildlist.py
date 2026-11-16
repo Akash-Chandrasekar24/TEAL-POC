@@ -88,6 +88,7 @@ class BuildList(Strict):
     part_name: str = ""
     unit: Literal["mm", "inch"]
     projection: Literal["first", "third", "unknown"]
+    projection_reasoning: str = ""                                   # the symbol, or the layout evidence the AI decided from
     seen_dimensions: list[str] = []
     items: list[Item]
     unsupported: list[Unsupported] = []
