@@ -534,6 +534,10 @@ class Runner:
         """True = SolidWorks is not usable any more: the run stops (report.failure says why)."""
         if self.agent is None or mark is None or not hasattr(bl, "model_copy"):
             return False
+        if p.item.feature == "fillet_chamfer_edges":
+            # a rounding / chamfer is finish, not shape: it is flagged for the designer. Seen on a crankshaft: 16 failed R3 fillets used the
+            # agent's whole budget, and the review that adds MISSING geometry (a flange) got no call at all
+            return False
         try:
             await self._agent_fix_step(bl, ctx, built, covers, p, rep, mark, report)
             return False

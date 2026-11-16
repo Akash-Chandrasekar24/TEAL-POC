@@ -75,6 +75,7 @@ def detect_parts(result: dict) -> list[dict]:
             hit = parts[0]
         if hit is not None and v["box"]:
             hit["views"].append(v)
+    _apply_view_map(result, parts, views)
     used = set()
     for p in parts:
         base = _slug(p["name"])
@@ -84,6 +85,92 @@ def detect_parts(result: dict) -> list[dict]:
         used.add(pid)
         p["id"] = pid
     return parts
+
+
+# ------------------------------------------------------------------ which part each view shows (one AI call per drawing)
+# Name matching misses every view whose label does not name its part: "SECTION A-A" of the piston, the unlabelled main view of a connecting
+# rod (seen on a 4-cylinder engine sheet: the rod got only a small bolting view and its list was written from the cap's sizes). The AI sees
+# the sheet with each view boxed and numbered and says which part every view shows, and how many of each part the assembly uses.
+VIEWS_PROMPT = """The picture is an engineering drawing sheet. Every view on it is boxed in red and numbered "page.view" (e.g. 1.4).
+The parts on the sheet are listed below. For EVERY numbered view say which ONE part it shows, by its exact name from the list:
+section views belong to the part whose view carries their cutting line (SECTION A-A belongs to the part with the A-A arrows), an
+unlabelled view belongs to the part it draws (match shapes and sizes with the labelled views). Use "assembly" for an isometric, exploded or
+assembled view that shows several parts, and "other" for a symbol, title block or table.
+Also give how many of each part ONE assembly uses, from the assembly / isometric view, the parts list and the title (a 4-cylinder engine has
+4 pistons), with the evidence.
+Return JSON only: {"views": [{"view": "1.4", "part": "<exact part name>|assembly|other", "why": "..."}],
+"quantities": [{"part": "<exact part name>", "quantity": 4, "evidence": "..."}]}"""
+
+
+def view_map_path(rid: str) -> Path:
+    from app import config
+    return config.PROJECT_ROOT / "storage/parts" / rid / "views.json"
+
+
+def numbered_sheet(result: dict, page_png) -> bytes:
+    """Every page with each view's box drawn in red and numbered page.view (one picture: the model takes one per call)."""
+    from PIL import Image, ImageDraw
+    pages = []
+    for p in result.get("pages") or []:
+        png = page_png(p["no"])
+        if png is None:
+            continue
+        im = Image.open(io.BytesIO(png)).convert("RGB")
+        k = max(1.0, 1600 / max(im.size))
+        im = im.resize((int(im.width * k), int(im.height * k)), Image.LANCZOS)
+        draw = ImageDraw.Draw(im)
+        for i, v in enumerate((p.get("read") or {}).get("views") or []):
+            no, boxes = v.get("no", i + 1), p.get("boxes") or []
+            if no - 1 < len(boxes) and boxes[no - 1]:
+                x0, y0, x1, y1 = (c * k for c in boxes[no - 1])
+                draw.rectangle((x0, y0, x1, y1), outline=(220, 0, 0), width=3)
+                draw.rectangle((x0, y0, x0 + 46, y0 + 22), fill=(220, 0, 0))
+                draw.text((x0 + 4, y0 + 4), f"{p['no']}.{no}", fill="white")
+        pages.append(im)
+    if not pages:
+        raise ValueError("The drawing's pages are not available")
+    w, h = max(i.width for i in pages), sum(i.height for i in pages) + 10 * (len(pages) - 1)
+    sheet = Image.new("RGB", (w, h), "white")
+    y = 0
+    for im in pages:
+        sheet.paste(im, (0, y)); y += im.height + 10
+    buf = io.BytesIO()
+    sheet.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _apply_view_map(result: dict, parts: list[dict], views: list[dict]) -> None:
+    """Add the views name matching left out to the part the AI said they show; fill a quantity the sheet does not print."""
+    path = view_map_path(str(result.get("id", ""))) if ID.fullmatch(str(result.get("id", ""))) else None
+    if path is None or not path.is_file() or len(parts) < 2:
+        return
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    by_core = {_core(p["name"]): p for p in parts}
+    taken = {(v["page"], v["no"]) for p in parts for v in p["views"]}
+    for v in views:
+        part = by_core.get(_core((saved.get("views") or {}).get(f"{v['page']}.{v['no']}", "")))
+        if part is not None and v["box"] and (v["page"], v["no"]) not in taken:
+            part["views"].append(v)
+    for p in parts:
+        q = (saved.get("quantities") or {}).get(_core(p["name"]))
+        if p.get("quantity") in (None, "") and isinstance(q, int) and q > 0:
+            p["quantity"], p["quantity_from"] = q, "AI: assembly view / title"
+
+
+def parse_view_map(reply: dict, parts: list[dict]) -> dict:
+    """The model's answer -> {"views": {"1.4": "<part name>"}, "quantities": {"<part core>": n}}; unknown names are dropped."""
+    names = {_core(p["name"]): p["name"] for p in parts}
+    names.setdefault("assembly", "assembly")                                    # the isometric / exploded / assembled views
+    views = {str(v.get("view")): names[_core(v.get("part", ""))] for v in reply.get("views") or []
+             if isinstance(v, dict) and _core(v.get("part", "")) in names}
+    quantities = {}
+    for q in reply.get("quantities") or []:
+        if isinstance(q, dict) and _core(q.get("part", "")) in names and isinstance(q.get("quantity"), int) and q["quantity"] > 0:
+            quantities[_core(q["part"])] = q["quantity"]
+    return {"views": views, "quantities": quantities, "evidence": reply}
 
 
 # ------------------------------------------------------------------ SolidWorks on this machine
@@ -174,13 +261,23 @@ def part_sheet(result: dict, part: dict, page_png) -> bytes:
     """The part's views stacked into one picture (the model takes one picture per call)."""
     from PIL import Image, ImageDraw
     crops = []
+    mine = {(v["page"], v["no"]) for v in part["views"]}
     for v in part["views"][:8]:
         png = page_png(v["page"])
         if png is None:
             continue
         with Image.open(io.BytesIO(png)) as im:
+            page = im.convert("RGB")
+            # blank the OTHER views that reach into this crop: a crankshaft's box took in the piston pin's "Ø33.8" and "82", and the
+            # SolidWorks agent added a Ø33.8 x 82 shaft to the crankshaft
+            pg = next((p for p in result.get("pages") or [] if p["no"] == v["page"]), {})
+            boxes = pg.get("boxes") or []
+            for i, other in enumerate((pg.get("read") or {}).get("views") or []):
+                no = other.get("no", i + 1)
+                if (v["page"], no) not in mine and no - 1 < len(boxes) and boxes[no - 1]:
+                    ImageDraw.Draw(page).rectangle(tuple(int(round(c)) for c in boxes[no - 1]), fill="white")
             x0, y0, x1, y1 = (int(round(c)) for c in v["box"])
-            crop = im.convert("RGB").crop((max(0, x0 - 8), max(0, y0 - 8), x1 + 8, y1 + 8))
+            crop = page.crop((max(0, x0 - 8), max(0, y0 - 8), x1 + 8, y1 + 8))
         if max(crop.size) < 900:                                            # a small view of a low-resolution scan: enlarge it to be readable
             k = 900 / max(crop.size)
             crop = crop.resize((int(crop.width * k), int(crop.height * k)), Image.LANCZOS)
@@ -293,14 +390,27 @@ def reader_context(result: dict, part: dict, model: dict, answers: list | None =
 
 
 def assembly_views(result: dict) -> list[dict]:
-    """The assembly / section / exploded views of the sheet: where a part with no view of its own is still drawn."""
+    """The assembly / section / exploded views of the sheet: where a part with no view of its own is still drawn. With a view map (one AI
+    call, view_map_path) the views it calls "assembly" are used: an UNLABELLED isometric of the whole engine is one, a part's own section is not."""
+    saved = {}
+    path = view_map_path(str(result.get("id", ""))) if ID.fullmatch(str(result.get("id", ""))) else None
+    if path is not None and path.is_file():
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8")).get("views") or {}
+        except (OSError, ValueError):
+            saved = {}
     out = []
     for p in result.get("pages") or []:
         for i, v in enumerate((p.get("read") or {}).get("views") or []):
             no, boxes = v.get("no", i + 1), p.get("boxes") or []
             label = v.get("label") or ""
-            if (_ASSEMBLY_VIEW.search(label) or re.search(r"\bsection\b", label, re.I)) and no - 1 < len(boxes):
-                out.append({"page": p["no"], "no": no, "label": label, "box": boxes[no - 1]})
+            if "assembly" in saved.values():
+                wanted = saved.get(f"{p['no']}.{no}") == "assembly"
+            else:
+                wanted = bool(_ASSEMBLY_VIEW.search(label) or re.search(r"\bsection\b", label, re.I)
+                              or str(v.get("type", "")).lower() in ("iso", "isometric", "exploded", "assembly"))
+            if wanted and no - 1 < len(boxes):
+                out.append({"page": p["no"], "no": no, "label": label or "assembly view", "box": boxes[no - 1]})
     return out
 
 

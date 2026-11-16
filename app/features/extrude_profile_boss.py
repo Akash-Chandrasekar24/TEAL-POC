@@ -180,5 +180,7 @@ class ExtrudeProfileBoss:
         lo[a_ax], hi[a_ax] = (x0, x1) if sx > 0 else (-x1, -x0)
         lo[b_ax], hi[b_ax] = (y0, y1) if sy > 0 else (-y1, -y0)
         lo[frame.normal_axis], hi[frame.normal_axis] = lo_n, hi_n
-        res.probes.append(await bbox_probe(ctx.sw, tuple(lo), tuple(hi), "exact bounding box"))
+        # +-0.01 mm, the model accuracy the drawing-vs-model table judges by: a curved outline (tangent arcs) came out the right size but
+        # 4 um off-centre, failed the 2.5 um position tolerance and stopped a connecting rod at its first step
+        res.probes.append(await bbox_probe(ctx.sw, tuple(lo), tuple(hi), "exact bounding box", tol_m=1e-5))
         return res

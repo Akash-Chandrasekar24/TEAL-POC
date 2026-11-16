@@ -778,7 +778,8 @@ def resolve_with_ai(rid, part_ids, llm_name=None):
         if current and current.get("phase") in ("preparing", "building") and current["id"] in _ACTIVE:
             raise ValueError("Build lists are being written already: wait for them to finish")
         if not rewrite:
-            batch = {**(current or {"id": uuid.uuid4().hex[:12], "result_id": rid, "items": [], "llm": llm_name}), "phase": "awaiting_approval"}
+            batch = {**{k: v for k, v in (current or {"id": uuid.uuid4().hex[:12], "result_id": rid, "items": [], "llm": llm_name}).items()
+                        if k != "error"}, "phase": "awaiting_approval"}                  # an old run's error is not this batch's
             batch["items"] = [{"part_id": p["id"], "name": p["name"], "status": "listed"} for p in known.values()]
             _save_batch(rid, batch)
             return batch
@@ -1074,7 +1075,7 @@ def assemble_parts(rid: str, llm_name=None, client=None) -> dict:
     from app.assembly.assets import import_model
     from app.assembly.from_parts import built_part, draft_placements, plan_from_parts
     from app.llm import make_client
-    from app.web.parts import assembly_views, detect_parts, part_sheet
+    from app.web.parts import assembly_views, detect_parts, part_sheet, whole_pages
     result = result_with_design(rid)
     batch = load_batch(rid) or {}
     known = {p["id"]: p for p in detect_parts(result)}
@@ -1095,7 +1096,10 @@ def assemble_parts(rid: str, llm_name=None, client=None) -> dict:
     if not views:
         raise ValueError("The sheet has no assembly or section view to place the parts from")
     shas = {pg["no"]: pg["sha"] for pg in result["pages"]}
-    picture = part_sheet(result, {"name": "assembly", "views": views}, lambda no: default_cache().get_blob(shas[no]))
+    page_png = lambda no: default_cache().get_blob(shas[no])
+    # one or two sheets: the WHOLE sheet (the placing sizes sit on the part views: crank throws, journal spacing, rod length); more: the crops
+    picture = (whole_pages(result, page_png) if len(result["pages"]) <= 2
+               else part_sheet(result, {"name": "assembly", "views": views}, page_png))
     attempt = uuid.uuid4().hex[:12]
     with trace.run(attempt, RUNS / attempt, save_files=config.TRACE_FILES, drawing_result=rid, workflow="assembly_from_parts"):
         llm = client if client is not None else make_client(llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER, reasoning_effort=config.CAD_REASONING_EFFORT)
@@ -1175,6 +1179,34 @@ def _hand_drawing_to_agent(rid: str, part_id: str, job_id: str) -> None:
         pass
 
 
+_VIEW_MAP_LOCK = threading.Lock()
+
+
+def ensure_view_map(rid: str, llm_name=None, client=None) -> None:
+    """Once per drawing with several parts: one model call says which part every view shows (section views, unlabelled views) and how many
+    of each part the assembly uses (saved as storage/parts/<rid>/views.json, read by detect_parts). A failed call is not fatal."""
+    from app.web.parts import detect_parts, numbered_sheet, parse_view_map, view_map_path, VIEWS_PROMPT
+    path = view_map_path(rid)
+    with _VIEW_MAP_LOCK:                                                        # build lists start in parallel: one call, not three
+        if path.is_file():
+            return
+        result = result_with_design(rid)
+        parts = detect_parts(result)
+        if len(parts) < 2:
+            return
+        try:
+            from app.llm import make_client
+            from app.llm.base import FilePart
+            shas = {p["no"]: p["sha"] for p in result["pages"]}
+            picture = numbered_sheet(result, lambda no: default_cache().get_blob(shas[no]))
+            client = client or make_client(llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER, reasoning_effort="medium")
+            names = "\n".join(f"- {p['name']}" for p in parts)
+            reply = client.generate_json(VIEWS_PROMPT + "\n\nParts on this sheet:\n" + names, [FilePart(picture, "image/png"), "Which part does each view show?"])
+            write_json(path, parse_view_map(reply.data if isinstance(reply.data, dict) else {}, parts))
+        except Exception as ex:                                                 # noqa: BLE001 - name matching still works without it
+            print(f"view map for {rid} not made: {type(ex).__name__}: {str(ex)[:200]}")
+
+
 def _part(result: dict, part_id: str) -> dict:
     from app.web.parts import detect_parts
     part = next((p for p in detect_parts(result) if p["id"] == part_id), None)
@@ -1192,6 +1224,8 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
     from app.menu import parse_reply
     from app.web.parts import assembly_views, part_sheet, reader_context, save_part_list
     from app.agent.prompts import reader_system
+    if client is None:                                                          # (a test's scripted client answers the list only)
+        ensure_view_map(rid, llm_name)                                          # the part's section / unlabelled views come with it
     result = result_with_design(rid)
     if any("human review required" in q or "confirm this" in q for q in result["drawing_model"].get("issues", [])):
         raise ValueError("Approve the measurements on the Review step first: the build list uses the reviewed values")
