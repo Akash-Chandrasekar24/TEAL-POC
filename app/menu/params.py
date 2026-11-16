@@ -516,6 +516,8 @@ class FormedFlange(Strict):
         None, description="the flange face's shape when it is not a rectangle, as points in ITS frame: x along its edge from edge point 1 "
                           "(0 .. edge length), y = distance from the parent's outer surface (0 at the bend .. length); it must contain [0, 0] and "
                           "[edge length, 0]")
+    corner_radius: float | None = Field(None, gt=0, description="round the flange's free corners (not those on its bend) with this "
+                                                                 "radius; half its width = a fully round end (a rounded tab, a round-topped wall)")
     cutouts: list[FlatCutout] = Field([], description="holes / slots / cut-outs on this flange face, in ITS frame (as above)")
     flanges: list["FormedFlange"] = Field([], description="flanges on this flange's edges (tabs, feet), each in THIS flange's frame")
     tag: str = Field("", description="the bend's label on the drawing (A, B, ...)")

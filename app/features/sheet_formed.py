@@ -55,8 +55,8 @@ class Unfolder:
         self.cutouts: list[list[dict]] = []
         self.bends: list[tuple] = []
 
-    def _splice(self, e1: tuple, e2: tuple, path: list[tuple]) -> tuple:
-        """Replace the stretch e1..e2 of the outline's straight edge with path (e1 -> ... -> e2). Returns the outward normal there."""
+    def _splice(self, e1: tuple, e2: tuple, path: list[dict]) -> None:
+        """Replace the stretch e1..e2 of the outline's straight edge with the path segments (lines / arcs from e1 round to e2)."""
         for i, s in enumerate(self.outline):
             if s["kind"] != "line":
                 continue
@@ -64,9 +64,10 @@ class Unfolder:
             if t1 is None or t2 is None:
                 continue
             if t1 > t2:                                             # the outline runs the other way along this edge
-                e1, e2, path, t1, t2 = e2, e1, path[::-1], t2, t1
+                e1, e2, t1, t2 = e2, e1, t2, t1
+                path = [_reverse(p) for p in path[::-1]]
             a, b = (s["x1"], s["y1"]), (s["x2"], s["y2"])
-            new = ([_line(a, e1)] if t1 > 1e-9 else []) + [_line(p, q) for p, q in zip(path, path[1:])] + ([_line(e2, b)] if t2 < 1 - 1e-9 else [])
+            new = ([_line(a, e1)] if t1 > 1e-9 else []) + path + ([_line(e2, b)] if t2 < 1 - 1e-9 else [])
             self.outline[i:i + 1] = new
             return
         raise FeatureRequestError(f"no straight edge of its parent face runs through {tuple(round(v, 3) for v in e1)} and "
@@ -110,14 +111,64 @@ class Unfolder:
         if abs(ring[1][0] - w) < 1e-6 and abs(ring[1][1]) < 1e-6:   # it went straight along the bend: go round the other way
             ring = [ring[0]] + ring[1:][::-1]
         iw = next(i for i, p in enumerate(ring) if abs(p[0] - w) < 1e-6 and abs(p[1]) < 1e-6)
-        path = [mine(p[0], p[1], rigid=False) for p in ring[:iw + 1]]
+        flip = (u[0] * n[1] - u[1] * n[0]) < 0                      # a mirrored frame turns arcs the other way
+        local = _rounded_path([tuple(p) for p in ring[:iw + 1]], getattr(fl, "corner_radius", None) or 0.0)
+        path = []
+        for s in local:                                             # the free sides: lines and arcs, laid on the flat pattern
+            if s["kind"] == "line":
+                path.append(_line(mine(s["x1"], s["y1"], rigid=False), mine(s["x2"], s["y2"], rigid=False)))
+            else:
+                (cx, cy), (x1, y1), (x2, y2) = mine(s["cx"], s["cy"]), mine(s["x1"], s["y1"]), mine(s["x2"], s["y2"])
+                path.append({"kind": "arc", "cx": cx, "cy": cy, "x1": x1, "y1": y1, "x2": x2, "y2": y2, "dir": -s["dir"] if flip else s["dir"]})
         self._splice(e1, e2, path)
         self.bends.append(((e1[0], e1[1], e2[0], e2[1]), fl.direction == "up", fl.angle_deg, fl.radius, fl.tag))
-        flip = (u[0] * n[1] - u[1] * n[0]) < 0                      # a mirrored frame turns arcs the other way
         for c in fl.cutouts:
             self.cutouts.append(_map_cutout(c, mine, flip))
         for child in fl.flanges:
             self.add(child, mine, fl.direction == "up")
+
+
+def _reverse(s: dict) -> dict:
+    t = {**s, "x1": s["x2"], "y1": s["y2"], "x2": s["x1"], "y2": s["y1"]}
+    if s["kind"] == "arc":
+        t["dir"] = -s["dir"]
+    return t
+
+
+def _rounded_path(pts: list[tuple], r: float) -> list[dict]:
+    """The free sides of a flange (points from [0, 0] round to [w, 0], its own frame) as lines, every corner OFF the bend line rounded with
+    radius r (r = half the width: a fully round end). Corners on the bend line stay sharp."""
+    if r <= 0 or len(pts) < 3:
+        return [_line(a, b) for a, b in zip(pts, pts[1:])]
+    out, cur = [], pts[0]
+    for k in range(1, len(pts) - 1):
+        a, p, b = pts[k - 1], pts[k], pts[k + 1]
+        if p[1] <= 1e-9:                                            # on the bend line: sharp
+            out.append(_line(cur, p)); cur = p
+            continue
+        ua = ((a[0] - p[0]), (a[1] - p[1])); ub = ((b[0] - p[0]), (b[1] - p[1]))
+        la, lb = math.hypot(*ua), math.hypot(*ub)
+        ua, ub = (ua[0] / la, ua[1] / la), (ub[0] / lb, ub[1] / lb)
+        cos = max(-1.0, min(1.0, ua[0] * ub[0] + ua[1] * ub[1]))
+        half = math.acos(cos) / 2
+        if half < 1e-6 or abs(half - math.pi / 2) < 1e-6:          # straight on: nothing to round
+            out.append(_line(cur, p)); cur = p
+            continue
+        d = r / math.tan(half)
+        if d > min(la, lb) + 1e-6:
+            raise FeatureRequestError(f"a flange corner radius {r:g} does not fit its {min(la, lb):g} long side")
+        t1 = (p[0] + ua[0] * d, p[1] + ua[1] * d)
+        t2 = (p[0] + ub[0] * d, p[1] + ub[1] * d)
+        bis = (ua[0] + ub[0], ua[1] + ub[1]); lbis = math.hypot(*bis)
+        c = (p[0] + bis[0] / lbis * r / math.sin(half), p[1] + bis[1] / lbis * r / math.sin(half))
+        turn = (p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0])
+        if math.dist(cur, t1) > 1e-9:
+            out.append(_line(cur, t1))
+        out.append({"kind": "arc", "cx": c[0], "cy": c[1], "x1": t1[0], "y1": t1[1], "x2": t2[0], "y2": t2[1], "dir": 1 if turn > 0 else -1})
+        cur = t2
+    if math.dist(cur, pts[-1]) > 1e-9:
+        out.append(_line(cur, pts[-1]))
+    return out
 
 
 def _map_cutout(c, to_flat, flip: bool) -> list[dict]:

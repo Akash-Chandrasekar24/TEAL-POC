@@ -892,8 +892,9 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
         "pattern is not dimensioned; the app unfolds it.",
         "Give the base face's outline (outside dimensions, from the top view) and its holes; then each flange: the stretch of its parent's edge "
         "it stands on, its OUTSIDE length (parent's outer surface to its tip), up / down (the bend table), angle, its own outline when it is not a "
-        "rectangle (a rounded or stepped tab), its holes and its own flanges, each in its parent's frame (x along the edge, y = distance from the "
-        "parent's outer surface). Thickness, inside bend radius, K-factor. It is the only item of the list.",
+        "rectangle (a stepped tab) or its corner_radius (a rounded tab end, a round-topped wall), its holes and its own flanges, each in its parent's "
+        "frame (x along the edge, y = distance from the parent's outer surface). Thickness, inside bend radius, K-factor. The flat pattern's "
+        "coordinates are NOT needed: the app unfolds the formed sizes. It is the only item of the list.",
         ("the only item: nothing can be added to it", "flanges stand on straight edges", "no forming tools (louvers, lances, embosses, "
          "extruded holes), hems or jogs: list those as unsupported", "the volume is checked against the unfolded flat area x thickness"),
         {"base": {"shape": "polygon", "points": [[0, 0], [60, 0], [60, 40], [0, 40]]},

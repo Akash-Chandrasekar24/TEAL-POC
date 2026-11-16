@@ -56,7 +56,10 @@ relief cuts, flanges, tabs, louvers). Bending keeps the thickness; walls meet at
   Give its outline in the top view with OUTSIDE dimensions; then each flange: the stretch of its parent's edge it stands on, its OUTSIDE
   length (from the parent's outer surface to the tip), up / down (the bend table's direction, or: as seen on the flat pattern from its
   front), the angle; its own outline when it is not a rectangle (a rounded tab end, a stepped foot), its holes, and its own flanges (tabs on
-  walls, feet on legs) in ITS frame. Every bend of the bend table must appear as one flange.
+  walls, feet on legs) in ITS frame. Every bend of the bend table must appear as one flange. A rounded tab end or a round-topped wall is
+  `corner_radius` (half the width = fully round). You do NOT need the flat pattern's coordinates: the formed views' sizes are enough,
+  the app unfolds it (bend deduction from thickness, radius and K-factor). Never ask for flat-pattern coordinates when the formed views
+  dimension the part.
 - The FLAT PATTERN is dimensioned (bend lines placed on it): `sheet_metal_part` with the flat outline, cut-outs and bend lines.
 - A plain rectangle with straight flanges only: `sheet_metal_base`.
 - Holes on a wall are given on THAT wall's face (formed) or where they lie on the flat pattern (flat).
