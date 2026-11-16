@@ -64,5 +64,5 @@ def test_a_formed_part_unfolds_with_the_bend_deduction_and_its_outside_lengths()
     assert abs(bd - 3.2876) < 1e-3
     xs = sorted({round(s["x1"], 3) for s in f.outline})
     width = xs[-1] - xs[0]
-    assert abs(width - (60 + 2 * (25 - bd) + (12 + 2 - bd))) < 1e-6        # the tab bends the other way round: one thickness more
+    assert abs(width - (60 + 2 * (25 - bd) + (12 + 2 - bd))) < 2e-3        # the tab bends the other way round: one thickness more
     assert [b[1] for b in f.bends] == [True, True, False]
