@@ -173,3 +173,28 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+def test_a_failed_call_on_the_main_model_is_sent_once_more_on_the_fallback_model():
+    seen = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        seen.append(body["model"])
+        if body["model"] == "main-model":
+            return httpx.Response(503, json={"message": "busy"})
+        return httpx.Response(200, json={"output": '{"ok": 1}', "modelId": body["model"], "modelProviderUsage": USAGE})
+    old = config.DOMO_FALLBACK_MODEL
+    try:
+        config.DOMO_FALLBACK_MODEL = "fallback-model"
+        r = DomoClient(model="main-model", transport=httpx.MockTransport(handler)).generate_json("sys", ["hi"])
+        assert seen == ["main-model", "fallback-model"] and r.data == {"ok": 1} and r.model == "fallback-model"
+        config.DOMO_FALLBACK_MODEL = ""                                     # no fallback: the main model's error stands
+        seen.clear()
+        try:
+            DomoClient(model="main-model", transport=httpx.MockTransport(handler)).generate_json("sys", ["hi"])
+            raise AssertionError("expected the error")
+        except LLMError as ex:
+            assert "503" in str(ex) and seen == ["main-model"]
+    finally:
+        config.DOMO_FALLBACK_MODEL = old

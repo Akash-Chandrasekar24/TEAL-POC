@@ -108,20 +108,34 @@ class DomoClient:
             data, mime = _prepare_image(files[0])
             body["image"] = {"type": "base64", "mediaType": mime, "data": base64.b64encode(data).decode()}
             path = IMAGE_PATH
+        try:
+            return self._call(path, body, self.model)
+        except LLMError as first:
+            # the main model failed (an HTTP error, a timeout, an empty or unreadable reply): the same request once on the fallback model
+            fallback = config.DOMO_FALLBACK_MODEL
+            if not fallback or fallback == self.model:
+                raise
+            log_call({"provider": "domo", "model": fallback, "outcome": "FALLBACK", "error": str(first)[:300]})
+            try:
+                return self._call(path, {**body, "model": fallback}, fallback)
+            except LLMError as second:
+                raise LLMError(f"{first} | fallback {fallback}: {second}") from None
+
+    def _call(self, path: str, body: dict, model: str) -> LLMResponse:
         started = time.monotonic()
         try:
-            raw = self._post(path, body)
+            raw = self._post(path, {**body, "model": model})
         except LLMError as ex:
-            log_call({"provider": "domo", "model": self.model, "outcome": "ERROR", "error": str(ex), "seconds": round(time.monotonic() - started, 2)})
+            log_call({"provider": "domo", "model": model, "outcome": "ERROR", "error": str(ex), "seconds": round(time.monotonic() - started, 2)})
             raise
         seconds = time.monotonic() - started
         text = (raw.get("output") or "").strip() if isinstance(raw.get("output"), str) else ""
         u = raw.get("modelProviderUsage") or {}
         usage = {"prompt_tokens": u.get("inputTokens") or 0, "output_tokens": u.get("outputTokens") or 0, "thought_tokens": u.get("reasoningTokens") or 0}
-        log_call({"provider": "domo", "model": self.model, "outcome": "OK" if text else "EMPTY", "seconds": round(seconds, 2), "reply_chars": len(text), **usage})
+        log_call({"provider": "domo", "model": model, "outcome": "OK" if text else "EMPTY", "seconds": round(seconds, 2), "reply_chars": len(text), **usage})
         if not text:
             raise LLMError("Domo returned an empty reply (out of tokens?)")
-        return LLMResponse(text=text, data=parse_json_text(text), model=raw.get("modelId") or self.model, seconds=seconds, usage=usage)
+        return LLMResponse(text=text, data=parse_json_text(text), model=raw.get("modelId") or model, seconds=seconds, usage=usage)
 
     def _post(self, path: str, body: dict) -> dict:
         """One request. Errors name the HTTP status (503, 429...) so the orchestrator's one automatic retry of a temporary error applies."""
