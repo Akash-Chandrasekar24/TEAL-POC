@@ -45,3 +45,16 @@ def test_a_part_that_sits_on_another_is_centred_on_its_round_face_exactly():
     origins, problems = snap(draft, built)
     assert origins[("rod", 1)] == [0.0, 155.8, 121.0]          # big-end centre (0, -111.8, 2) lands on the crankpin centre (0, 44, 123)
     assert origins[("rod", 2)] == [7, 7, 7] and "not parallel" in problems[0]
+
+
+def test_two_crankpins_on_one_axis_line_are_two_cylinders_not_one():
+    """Crankpins 1 and 4 of an inline four share one axis line: each face is cut at its own rims (the point on the face picks them)."""
+    import math
+    from app.assembly.from_parts import round_faces
+    r = 0.027
+    rim = lambda z: [{"start": [r * math.cos(t), 0.044 + r * math.sin(t), z], "end": [r * math.cos(t + 1), 0.044 + r * math.sin(t + 1), z],
+                      "mid": [r * math.cos(t + .5), 0.044 + r * math.sin(t + .5), z]} for t in (0, 3)]
+    edges = rim(0.1) + rim(0.146) + rim(0.4) + rim(0.446)
+    pin = lambda z: {"kind": "cylinder", "origin": [0, 0.044, 0], "axis": [0, 0, 1], "radius": r, "point": [r, 0.044, z]}
+    got = round_faces([pin(0.12), pin(0.42)], edges)
+    assert sorted((c["from"][2], c["to"][2]) for c in got) == [(100.0, 146.0), (400.0, 446.0)]

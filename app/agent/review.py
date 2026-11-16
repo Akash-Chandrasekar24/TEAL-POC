@@ -207,15 +207,22 @@ def close_saved_app_documents() -> list[str]:
     try:
         sw = com.GetActiveObject("SldWorks.Application")
         root = (config.PROJECT_ROOT / "storage").resolve()
+        ours = lambda p: bool(p) and Path(p).resolve().is_relative_to(root)
+        docs = list(sw.GetDocuments or [])
+        parts = [d for d in docs if d.GetType == 1]                       # swDocPART: an assembly's components are open as documents too
+        if parts and all(ours(d.GetPathName) for d in parts):            # so an unsaved assembly next to ONLY our parts is a failed run of ours
+            for doc in docs:
+                if not doc.GetPathName and doc.GetType == 2:               # swDocASSEMBLY
+                    title = doc.GetTitle                                   # (read before closing: the closed document is gone)
+                    sw.CloseDoc(title)
+                    closed.append(title)
         for doc in list(sw.GetDocuments or []):
             path, title = doc.GetPathName, doc.GetTitle
-            if path and Path(path).resolve().is_relative_to(root) and not doc.GetSaveFlag:
+            if ours(path) and not doc.GetSaveFlag:
                 sw.CloseDoc(title)
                 closed.append(title)
     except Exception:                                                    # noqa: BLE001 - the run itself reports what stays open
         pass
-    finally:
-        pythoncom.CoUninitialize()
     return closed
 
 

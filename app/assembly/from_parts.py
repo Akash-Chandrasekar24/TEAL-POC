@@ -33,8 +33,8 @@ Return JSON only: {"frame": "...", "placements": [{"part": "<part id>", "copy": 
 class SitsOn(Strict):
     part: str                          # the part it sits on / in
     copy: int = Field(1, ge=1)
-    my_face: int = Field(ge=0)         # index into THIS part's round_faces_mm
-    its_face: int = Field(ge=0)        # index into THAT part's round_faces_mm
+    my_face: int | list[int]           # index(es) into THIS part's round_faces_mm: one hole cut through two walls is two faces
+    its_face: int | list[int]          # index(es) into THAT part's round_faces_mm
 
 
 class DraftPlacement(Strict):
@@ -72,7 +72,8 @@ Each part also lists its round faces IN ITS OWN FRAME, read from the built Solid
 groove is one of them. For EVERY part that sits on or in another one, add "on": {"part": "<that part id>", "copy": n, "my_face": i,
 "its_face": j}: i = the round face of THIS part, j = the round face of THAT part it sits on (a rod's big-end bore on ITS crankpin: pick the
 crankpin whose axis is at that cylinder's station and throw; a cap's bore on its rod's big-end bore; the piston pin's outside in the rod's
-small-end bore; the piston's pin bore on its pin; a ring's inside diameter on its groove's bottom diameter). The app then puts the two faces
+small-end bore; the piston's pin bore on its pin; a ring's inside diameter on its groove's bottom diameter). One hole cut through two walls
+(a piston's pin bore) is several faces on one axis: give ALL of them as a list, "my_face": [8, 9], so it is centred as one. The app puts the two faces
 on one axis, centred on each other, EXACTLY: your origin only matters for a part with no "on" (the crankshaft). Your x_to / y_to still set
 the orientation: choose them so the two axes are parallel (a rod pointing up to its piston, a cap below its rod). Place parts in the order
 they hang together: crankshaft, rods, caps, pins, pistons, rings."""
@@ -81,6 +82,19 @@ FEEDBACK = """
 Your previous placements were built in SolidWorks and these parts OVERLAPPED (component ids, overlap volume in mm3): {overlaps}.
 Your previous placements: {previous}. Parts that only touch are fine; anything above about 1 mm3 means a part sits inside another.
 Correct the placements so they do not overlap: work from the round faces, keep what was right."""
+
+
+def _same_angle(pts, o, a) -> bool:
+    """The points sit at one angle around the axis (a straight line along it), not around it."""
+    import math
+    angs = []
+    for q in pts:
+        t = sum((q[i] - o[i]) * a[i] for i in range(3))
+        v = [q[i] - o[i] - t * a[i] for i in range(3)]
+        angs.append(v)
+    dot = lambda u, w: sum(x * y for x, y in zip(u, w))
+    n = [math.sqrt(dot(v, v)) or 1.0 for v in angs]
+    return all(dot(angs[0], angs[k]) / (n[0] * n[k]) > 0.99999 for k in (1, 2))
 
 
 def round_faces(faces: list[dict], edges: list[dict], min_radius_m: float = 0.004) -> list[dict]:
@@ -98,11 +112,33 @@ def round_faces(faces: list[dict], edges: list[dict], min_radius_m: float = 0.00
         def off_axis(p):
             t = t_of(p)
             return math.sqrt(sum((p[i] - o[i] - t * a[i]) ** 2 for i in range(3)))
-        ts = [t_of(p) for e in edges for p in (e["start"], e["end"], e["mid"])
-              if all(abs(off_axis(q) - r) < 2e-5 for q in (e["start"], e["end"], e["mid"]))]
-        if not ts:
+        # the edges that BOUND this cylinder along its axis: every edge lying on it (a rim, or the saddle a cross hole cuts in a curved wall),
+        # except a straight seam running along it. (SolidWorks rounds to 1 um: an exact "same station" test lost half-round bores.)
+        bounds, seams = [], []
+        for e in edges:
+            pts = (e["start"], e["mid"], e["end"])
+            if not all(abs(off_axis(q) - r) < 2e-5 for q in pts):
+                continue
+            ts = [t_of(q) for q in pts]
+            if max(ts) - min(ts) > 1e-5 and _same_angle(pts, o, a):
+                seams.append((min(ts), max(ts)))                    # a straight line along the axis: it runs the face's whole length
+            else:
+                bounds.append((sum(ts) / 3, min(ts), max(ts)))
+        # the edge list holds no partial arcs (measured): a HALF-round bore (a rod's big end, its cap) shows only its two seam lines
+        tp = t_of(f["point"]) if f.get("point") else None
+        mine = [s for s in seams if tp is None or s[0] - 1e-5 <= tp <= s[1] + 1e-5] or seams
+        if not bounds and not mine:
             continue
-        lo, hi = min(ts), max(ts)
+        lo = min([b[1] for b in bounds] + [s[0] for s in mine])
+        hi = max([b[2] for b in bounds] + [s[1] for s in mine])
+        if tp is not None and bounds:
+            # two crankpins on one throw line are separate faces on ONE axis line: this face lies between the nearest bounding edges on
+            # either side of its own point (and along its own seam lines)
+            below, above = [b for b in bounds if b[0] <= tp], [b for b in bounds if b[0] > tp]
+            if below and above:
+                near_lo, near_hi = max(b[0] for b in below), min(b[0] for b in above)
+                lo = min([b[1] for b in below if b[0] >= near_lo - 1e-3] + [s[0] for s in mine if s in seams and mine is not seams])
+                hi = max([b[2] for b in above if b[0] <= near_hi + 1e-3] + [s[1] for s in mine if s in seams and mine is not seams])
         seg = [[round((o[i] + t * a[i]) * 1000, 2) for i in range(3)] for t in (lo, hi)]
         key = (round(r * 2000, 2), tuple(round(v, 3) for v in a), tuple(seg[0]), tuple(seg[1]))
         if any((c["diameter"], tuple(c["axis"]), tuple(c["from"]), tuple(c["to"])) == key for c in out):
@@ -130,6 +166,16 @@ def _turn(rot, v):
     return [v[0] * rot[k] + v[1] * rot[3 + k] + v[2] * rot[6 + k] for k in range(3)]
 
 
+def _span(cyls: list[dict]) -> dict:
+    """Several faces of ONE hole (a pin bore through both walls): one cylinder from the lowest to the highest station along their axis."""
+    if len(cyls) == 1:
+        return cyls[0]
+    a = cyls[0]["axis"]
+    pts = [p for c in cyls for p in (c["from"], c["to"])]
+    t = lambda p: sum(p[i] * a[i] for i in range(3))
+    return {**cyls[0], "from": min(pts, key=t), "to": max(pts, key=t)}
+
+
 def snap(draft: DraftAssembly, built: list[dict]) -> tuple[dict, list[str]]:
     """{(part, copy): origin}: every placement with "on" is moved so its round face sits on the other part's, on one axis and centred
     (what a concentric mate + centring does), in dependency order. The AI chose WHICH faces and the orientation; the numbers are the app's.
@@ -154,11 +200,13 @@ def snap(draft: DraftAssembly, built: list[dict]) -> tuple[dict, list[str]]:
             if target not in origins or target not in rots:
                 continue
             mine, theirs = faces.get(d.part, []), faces.get(d.on.part, [])
-            if d.on.my_face >= len(mine) or d.on.its_face >= len(theirs):
+            ia = d.on.my_face if isinstance(d.on.my_face, list) else [d.on.my_face]
+            ib = d.on.its_face if isinstance(d.on.its_face, list) else [d.on.its_face]
+            if not ia or not ib or any(i < 0 or i >= len(mine) for i in ia) or any(i < 0 or i >= len(theirs) for i in ib):
                 problems.append(f"{d.part} copy {d.copy}: round face {d.on.my_face} / {d.on.its_face} does not exist: the AI's origin is kept")
                 origins[key] = list(d.origin); moved = True
                 continue
-            a, b = mine[d.on.my_face], theirs[d.on.its_face]
+            a, b = _span([mine[i] for i in ia]), _span([theirs[i] for i in ib])
             axis_mine, axis_theirs = _turn(rots[key], a["axis"]), _turn(rots[target], b["axis"])
             if abs(sum(x * y for x, y in zip(axis_mine, axis_theirs))) < 0.999:
                 problems.append(f"{d.part} copy {d.copy}: its face {d.on.my_face} is not parallel to {d.on.part} copy {d.on.copy}'s face "
@@ -209,7 +257,11 @@ def plan_from_parts(name: str, source_hash: str, unit: str, built: list[dict], d
     unknown = sorted(set(by_part) - {p["id"] for p in built})
     if unknown:
         problems.append(f"the AI placed parts that were not built: {', '.join(unknown)} (ignored)")
-    expected = Expectations(size=draft.size, size_evidence=draft.size_evidence) if draft.size and all(v > 0 for v in draft.size) else Expectations()
+    # no overall-size check from the AI: its size is an estimate (an engine failed on 577 vs its own guess of 566 mm, the drawing prints
+    # no overall length); the placements come from the measured faces, and the size is reported as a note
+    expected = Expectations()
+    if draft.size:
+        problems.append(f"AI estimate of the overall size: {draft.size} mm ({draft.size_evidence[:200]}): not checked")
     plan = AssemblyPlan(name=name, source_hash=source_hash, unit=unit, bom=rows, models=models, occurrences=occurrences, expected=expected)
     return plan, problems + [f"AI note: {n}" for n in draft.notes]
 
