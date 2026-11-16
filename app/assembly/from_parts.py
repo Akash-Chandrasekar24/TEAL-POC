@@ -30,12 +30,20 @@ Return JSON only: {"frame": "...", "placements": [{"part": "<part id>", "copy": 
 "evidence": "..."}], "size": [sx, sy, sz], "size_evidence": "...", "notes": ["anything uncertain"]}"""
 
 
+class SitsOn(Strict):
+    part: str                          # the part it sits on / in
+    copy: int = Field(1, ge=1)
+    my_face: int = Field(ge=0)         # index into THIS part's round_faces_mm
+    its_face: int = Field(ge=0)        # index into THAT part's round_faces_mm
+
+
 class DraftPlacement(Strict):
     part: str
     copy: int = Field(1, ge=1)
     origin: list[float] = Field(min_length=3, max_length=3)
     x_to: str
     y_to: str
+    on: SitsOn | None = None           # the app puts the two round faces on one axis, centred: the origin is then computed, not guessed
     evidence: str = Field(min_length=1)
 
 
@@ -58,16 +66,123 @@ def rotation(x_to: str, y_to: str) -> list[float]:
     return [*x, *y, *z]
 
 
-def draft_placements(llm, picture: bytes, parts: list[dict]) -> DraftAssembly:
-    context = [{"id": p["id"], "name": p["name"], "quantity": p["quantity"], "bbox_mm_own_frame": p["bbox_mm"]} for p in parts]
-    reply = llm.generate_json(PROMPT, [FilePart(picture, "image/png"), json.dumps({"parts": context}, ensure_ascii=False)])
+ROUND_FACES = """
+Each part also lists its round faces IN ITS OWN FRAME, read from the built SolidWorks part: "round_faces_mm": [{"i": index, "diameter",
+"axis": the axis direction, "from", "to": the two end points of that cylinder on its axis}]. A bore, a crankpin, a journal, a pin or a ring
+groove is one of them. For EVERY part that sits on or in another one, add "on": {"part": "<that part id>", "copy": n, "my_face": i,
+"its_face": j}: i = the round face of THIS part, j = the round face of THAT part it sits on (a rod's big-end bore on ITS crankpin: pick the
+crankpin whose axis is at that cylinder's station and throw; a cap's bore on its rod's big-end bore; the piston pin's outside in the rod's
+small-end bore; the piston's pin bore on its pin; a ring's inside diameter on its groove's bottom diameter). The app then puts the two faces
+on one axis, centred on each other, EXACTLY: your origin only matters for a part with no "on" (the crankshaft). Your x_to / y_to still set
+the orientation: choose them so the two axes are parallel (a rod pointing up to its piston, a cap below its rod). Place parts in the order
+they hang together: crankshaft, rods, caps, pins, pistons, rings."""
+
+FEEDBACK = """
+Your previous placements were built in SolidWorks and these parts OVERLAPPED (component ids, overlap volume in mm3): {overlaps}.
+Your previous placements: {previous}. Parts that only touch are fine; anything above about 1 mm3 means a part sits inside another.
+Correct the placements so they do not overlap: work from the round faces, keep what was right."""
+
+
+def round_faces(faces: list[dict], edges: list[dict], min_radius_m: float = 0.004) -> list[dict]:
+    """The part's cylinders (own frame, mm): diameter, axis direction and the axis segment it covers, from SolidWorks' face and edge lists
+    (an edge whose points all lie on a cylinder marks where it starts / ends). Small roundings (< min radius) are left out."""
+    import math
+    out: list[dict] = []
+    for f in faces:
+        if f.get("kind") != "cylinder" or not f.get("radius") or f["radius"] < min_radius_m:
+            continue
+        o, a, r = f["origin"], f["axis"], f["radius"]
+        n = math.sqrt(sum(v * v for v in a)) or 1.0
+        a = [v / n for v in a]
+        t_of = lambda p: sum((p[i] - o[i]) * a[i] for i in range(3))
+        def off_axis(p):
+            t = t_of(p)
+            return math.sqrt(sum((p[i] - o[i] - t * a[i]) ** 2 for i in range(3)))
+        ts = [t_of(p) for e in edges for p in (e["start"], e["end"], e["mid"])
+              if all(abs(off_axis(q) - r) < 2e-5 for q in (e["start"], e["end"], e["mid"]))]
+        if not ts:
+            continue
+        lo, hi = min(ts), max(ts)
+        seg = [[round((o[i] + t * a[i]) * 1000, 2) for i in range(3)] for t in (lo, hi)]
+        key = (round(r * 2000, 2), tuple(round(v, 3) for v in a), tuple(seg[0]), tuple(seg[1]))
+        if any((c["diameter"], tuple(c["axis"]), tuple(c["from"]), tuple(c["to"])) == key for c in out):
+            continue
+        out.append({"diameter": key[0], "axis": list(key[1]), "from": seg[0], "to": seg[1]})
+    return sorted(out, key=lambda c: -c["diameter"])[:40]
+
+
+def draft_placements(llm, picture: bytes, parts: list[dict], feedback: dict | None = None) -> DraftAssembly:
+    context = [{"id": p["id"], "name": p["name"], "quantity": p["quantity"], "bbox_mm_own_frame": p["bbox_mm"],
+                **({"round_faces_mm": [{"i": i, **c} for i, c in enumerate(p["round_faces"])]} if p.get("round_faces") else {})} for p in parts]
+    prompt = PROMPT + (ROUND_FACES if any(p.get("round_faces") for p in parts) else "")
+    if feedback and feedback.get("overlaps"):
+        prompt += FEEDBACK.format(overlaps=json.dumps(feedback["overlaps"]), previous=json.dumps(feedback.get("previous", []))[:12000])
+    reply = llm.generate_json(prompt, [FilePart(picture, "image/png"), json.dumps({"parts": context}, ensure_ascii=False)])
     return DraftAssembly.model_validate(reply.data)
+
+
+def _world(origin, rot, p):
+    """A point of the part's own frame in the assembly: origin + x*row0 + y*row1 + z*row2 (rot = rotation(), mm)."""
+    return [origin[k] + p[0] * rot[k] + p[1] * rot[3 + k] + p[2] * rot[6 + k] for k in range(3)]
+
+
+def _turn(rot, v):
+    return [v[0] * rot[k] + v[1] * rot[3 + k] + v[2] * rot[6 + k] for k in range(3)]
+
+
+def snap(draft: DraftAssembly, built: list[dict]) -> tuple[dict, list[str]]:
+    """{(part, copy): origin}: every placement with "on" is moved so its round face sits on the other part's, on one axis and centred
+    (what a concentric mate + centring does), in dependency order. The AI chose WHICH faces and the orientation; the numbers are the app's.
+    An "on" that cannot be honoured (unknown face, axes not parallel, a loop) keeps the AI's origin and is reported."""
+    faces = {p["id"]: p.get("round_faces") or [] for p in built}
+    todo = {(d.part, d.copy): d for d in draft.placements}
+    origins, rots, problems = {}, {}, []
+    for key, d in todo.items():
+        try:
+            rots[key] = rotation(d.x_to, d.y_to)
+        except ValueError:
+            pass
+    for key, d in todo.items():                                     # the anchors: no "on"
+        if d.on is None:
+            origins[key] = list(d.origin)
+    for _ in range(len(todo)):
+        moved = False
+        for key, d in todo.items():
+            if key in origins or d.on is None or key not in rots:
+                continue
+            target = (d.on.part, d.on.copy)
+            if target not in origins or target not in rots:
+                continue
+            mine, theirs = faces.get(d.part, []), faces.get(d.on.part, [])
+            if d.on.my_face >= len(mine) or d.on.its_face >= len(theirs):
+                problems.append(f"{d.part} copy {d.copy}: round face {d.on.my_face} / {d.on.its_face} does not exist: the AI's origin is kept")
+                origins[key] = list(d.origin); moved = True
+                continue
+            a, b = mine[d.on.my_face], theirs[d.on.its_face]
+            axis_mine, axis_theirs = _turn(rots[key], a["axis"]), _turn(rots[target], b["axis"])
+            if abs(sum(x * y for x, y in zip(axis_mine, axis_theirs))) < 0.999:
+                problems.append(f"{d.part} copy {d.copy}: its face {d.on.my_face} is not parallel to {d.on.part} copy {d.on.copy}'s face "
+                                f"{d.on.its_face} in the chosen orientation: the AI's origin is kept")
+                origins[key] = list(d.origin); moved = True
+                continue
+            mid = lambda c: [(c["from"][k] + c["to"][k]) / 2 for k in range(3)]
+            goal = _world(origins[target], rots[target], mid(b))
+            here = _turn(rots[key], mid(a))
+            origins[key] = [round(goal[k] - here[k], 4) for k in range(3)]
+            moved = True
+        if not moved:
+            break
+    for key, d in todo.items():
+        if key not in origins:
+            problems.append(f"{d.part} copy {d.copy}: sits on {d.on.part} copy {d.on.copy}, which is not placed: the AI's origin is kept")
+            origins[key] = list(d.origin)
+    return origins, problems
 
 
 def plan_from_parts(name: str, source_hash: str, unit: str, built: list[dict], draft: DraftAssembly, bom_page: int = 1) -> tuple[AssemblyPlan, list[str]]:
     """built: [{id, name, item, quantity, sha256, source_name, bbox_mm, job}]. Returns the plan (nothing confirmed) and the problems found
     in the AI's draft (missing copies, bad axes): those are listed for the designer, never silently fixed."""
-    problems: list[str] = []
+    origins, problems = snap(draft, built)
     rows, models, occurrences = [], [], []
     by_part: dict[str, list[DraftPlacement]] = {}
     for d in draft.placements:
@@ -87,8 +202,10 @@ def plan_from_parts(name: str, source_hash: str, unit: str, built: list[dict], d
             except ValueError as ex:
                 problems.append(f"{p['name']} copy {n}: {ex}")
                 continue
+            at = origins.get((d.part, d.copy), d.origin)
+            how = f" | on {d.on.part} {d.on.copy}: round face {d.on.my_face} centred on its face {d.on.its_face}" if d.on else ""
             occurrences.append(Occurrence(id=f"{rid}-{n}"[:60], bom_id=rid, fixed=True,
-                                          placement=Placement(translation=d.origin, rotation=rot, evidence=d.evidence)))
+                                          placement=Placement(translation=at, rotation=rot, evidence=(d.evidence + how)[:2000])))
     unknown = sorted(set(by_part) - {p["id"] for p in built})
     if unknown:
         problems.append(f"the AI placed parts that were not built: {', '.join(unknown)} (ignored)")

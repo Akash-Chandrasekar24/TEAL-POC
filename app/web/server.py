@@ -1069,6 +1069,64 @@ def _build_each(rid):
     _save_batch(rid, batch)
 
 
+def _add_round_faces(rid: str, built: list[dict]) -> None:
+    """Each built part's cylinders in its own frame (app.assembly.from_parts.round_faces), read once from SolidWorks and cached next to the
+    model asset: the placing AI puts bores on pins and crankpins from them instead of guessing from a bounding box (an engine's rods and caps
+    came out inside the crankshaft). SolidWorks busy or absent: the placement goes on without them."""
+    import asyncio
+    from app.agent.execution import cad_execution
+    from app.assembly.from_parts import round_faces
+    from app.features.base import read_geometry
+    from app.mcp_client import SolidWorksClient
+    todo = []
+    for p in built:
+        cache = MODELS / f"{p['sha256']}.round.json"
+        if cache.is_file():
+            p["round_faces"] = json.loads(cache.read_text(encoding="utf-8"))
+        else:
+            todo.append((p, cache))
+    if not todo:
+        return
+
+    async def read():
+        async with SolidWorksClient() as sw:
+            for p, cache in todo:
+                opened = await sw.open_document(str(MODELS / f"{p['sha256']}.SLDPRT"))
+                if not opened.ok:
+                    continue
+                faces, edges = await read_geometry(sw)
+                p["round_faces"] = round_faces(faces, edges)
+                write_json(cache, p["round_faces"])
+                await sw.close_document(save=False)
+    try:
+        with cad_execution(ASSEMBLIES / rid, "read_part_round_faces", "round-faces"):
+            asyncio.run(read())
+    except Exception as ex:                                                     # noqa: BLE001 - placement without them still works
+        print(f"round faces not read: {type(ex).__name__}: {str(ex)[:200]}")
+
+
+def _last_overlaps(batch: dict) -> dict | None:
+    """The last assembly build's overlapping components (> 1 mm3) and its placements: fed back to the placing AI."""
+    jid = (batch.get("assembly") or {}).get("job_id")
+    if not jid:
+        return None
+    try:
+        record = WORKFLOW.load(jid)
+    except (OSError, ValueError):
+        return None
+    graph = record.get("graph") or {}
+    report = graph.get("report") or {}
+    names = {v: k for k, v in (report.get("names") or {}).items()}
+    found = [c for c in report.get("checks", []) if (c.get("readback") or {}).get("interferences")]
+    if not found:
+        return None
+    overlaps = [{"a": names.get(i["components"][0], i["components"][0]), "b": names.get(i["components"][1], i["components"][1]),
+                 "mm3": round(i.get("volume_m3", 0) * 1e9)} for i in found[-1]["readback"]["interferences"] if i.get("volume_m3", 0) * 1e9 > 1]
+    previous = [{"id": o["id"], "origin": o["placement"]["translation"], "rotation_rows": o["placement"]["rotation"]}
+                for o in (graph.get("approved") or {}).get("occurrences", []) if o.get("placement")]
+    return {"overlaps": overlaps, "previous": previous} if overlaps else None
+
+
 def assemble_parts(rid: str, llm_name=None, client=None) -> dict:
     """"Assemble into one file": the parts the last batch built become the components; the AI drafts where each copy goes from the assembly
     views. Saved as the drawing's assembly plan, NOTHING confirmed: the designer approves it (approve_assembly) before it is built."""
@@ -1092,6 +1150,8 @@ def assemble_parts(rid: str, llm_name=None, client=None) -> dict:
                       "sha256": asset["sha256"], "source_name": asset["source_name"], "job": item["job_id"]})
     if not built:
         raise ValueError("No part has been built yet: build the parts first, then assemble them")
+    if client is None:                                                          # (a test's scripted client: no SolidWorks)
+        _add_round_faces(rid, built)
     views = assembly_views(result)
     if not views:
         raise ValueError("The sheet has no assembly or section view to place the parts from")
@@ -1103,7 +1163,7 @@ def assemble_parts(rid: str, llm_name=None, client=None) -> dict:
     attempt = uuid.uuid4().hex[:12]
     with trace.run(attempt, RUNS / attempt, save_files=config.TRACE_FILES, drawing_result=rid, workflow="assembly_from_parts"):
         llm = client if client is not None else make_client(llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER, reasoning_effort=config.CAD_REASONING_EFFORT)
-        draft = draft_placements(llm, picture, built)
+        draft = draft_placements(llm, picture, built, _last_overlaps(batch))
     unit = (result.get("drawing_model") or {}).get("unit") if (result.get("drawing_model") or {}).get("unit") in ("mm", "inch") else "mm"
     name = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(str(result.get("name") or rid)).stem)[:60].strip("_") or "assembly"
     plan, problems = plan_from_parts(name, digest(assembly_source(rid)), unit, built, draft)
@@ -1320,7 +1380,9 @@ def workflow_plan(rid, attempt):
         raise ValueError("R1/R2 extraction evaluation evidence cannot start or export a CAD workflow")
     assembly = result.get("assembly")
     if assembly and assembly["id"] == attempt:
-        if result["drawing_model"]["issues"]:
+        # the same rule as a part's build list: only issues that need a human block; "small text is limited by resolution" is optional
+        # on the Review page (seen: an engine whose parts all built was then refused for its assembly)
+        if any("human review required" in q or "confirm this" in q for q in result["drawing_model"]["issues"]):
             raise ValueError("Resolve the measurement review before starting the assembly")
         if assembly["blockers"]:
             raise ValueError("Resolve assembly questions before building: " + "; ".join(assembly["blockers"]))

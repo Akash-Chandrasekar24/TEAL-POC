@@ -193,11 +193,38 @@ def export_reviewed(approved, job_dir, receipt):
         return asyncio.run(_export(approved, Path(job_dir), receipt))
 
 
+def close_saved_app_documents() -> list[str]:
+    """Before an assembly run (it needs an empty SolidWorks and closes nothing itself): close the documents that are files THIS APP saved
+    under storage/ and are unchanged since (after a batch the last built part stays open). Anything else stays open and the run refuses."""
+    try:
+        import pythoncom
+        import win32com.client as com
+        from app import config
+    except ImportError:
+        return []
+    pythoncom.CoInitialize()
+    closed = []
+    try:
+        sw = com.GetActiveObject("SldWorks.Application")
+        root = (config.PROJECT_ROOT / "storage").resolve()
+        for doc in list(sw.GetDocuments or []):
+            path, title = doc.GetPathName, doc.GetTitle
+            if path and Path(path).resolve().is_relative_to(root) and not doc.GetSaveFlag:
+                sw.CloseDoc(title)
+                closed.append(title)
+    except Exception:                                                    # noqa: BLE001 - the run itself reports what stays open
+        pass
+    finally:
+        pythoncom.CoUninitialize()
+    return closed
+
+
 def preview_assembly(approved, job_dir, assets, supervisor):
     from app.assembly.model import AssemblyPlan
     plan = AssemblyPlan.model_validate(approved)
     output = Path(job_dir) / "private" / uuid.uuid4().hex[:12]
     async def execute():
+        close_saved_app_documents()
         async with SolidWorksClient() as sw:
             ready = await sw.ensure_ready()
             if not ready.ok:

@@ -14,7 +14,9 @@ def import_model(name: str, data: bytes, folder: Path) -> dict:
         raise ValueError("Component models must be between 1 byte and 40 MB")
     # Native SolidWorks files use the OLE compound-document container. This is
     # format screening only; geometry/configuration checks require SolidWorks.
-    if not data.startswith(bytes.fromhex("d0cf11e0a1b11ae1")):
+    # SolidWorks 2015 and later save their own container instead (4 bytes, then 00 00 00 04: seen on every part SolidWorks 2026 saved);
+    # without it, no part this app built could be assembled.
+    if not (data.startswith(bytes.fromhex("d0cf11e0a1b11ae1")) or data[4:8] == b"\x00\x00\x00\x04"):
         raise ValueError("The file does not have a native SolidWorks compound-document header")
     sha = hashlib.sha256(data).hexdigest()
     folder.mkdir(parents=True, exist_ok=True)
