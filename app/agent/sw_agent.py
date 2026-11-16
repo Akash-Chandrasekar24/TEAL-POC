@@ -112,7 +112,8 @@ class SolidWorksAgent:
                       "The picture is the drawing." if self.picture else "The picture is the part as built now." if image else "")
                      + "\n" + json.dumps(context, ensure_ascii=False, default=str))
         self.log.turns += 1
-        reply = await asyncio.to_thread(self.llm.generate_json, system + "\n\n## Feature menu\n" + self.menu, parts)
+        from app.agent.prompts import skill_text                              # the CAD engineer skill comes first, every call
+        reply = await asyncio.to_thread(self.llm.generate_json, skill_text() + "\n\n" + system + "\n\n## Feature menu\n" + self.menu, parts)
         return reply.data if isinstance(reply.data, dict) else {}
 
     async def _loop(self, phase: str, item: str, system: str, context: dict, run: Run, turns: int, stop: set[str],
