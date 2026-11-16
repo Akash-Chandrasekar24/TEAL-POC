@@ -16,6 +16,20 @@ from .model import AssemblyPlan, Surface, cross, dot, validate_plan
 CONTACT_M3 = 1e-9           # up to 1 mm3 of "interference" between two parts is an exact fit touching (rounding), not overlap
 
 
+def _join_stl(parts: list[Path], out: Path) -> None:
+    """Several STL files -> one binary STL (no files: nothing is written, the caller's read reports it)."""
+    import struct
+    from app.preview import read_stl
+    if not parts:
+        return
+    tris = [t for p in parts for t in read_stl(p).reshape(-1, 3, 3)]
+    with open(out, "wb") as f:
+        f.write(b"joined component meshes".ljust(80, b" ") + struct.pack("<I", len(tris)))
+        for a, b, c in tris:
+            n = cross([b[i] - a[i] for i in range(3)], [c[i] - a[i] for i in range(3)])
+            f.write(struct.pack("<12fH", *n, *a, *b, *c, 0))
+
+
 class AssemblyError(RuntimeError):
     pass
 
@@ -300,6 +314,10 @@ async def run_assembly(sw, plan: AssemblyPlan, assets: Path, output: Path, appro
             from app.preview import render_stl_png
             mesh, image = output / f"{plan.name}.stl", output / f"{plan.name}.png"
             await call("export_document", "STL", mesh)
+            if not mesh.is_file():
+                # SolidWorks' "save all components in one file" option is off: it wrote "<name> - <component>.STL" per component (in one
+                # frame: measured, together they span the assembly's size). One mesh is made of them.
+                _join_stl(sorted(output.glob(f"{plan.name} - *.STL")), mesh)
             render_stl_png(mesh, image, plan.name)
             preview_files = {"mesh": str(mesh.resolve()), "preview": str(image.resolve()), "configuration": saved["configuration"]}
         else:
