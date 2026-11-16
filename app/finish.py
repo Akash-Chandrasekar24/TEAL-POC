@@ -90,7 +90,9 @@ async def finish_part(sw: SolidWorksClient, out_dir: Path, name: str, unit: str,
                 stl_size = [h - l for l, h in zip(*report.stl_bbox_mm)]
                 model_size = [h - l for l, h in zip(*expected_bbox_mm)]
                 diffs = [abs(a - b) for a, b in zip(stl_size, model_size)]
-                check("STL size = the model's size", max(diffs) <= bbox_tol_mm,
+                # a mesh of large curved faces lies a little inside them (an R80 crank web: 0.58 mm on 204): 0.5 % of the size, at least the tolerance
+                tol = max(bbox_tol_mm, 0.005 * max(model_size))
+                check("STL size = the model's size", max(diffs) <= tol,
                       f"STL {[round(v, 3) for v in stl_size]} mm, model {[round(v, 3) for v in model_size]} mm, largest difference {max(diffs):.3f} mm")
             png = render_stl_png(paths["STL"], paths["PREVIEW"], stem)
             check("preview PNG", png.is_file() and png.stat().st_size > 0, f"{png.stat().st_size:,} bytes")

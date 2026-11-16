@@ -41,6 +41,8 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "save_document": 120.0,
     "get_recipe": 30.0,
     "inspect_assembly": 200.0,
+    "insert_component": 300.0,   # a large part (a 23-step crankshaft) took over 60 s to insert into an engine assembly
+    "add_mate": 180.0,
     "inspect_drawing": 150.0,
     "ext_sweep": 250.0,
     "ext_clear_selection": 60.0,

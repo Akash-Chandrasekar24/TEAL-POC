@@ -382,6 +382,13 @@ def reader_context(result: dict, part: dict, model: dict, answers: list | None =
             "a simplification or a modelling choice.\n"
             f"Drawing unit: {model.get('unit')}; projection: {model.get('projection')}.\n"
             f"Measurements the human reviewed for these views (use only printed values, as always): {json.dumps(dims, ensure_ascii=False)}")
+    if part["views"]:
+        # the same value printed for two parts is recorded ONCE, on the first part's view (an engine's ring lost its Ø85 / Ø79 to the piston
+        # and was assumed Ø100): every other reviewed value of the sheet, to use when it is printed beside THIS part's views in the picture
+        others = sorted({d.get("corrected_text") or d["text"] for d in model.get("dimensions", []) if not (set(d.get("views") or []) & views)})
+        if others:
+            text += ("\nOther reviewed values on this sheet (they may ALSO belong to this part when they are printed beside its views in the "
+                     f"picture; use one only then): {json.dumps(others[:300], ensure_ascii=False)}")
     answered = [a for a in (answers or []) if isinstance(a, dict) and str(a.get("answer", "")).strip()]
     if answered:
         text += ("\nThe designer answered these questions (an answer 'AI decides' means: keep your best assumption). Treat each answer as a printed value, "

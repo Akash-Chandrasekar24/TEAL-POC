@@ -111,7 +111,9 @@ def test_ai_build_list_sees_only_the_part_and_the_reviewed_values():
          patch.object(server, "default_cache", lambda: type("C", (), {"get_blob": lambda self, sha: buf.getvalue()})()):
         art = server.create_part_list("abcdef123456", "gear", client=Reader())
     text = next(p for p in seen if len(p) > 1)[1]                                               # the list call (the side-view question runs alongside)
-    assert "ONE part only: Gear" in text and "Ø88" in text and "284" not in text                # only this part's reviewed values
+    own, _, others = text.partition("Other reviewed values on this sheet")
+    assert "ONE part only: Gear" in own and "Ø88" in own and "284" not in own                   # this part's reviewed values only...
+    assert "284" in others and "printed beside its views" in others                             # ...the sheet's other values set apart
     assert art["check"]["status"] == "ready" and art["source"] == "ai" and art["part"]["id"] == "gear"
     result["drawing_model"]["issues"] = ["P1.d1 (Ø88): human review required. low"]
     with patch.object(server, "result_with_design", lambda rid: copy.deepcopy(result)):
