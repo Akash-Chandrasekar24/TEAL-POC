@@ -49,3 +49,20 @@ def test_a_fixed_spot_beside_a_bend_line_avoids_a_hole_on_it():
     a = next(b for b in spec["bends"] if round(b["p1"][0] * 1000) == -35)
     hole = (29 - 60, 0)
     assert math.hypot(a["fixed"][0] * 1000 - hole[0], a["fixed"][1] * 1000 - hole[1]) > 2 + 2
+
+
+def test_a_formed_part_unfolds_with_the_bend_deduction_and_its_outside_lengths():
+    """Formed: a 60 x 40 base, two 25 walls up, a 12 tab bent outward off one wall (built live: 72 x 40 x 25 mm, as dimensioned)."""
+    from app.features.sheet_formed import bend_deduction
+    from app.menu import MENU
+    ex = MENU["sheet_metal_formed"].example
+    bl = parse_reply({"list_version": "1", "unit": "mm", "projection": "third", "items": [{"id": "F1", "feature": "sheet_metal_formed", "params": ex}],
+                      "seen_dimensions": ["0", "60", "40", "30", "20", "10", "2", "25", "12"]})
+    assert validate_list(bl) == []
+    f = prepare(bl)[0].feature
+    bd = bend_deduction(90, 2, 2, 0.5)
+    assert abs(bd - 3.2876) < 1e-3
+    xs = sorted({round(s["x1"], 3) for s in f.outline})
+    width = xs[-1] - xs[0]
+    assert abs(width - (60 + 2 * (25 - bd) + (12 + 2 - bd))) < 1e-6        # the tab bends the other way round: one thickness more
+    assert [b[1] for b in f.bends] == [True, True, False]

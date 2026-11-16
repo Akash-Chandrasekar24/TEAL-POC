@@ -19,7 +19,7 @@ from .numbers import numbers_in
 from .registry import MENU
 
 BASE_FEATURE = "extrude_profile_boss"
-STANDALONE_FEATURES = ("swept_tube", "loft", "sheet_metal_base", "sheet_metal_part")       # one item that is the WHOLE part: nothing may follow
+STANDALONE_FEATURES = ("swept_tube", "loft", "sheet_metal_base", "sheet_metal_part", "sheet_metal_formed")       # one item that is the WHOLE part: nothing may follow
 BASE_FEATURES = (BASE_FEATURE, "revolve_base", *STANDALONE_FEATURES)   # the items that may be the FIRST one (the base)
 _UNCHECKED = frozenset({"expect_count", "dir", "tol", "countersink_angle_deg", "angle_deg",
                         "count", "count_x", "count_y", "start_angle_deg", "sweep_deg"})     # counts, enums and fixed angles are not dimensions

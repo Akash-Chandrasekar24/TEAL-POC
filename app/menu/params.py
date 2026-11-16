@@ -503,6 +503,37 @@ class SheetMetalPartParams(Strict):
         None, description="a point on the face that stays put (the drawing's 'fixed face'), same frame; default: the middle of the flat pattern")
 
 
+class FormedFlange(Strict):
+    edge: Annotated[list[Annotated[list[float], Field(min_length=2, max_length=2)]], Field(min_length=2, max_length=2)] = Field(
+        description="where the flange is attached: [[x1, y1], [x2, y2]] on a STRAIGHT edge of its parent face's outline, in the parent face's frame "
+                    "(the flange's width; it may be part of that edge)")
+    length: float = Field(gt=0, description="the flange's OUTSIDE length as the formed views dimension it: from the parent face's OUTER surface "
+                                            "(the outside of the part) to the flange's tip")
+    direction: Literal["up", "down"] = Field(description="as the bend table says, or: up = toward the viewer of the flat pattern (the base's top side)")
+    angle_deg: float = Field(90, gt=0, lt=180, description="bend angle (90 = a right angle)")
+    radius: float | None = Field(None, gt=0, description="inside bend radius of THIS bend, when it differs from the part's")
+    outline: list[Annotated[list[float], Field(min_length=2, max_length=2)]] | None = Field(
+        None, description="the flange face's shape when it is not a rectangle, as points in ITS frame: x along its edge from edge point 1 "
+                          "(0 .. edge length), y = distance from the parent's outer surface (0 at the bend .. length); it must contain [0, 0] and "
+                          "[edge length, 0]")
+    cutouts: list[FlatCutout] = Field([], description="holes / slots / cut-outs on this flange face, in ITS frame (as above)")
+    flanges: list["FormedFlange"] = Field([], description="flanges on this flange's edges (tabs, feet), each in THIS flange's frame")
+    tag: str = Field("", description="the bend's label on the drawing (A, B, ...)")
+
+
+class SheetMetalFormedParams(Strict):
+    base: Annotated[Union[Polygon, Segments], Field(discriminator="shape")] = Field(
+        description="the BASE face's outline as the formed top view shows it, OUTSIDE dimensions (frame base_lower_left: x right, y up from its lower-left corner)")
+    cutouts: list[FlatCutout] = Field([], description="holes / slots / cut-outs in the base face, same frame")
+    thickness: float = Field(gt=0, description="sheet thickness")
+    bend_radius: float = Field(gt=0, description="inside bend radius (the bend table's radius)")
+    k_factor: float = Field(0.5, gt=0, lt=1, description="K-factor (0.5 unless the drawing gives one)")
+    flanges: list[FormedFlange] = Field([], description="the flanges on the base face's edges, each with its own flanges")
+
+
+FormedFlange.model_rebuild()
+
+
 class DrillParams(Strict):
     entry: Pos | None = Field(None, description="where the hole axis enters the part, as seen in the TOP view (placed like any position)")
     entry_height: float | None = Field(None, description="height of the entry point above the back face of the base (e.g. half the thickness for a hole in a side face)")

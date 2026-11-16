@@ -276,8 +276,8 @@ def base_info(params: Any, unit: str) -> tuple[tuple[float, float], tuple[float,
         return wh, (wh[0] / 2, wh[1] / 2), params.height
     if isinstance(params, P.SheetMetalBaseParams):
         return (params.width, params.height), (params.width / 2, params.height / 2), params.thickness
-    if isinstance(params, P.SheetMetalPartParams):                         # its flat pattern's footprint (a standalone part: for reports)
-        segs, centred = _raw_outline(params.outline, BuildContext(unit))
+    if isinstance(params, (P.SheetMetalPartParams, P.SheetMetalFormedParams)):   # its base's footprint (a standalone part: for reports)
+        segs, centred = _raw_outline(params.outline if isinstance(params, P.SheetMetalPartParams) else params.base, BuildContext(unit))
         x0, x1, y0, y1 = profile_bounds(segs)
         return (x1 - x0, y1 - y0), ((-x0, -y0) if centred else _own_shift(segs)), params.thickness
     ctx = BuildContext(unit)
@@ -550,6 +550,31 @@ def build_sheet_metal_part(p: P.SheetMetalPartParams, ctx: BuildContext, label: 
     return SheetMetalPart(ctx.unit, tuple(_shift(segs, dx, dy)), tuple(cutouts), p.thickness, p.bend_radius, bends, fixed, p.k_factor, label=label)
 
 
+def _flat_cutout(c, ctx) -> list[dict]:
+    if isinstance(c, P.FlatCircle):
+        return [{"kind": "circle", "cx": c.x, "cy": c.y, "diameter": c.diameter}]
+    if isinstance(c, P.FlatSlot):
+        return _slot(c.x1, c.y1, c.x2, c.y2, c.width)
+    return _raw_outline(c, ctx)[0]
+
+
+def build_sheet_metal_formed(p: P.SheetMetalFormedParams, ctx: BuildContext, label: str) -> SheetMetalPart:
+    """The formed shape (base face + flanges, outside dimensions) unfolded into its flat pattern (app.features.sheet_formed), built as one."""
+    from app.features.sheet_formed import Unfolder
+    _standalone(ctx, "a sheet-metal part")
+    segs, _ = _raw_outline(p.base, ctx)
+    x0, x1, y0, y1 = profile_bounds(segs)
+    flat = Unfolder(segs, p.thickness, p.bend_radius, p.k_factor)
+    for fl in p.flanges:
+        flat.add(fl, lambda x, y: (x, y))
+    cuts = [_flat_cutout(c, ctx) for c in p.cutouts] + flat.cutouts
+    dx, dy = _own_shift(flat.outline)                               # the flat pattern centred
+    bends = tuple(((l[0] - dx, l[1] - dy, l[2] - dx, l[3] - dy), up, angle, radius, tag) for l, up, angle, radius, tag in flat.bends)
+    fixed = ((x0 + x1) / 2 - dx, (y0 + y1) / 2 - dy)               # the base face stays put
+    return SheetMetalPart(ctx.unit, tuple(_shift(flat.outline, dx, dy)), tuple(tuple(_shift(c, dx, dy)) for c in cuts), p.thickness,
+                          p.bend_radius, bends, fixed, p.k_factor, label=label)
+
+
 def build_swept_passage(p: P.SweptPassageParams, ctx: BuildContext, label: str) -> SweptPassage:
     ctx.need_base("a swept passage")
     size = (*ctx.outline_wh, ctx.thickness)
@@ -684,7 +709,7 @@ class MenuEntry:
                 "profile_cut": ExtrudeProfileCut, "rib": Rib, "fillet_chamfer_edges": FilletChamferEdges,
                 "revolve_base": RevolveBase, "revolve_on_face": RevolveOnFace, "turned_axial": TurnedAxial, "cross_hole": CrossHole,
                 "radial_blades": RadialBlades, "turned_keyway": TurnedKeyway,
-                "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase, "sheet_metal_part": SheetMetalPart,
+                "swept_tube": SweptTube, "loft": Loft, "sheet_metal_base": SheetMetalBase, "sheet_metal_part": SheetMetalPart, "sheet_metal_formed": SheetMetalPart,
                 "swept_passage": SweptPassage, "shell": Shell, "angled_boss": AngledBoss, "side_profile_cut": SideProfileCut, "side_cut": SideCut, "drill": Drill}[self.name]
 
 
@@ -860,6 +885,23 @@ MENU: dict[str, MenuEntry] = {e.name: e for e in [
          "bends": [{"line": [[25, 0], [25, 40]], "direction": "up", "tag": "A"}, {"line": [[85, 0], [85, 40]], "direction": "up", "tag": "B"}],
          "fixed_point": [55, 30]},
         build_sheet_metal_part, _COMMON),
+    MenuEntry(
+        "sheet_metal_formed", P.SheetMetalFormedParams,
+        "A WHOLE PART in sheet metal from its FORMED shape, as the top / front / side views dimension it: a base face, flanges on its edges, "
+        "flanges on those (walls, tabs, feet), holes on any face (brackets, enclosures, chassis, clips, covers, trays). Use it when the flat "
+        "pattern is not dimensioned; the app unfolds it.",
+        "Give the base face's outline (outside dimensions, from the top view) and its holes; then each flange: the stretch of its parent's edge "
+        "it stands on, its OUTSIDE length (parent's outer surface to its tip), up / down (the bend table), angle, its own outline when it is not a "
+        "rectangle (a rounded or stepped tab), its holes and its own flanges, each in its parent's frame (x along the edge, y = distance from the "
+        "parent's outer surface). Thickness, inside bend radius, K-factor. It is the only item of the list.",
+        ("the only item: nothing can be added to it", "flanges stand on straight edges", "no forming tools (louvers, lances, embosses, "
+         "extruded holes), hems or jogs: list those as unsupported", "the volume is checked against the unfolded flat area x thickness"),
+        {"base": {"shape": "polygon", "points": [[0, 0], [60, 0], [60, 40], [0, 40]]},
+         "cutouts": [{"shape": "circle", "x": 30, "y": 20, "diameter": 10}], "thickness": 2, "bend_radius": 2,
+         "flanges": [{"edge": [[0, 40], [0, 0]], "length": 25, "direction": "up", "tag": "A"},
+                     {"edge": [[60, 0], [60, 40]], "length": 25, "direction": "up", "tag": "B",
+                      "flanges": [{"edge": [[10, 25], [30, 25]], "length": 12, "direction": "down", "tag": "C"}]}]},
+        build_sheet_metal_formed, _COMMON),
     MenuEntry(
         "swept_passage", P.SweptPassageParams,
         "After a base: a round passage CUT (or a round rod boss) along a path in a plane parallel to the front face: straight runs with bends, "
