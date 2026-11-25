@@ -31,3 +31,6 @@ eval/runs/
 # Stray screenshots (put pictures under inputs/ or docs/)
 /image*.png
 /scripts/image.png
+
+# Tests stay local, not on GitHub
+tests/
