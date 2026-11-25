@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "TEAL Application Architecture on AWS",
+    "output": ".archify/architecture-teal-app-stack-20261117-153245/teal-app-stack.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "designer", "type": "external", "label": "Designer", "sublabel": "browser", "pos": [40, 320], "size": [130, 60] },
+    { "id": "cdn", "type": "cloud", "label": "CloudFront + S3", "sublabel": "web pages", "pos": [250, 140], "size": [150, 60] },
+    { "id": "alb", "type": "security", "label": "ALB + WAF", "sublabel": "TLS 443, mTLS host", "pos": [250, 320], "size": [150, 60] },
+    { "id": "cognito", "type": "security", "label": "Amazon Cognito", "sublabel": "OIDC, company SSO", "pos": [250, 500], "size": [150, 60], "tag": "issues JWT" },
+    { "id": "nginx", "type": "security", "label": "Nginx ingress", "sublabel": "API gateway", "pos": [460, 320], "size": [150, 60], "tag": "routes, limits" },
+    { "id": "realtime", "type": "backend", "label": "Realtime service", "sublabel": "FastAPI WebSocket", "pos": [670, 140], "size": [150, 60] },
+    { "id": "api", "type": "backend", "label": "API service", "sublabel": "FastAPI, checks JWT", "pos": [670, 320], "size": [150, 60] },
+    { "id": "rds", "type": "database", "label": "Amazon RDS", "sublabel": "PostgreSQL", "pos": [670, 500], "size": [150, 60] },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "ElastiCache", "pos": [880, 140], "size": [150, 60], "tag": "cache, pub/sub" },
+    { "id": "rabbit", "type": "messagebus", "label": "RabbitMQ", "sublabel": "Amazon MQ, job queues", "pos": [880, 320], "size": [150, 60] },
+    { "id": "s3", "type": "database", "label": "S3", "sublabel": "drawings, SLDPRT, STEP", "pos": [880, 500], "size": [150, 60] },
+    { "id": "extraction", "type": "backend", "label": "Extraction worker", "sublabel": "read drawing", "pos": [1090, 140], "size": [150, 60] },
+    { "id": "planning", "type": "backend", "label": "Planning worker", "sublabel": "build lists", "pos": [1090, 320], "size": [150, 60] },
+    { "id": "orch", "type": "backend", "label": "Orchestrator", "sublabel": "runner + SW agent", "pos": [1090, 500], "size": [150, 60] },
+    { "id": "bedrock", "type": "cloud", "label": "Amazon Bedrock", "sublabel": "Claude Opus 5.5", "pos": [1320, 320], "size": [150, 60] },
+    { "id": "hub", "type": "messagebus", "label": "Connector hub", "sublabel": "relay over WSS", "pos": [1090, 680], "size": [150, 60] },
+    { "id": "connector", "type": "backend", "label": "TEAL connector", "sublabel": "C# bridge + tunnel", "pos": [1560, 680], "size": [150, 60] },
+    { "id": "solidworks", "type": "external", "label": "SolidWorks", "sublabel": "licensed seat", "pos": [1560, 860], "size": [150, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "AWS: VPC, EKS on EC2", "wraps": ["cdn", "alb", "cognito", "nginx", "realtime", "api", "rds", "redis", "rabbit", "s3", "extraction", "planning", "orch", "bedrock", "hub"], "pad": 22 },
+    { "kind": "region", "label": "Client Windows PC", "wraps": ["connector", "solidworks"], "pad": 22 }
+  ],
+  "connections": [
+    { "id": "designer-cdn", "from": "designer", "to": "cdn", "label": "pages", "fromSide": "top", "toSide": "left" },
+    { "id": "designer-cognito", "from": "designer", "to": "cognito", "label": "sign in", "variant": "security", "fromSide": "bottom", "toSide": "left" },
+    { "id": "designer-alb", "from": "designer", "to": "alb", "label": "HTTPS + JWT", "variant": "emphasis" },
+    { "id": "alb-nginx", "from": "alb", "to": "nginx", "variant": "emphasis" },
+    { "id": "nginx-api", "from": "nginx", "to": "api", "label": "/api", "variant": "emphasis" },
+    { "id": "nginx-realtime", "from": "nginx", "to": "realtime", "label": "/ws", "fromSide": "top", "toSide": "left" },
+    { "id": "realtime-redis", "from": "realtime", "to": "redis", "label": "subscribe", "variant": "dashed" },
+    { "id": "api-rds", "from": "api", "to": "rds", "label": "SQL", "fromSide": "bottom", "toSide": "top" },
+    { "id": "api-rabbit", "from": "api", "to": "rabbit", "label": "publish", "variant": "emphasis" },
+    { "id": "rabbit-extraction", "from": "rabbit", "to": "extraction", "label": "extract", "fromSide": "top", "toSide": "left" },
+    { "id": "rabbit-planning", "from": "rabbit", "to": "planning", "label": "plan" },
+    { "id": "rabbit-orch", "from": "rabbit", "to": "orch", "label": "build", "variant": "emphasis", "fromSide": "bottom", "toSide": "left" },
+    { "id": "extraction-redis", "from": "extraction", "to": "redis", "label": "progress", "variant": "dashed" },
+    { "id": "extraction-bedrock", "from": "extraction", "to": "bedrock", "fromSide": "right", "toSide": "top" },
+    { "id": "planning-bedrock", "from": "planning", "to": "bedrock", "label": "Claude" },
+    { "id": "orch-bedrock", "from": "orch", "to": "bedrock", "fromSide": "right", "toSide": "bottom" },
+    { "id": "orch-s3", "from": "orch", "to": "s3", "label": "models", "variant": "dashed" },
+    { "id": "orch-hub", "from": "orch", "to": "hub", "label": "bridge calls", "variant": "emphasis", "fromSide": "bottom", "toSide": "top" },
+    { "id": "connector-hub", "from": "connector", "to": "hub", "label": "dials out WSS, mTLS", "variant": "security" },
+    { "id": "connector-solidworks", "from": "connector", "to": "solidworks", "label": "COM", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "Gateway and auth", "items": ["ALB + WAF terminates TLS; Nginx ingress is the API gateway: routes, rate limits, WebSocket upgrade", "Cognito signs designers in through company SSO and issues JWTs; every service checks them", "Connectors use a client certificate (ALB mTLS); pods reach AWS through IAM roles (IRSA)"] },
+    { "dot": "cyan", "title": "Cache and queue", "items": ["Redis: LLM answers, rate limits, connector presence, live progress pub/sub", "RabbitMQ: extract, plan and per-client build queues, one build at a time per client, dead-letter queue"] },
+    { "dot": "emerald", "title": "Run and ship", "items": ["Docker images on EKS (EC2 nodes); workers scale on queue length", "GitHub Actions: tests, golden drawings, images to ECR, Helm deploy", "Prometheus + Grafana dashboards and alerts"] }
+  ]
+}

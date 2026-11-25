@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "TEAL on AWS Driving Client SolidWorks",
+    "output": ".archify/architecture-teal-remote-bridge-20261117-151207/teal-remote-bridge.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "designer", "type": "external", "label": "Designer", "sublabel": "browser", "pos": [40, 300], "size": [130, 60] },
+    { "id": "alb", "type": "security", "label": "Load balancer", "sublabel": "HTTPS 443, SSO", "pos": [240, 300], "size": [150, 60] },
+    { "id": "app", "type": "backend", "label": "TEAL web app", "sublabel": "pages, API, review", "pos": [450, 300], "size": [150, 60], "tag": "reads drawings" },
+    { "id": "bedrock", "type": "cloud", "label": "Amazon Bedrock", "sublabel": "Claude Opus 5.5", "pos": [565, 110], "size": [150, 60], "tag": "IAM role, no key" },
+    { "id": "orch", "type": "backend", "label": "Orchestrator", "sublabel": "runner, SW agent, checks", "pos": [680, 300], "size": [150, 60], "tag": "existing Python" },
+    { "id": "rds", "type": "database", "label": "Amazon RDS", "sublabel": "PostgreSQL engine", "pos": [450, 480], "size": [150, 60] },
+    { "id": "hub", "type": "messagebus", "label": "Connector hub", "sublabel": "HTTP relay over WSS", "pos": [910, 300], "size": [150, 60] },
+    { "id": "s3", "type": "database", "label": "S3", "sublabel": "drawings, SLDPRT, STEP", "pos": [910, 480], "size": [150, 60] },
+    { "id": "connector", "type": "backend", "label": "TEAL connector", "sublabel": "C# bridge + tunnel", "pos": [1210, 300], "size": [150, 60], "tag": "one install" },
+    { "id": "solidworks", "type": "external", "label": "SolidWorks", "sublabel": "COM, licensed seat", "pos": [1440, 300], "size": [150, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "AWS account: VPC, EC2 Linux", "wraps": ["alb", "app", "bedrock", "orch", "rds", "hub", "s3"], "pad": 22 },
+    { "kind": "region", "label": "Client Windows PC", "wraps": ["connector", "solidworks"], "pad": 22 }
+  ],
+  "connections": [
+    { "id": "designer-alb", "from": "designer", "to": "alb", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "alb-app", "from": "alb", "to": "app", "label": "signed in", "variant": "security" },
+    { "id": "app-rds", "from": "app", "to": "rds", "label": "SQL", "fromSide": "bottom", "toSide": "top" },
+    { "id": "app-bedrock", "from": "app", "to": "bedrock", "label": "read, plan", "fromSide": "top", "toSide": "left" },
+    { "id": "app-orch", "from": "app", "to": "orch", "label": "build job", "variant": "emphasis" },
+    { "id": "orch-bedrock", "from": "orch", "to": "bedrock", "label": "agent turns", "fromSide": "top", "toSide": "right" },
+    { "id": "orch-hub", "from": "orch", "to": "hub", "label": "bridge calls", "variant": "emphasis" },
+    { "id": "orch-s3", "from": "orch", "to": "s3", "label": "models", "variant": "dashed", "fromSide": "bottom", "toSide": "left" },
+    { "id": "connector-hub", "from": "connector", "to": "hub", "label": "dials out WSS", "variant": "security" },
+    { "id": "connector-s3", "from": "connector", "to": "s3", "label": "presigned PUT / GET", "variant": "dashed", "fromSide": "bottom", "toSide": "right" },
+    { "id": "connector-solidworks", "from": "connector", "to": "solidworks", "label": "COM", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Orchestration lives in AWS", "items": ["Runner, SolidWorks agent, step checks, finish and assembly run on EC2", "Each SolidWorks action is a bridge HTTP call sent through the hub", "Same calls as today: only the bridge address changes"] },
+    { "dot": "rose", "title": "Handshake", "items": ["Pair once with a one-time code: the connector gets a client certificate", "Connector dials out WSS 443 (mTLS): no open port on the client", "hello, then heartbeat every 15 s; one job per PC"] },
+    { "dot": "emerald", "title": "Client install", "items": ["SolidWorks + the TEAL connector (the existing C# bridge with a tunnel added)", "No Python, no AI key, no database on the client"] },
+    { "dot": "amber", "title": "Model", "items": ["Claude Opus 5.5 on Amazon Bedrock, signed by the EC2 IAM role", "Drawings never leave the AWS account", "Domo removed"] }
+  ]
+}

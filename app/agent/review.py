@@ -120,7 +120,10 @@ def preview_build(approved, job_dir):
 
 def verify_receipt(job_dir, receipt):
     root = Path(job_dir).resolve()
-    for item in [*receipt["files"].values(), *receipt.get("dependencies", [])]:
+    # SolidWorks' own lock files ("~$name.SLDPRT", present only while a document is open) were once recorded as dependencies: not part
+    # of the model, never checked
+    deps = [d for d in receipt.get("dependencies", []) if not Path(d["path"]).name.startswith("~$")]
+    for item in [*receipt["files"].values(), *deps]:
         path = Path(item["path"]).resolve()
         if not path.is_relative_to(root / "private") or not path.is_file() or sha256(path) != item["sha256"]:
             raise ValueError("The model/preview changed after review; generate and review it again")
@@ -156,7 +159,7 @@ async def _export(approved, job_dir, receipt):
             verify_receipt(job_dir, receipt)
             if stage == "before":
                 shutil.copyfile(source, outputs[native_key])
-                for dependency in receipt.get("dependencies", []):
+                for dependency in [d for d in receipt.get("dependencies", []) if not Path(d["path"]).name.startswith("~$")]:
                     relative = Path(dependency["path"]).resolve().relative_to(source.parent)
                     target = folder / relative
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -178,7 +181,7 @@ async def _export(approved, job_dir, receipt):
         with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
             for path in outputs.values():
                 archive.write(path, path.name)
-            for dependency in receipt.get("dependencies", []):
+            for dependency in [d for d in receipt.get("dependencies", []) if not Path(d["path"]).name.startswith("~$")]:
                 relative = Path(dependency["path"]).resolve().relative_to(source.parent)
                 copied = folder / relative
                 if sha256(copied) != dependency["sha256"]:

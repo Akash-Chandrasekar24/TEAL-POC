@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "TEAL Production Architecture",
+    "output": ".archify/architecture-teal-production-20261117-145728/teal-production.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "designer", "type": "external", "label": "Designer", "sublabel": "browser: Upload, Review", "pos": [40, 300], "size": [140, 60] },
+    { "id": "taskpane", "type": "frontend", "label": "SolidWorks chat", "sublabel": "Task Pane panel", "pos": [240, 470], "size": [140, 60] },
+    { "id": "gateway", "type": "security", "label": "Gateway + SSO", "sublabel": "Entra ID, TLS, WAF", "pos": [240, 300], "size": [140, 60] },
+    { "id": "events", "type": "frontend", "label": "Live events", "sublabel": "WebSocket / SSE", "pos": [460, 130], "size": [140, 60] },
+    { "id": "api", "type": "backend", "label": "API service", "sublabel": "FastAPI, stateless", "pos": [460, 300], "size": [140, 60] },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "jobs, reviews, lists", "pos": [460, 470], "size": [140, 60] },
+    { "id": "workflow", "type": "messagebus", "label": "Workflow engine", "sublabel": "Temporal, durable", "pos": [690, 300], "size": [150, 72] },
+    { "id": "extraction", "type": "backend", "label": "Extraction workers", "sublabel": "OCR, view map, review", "pos": [930, 130], "size": [150, 60] },
+    { "id": "planning", "type": "backend", "label": "Planning workers", "sublabel": "build lists, self-repair", "pos": [930, 306], "size": [150, 60] },
+    { "id": "cad", "type": "backend", "label": "CAD worker pool", "sublabel": "Windows VM + SolidWorks", "pos": [930, 470], "size": [150, 64], "tag": "1 job per seat" },
+    { "id": "storage", "type": "database", "label": "Object storage", "sublabel": "drawings, SLDPRT, STEP", "pos": [930, 650], "size": [150, 60] },
+    { "id": "licence", "type": "external", "label": "Licence server", "sublabel": "SolidNetWork", "pos": [1180, 600], "size": [140, 60] },
+    { "id": "llm", "type": "security", "label": "LLM gateway", "sublabel": "fallback, cache, limits", "pos": [1180, 306], "size": [150, 60] },
+    { "id": "domo", "type": "external", "label": "Domo AI", "sublabel": "gpt-5.6-sol + anthropic", "pos": [1420, 306], "size": [150, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Company cloud tenant", "wraps": ["gateway", "taskpane", "events", "api", "postgres", "workflow", "extraction", "planning", "cad", "storage", "llm"], "pad": 22 },
+    { "kind": "security-group", "label": "Windows CAD pool", "wraps": ["cad"], "pad": 12 }
+  ],
+  "connections": [
+    { "id": "designer-gateway", "from": "designer", "to": "gateway", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "taskpane-gateway", "from": "taskpane", "to": "gateway", "label": "chat", "fromSide": "top", "toSide": "bottom" },
+    { "id": "gateway-api", "from": "gateway", "to": "api", "label": "signed in", "variant": "security" },
+    { "id": "api-postgres", "from": "api", "to": "postgres", "label": "SQL", "fromSide": "bottom", "toSide": "top" },
+    { "id": "api-events", "from": "api", "to": "events", "label": "publish", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "events-designer", "from": "events", "to": "designer", "label": "progress, reasoning", "variant": "dashed", "fromSide": "left", "toSide": "top" },
+    { "id": "api-workflow", "from": "api", "to": "workflow", "label": "start, signal", "variant": "emphasis" },
+    { "id": "workflow-extraction", "from": "workflow", "to": "extraction", "label": "read drawing", "fromSide": "top", "toSide": "left" },
+    { "id": "workflow-planning", "from": "workflow", "to": "planning", "label": "after review", "variant": "emphasis" },
+    { "id": "workflow-cad", "from": "workflow", "to": "cad", "label": "build task", "variant": "emphasis", "fromSide": "bottom", "toSide": "left" },
+    { "id": "extraction-llm", "from": "extraction", "to": "llm", "label": "prompts", "fromSide": "right", "toSide": "top" },
+    { "id": "planning-llm", "from": "planning", "to": "llm" },
+    { "id": "cad-llm", "from": "cad", "to": "llm", "label": "agent turns", "fromSide": "right", "toSide": "bottom" },
+    { "id": "cad-storage", "from": "cad", "to": "storage", "label": "upload models", "fromSide": "bottom", "toSide": "top" },
+    { "id": "cad-licence", "from": "cad", "to": "licence", "label": "seat check", "variant": "dashed", "fromSide": "bottom", "toSide": "left" },
+    { "id": "llm-domo", "from": "llm", "to": "domo", "label": "HTTPS", "variant": "security" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Job flow", "items": ["Upload, read, designer review, build lists, parts, assembly, export", "Workflow waits for review for hours at no cost and resumes exactly", "A crash at any step resumes from the last completed one"] },
+    { "dot": "emerald", "title": "CAD worker pool", "items": ["One SolidWorks per Windows VM, pulls one task at a time", "Heartbeat 30 s; watchdog restarts a hung SolidWorks", "Scales on queue depth up to the licence ceiling (about 6 seats for 200 drawings a day)"] },
+    { "dot": "rose", "title": "Security and quality", "items": ["SSO roles, per-team isolation, audit log, secrets in Key Vault", "Drawings go only to the approved model provider", "Golden drawing set scored before every release"] },
+    { "dot": "amber", "title": "Decide first", "items": ["Student licence is academic only: commercial network seats needed", "Confirm Dassault allows unattended server use"] }
+  ]
+}

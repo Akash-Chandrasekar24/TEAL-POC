@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "19fd10aa-92a8-4205-bb26-0c60afa44ced",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "E:\\New folder (2)\\GWC\\TEAL\\drawing-to-solidworks\\.archify\\architecture-teal-app-stack-20261117-153245\\candidate.json",
+  "output": "E:\\New folder (2)\\GWC\\TEAL\\drawing-to-solidworks\\.archify\\architecture-teal-app-stack-20261117-153245\\teal-app-stack.html",
+  "specification": {
+    "sha256": "bb87ca3fe41a8c503ed3486019be116e18c8599abb1f7619f5767153fd486ba4",
+    "bytes": 6298
+  },
+  "artifact": {
+    "sha256": "ad1e0fb647c6adaf2b0bb54d2edc408f228cdd897ba1c0691bfb452ee4c42ddc",
+    "bytes": 784804
+  }
+}

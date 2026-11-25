@@ -12,6 +12,7 @@ import base64
 import gzip
 import hashlib
 import json
+import math
 import os
 import re
 from urllib.parse import parse_qs, urlparse
@@ -878,7 +879,73 @@ def approve_batch(rid, bid, accepted):
 _BUILT = ("awaiting_review", "accepted", "exported")
 
 
-def build_in_solidworks(rid, llm_name=None):
+def _finished(rid: str) -> bool:
+    """Every part of this drawing is built and, for several parts, the assembly is built with none left out: nothing to do again."""
+    batch = load_batch(rid) or {}
+    items = batch.get("items") or []
+    if batch.get("phase") != "done" or not items or not all(i.get("job_id") and _job_phase(i["job_id"]) in _BUILT for i in items):
+        return False
+    if len(items) == 1:
+        return True
+    asm = batch.get("assembly") or {}
+    if asm.get("status") not in _BUILT or not asm.get("job_id") or _job_phase(asm["job_id"]) not in _BUILT:
+        return False
+    latest = ASSEMBLIES / rid / "latest.json"
+    return not (latest.is_file() and read_json(latest).get("left_out"))
+
+
+def _finished_twin(rid: str, result: dict) -> str | None:
+    """The newest OTHER result of the same drawing (identical page images) that is finished: its builds are reused instead of building
+    the same parts and assembly again (an upload of a drawing built before waited many minutes for what was already on disk)."""
+    pages = [p.get("sha") for p in result.get("pages", [])]
+    if not pages or not all(pages):
+        return None
+    best = None
+    for path in (config.PROJECT_ROOT / "storage/web").glob("*.json"):
+        other = path.stem
+        if other == rid or not _ID.fullmatch(other):
+            continue
+        try:
+            if [p.get("sha") for p in read_json(path).get("pages", [])] != pages or not _finished(other):
+                continue
+        except (OSError, ValueError):
+            continue
+        stamp = _batch_path(other).stat().st_mtime
+        if best is None or stamp > best[0]:
+            best = (stamp, other)
+    return best[1] if best else None
+
+
+def _adopt_assemblies(rid: str):
+    """Copied assembly plans carry the twin's result id and source fingerprint, which assembly_artifact refuses ("The drawing source
+    changed"): stamp them with this result's, since the twin has the identical page images."""
+    source_hash = digest(assembly_source(rid))
+    for f in (ASSEMBLIES / rid).glob("*.json"):
+        artifact = read_json(f)
+        if isinstance(artifact.get("plan"), dict):
+            artifact["result_id"] = rid
+            artifact["plan"]["source_hash"] = source_hash
+            write_json(f, artifact)
+
+
+def _reuse_twin(rid: str, twin: str) -> dict:
+    """Copy the twin's build lists, view map, fits, part builds and assembly into this result (the built jobs are shared, not rebuilt)."""
+    import shutil
+    for src_root in (PART_LISTS, ASSEMBLIES):
+        src, dst = src_root / twin, src_root / rid
+        if src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+            for f in src.iterdir():
+                if f.is_file() and f.name != "batch.json":
+                    shutil.copy2(f, dst / f.name)
+    _adopt_assemblies(rid)
+    batch = {**load_batch(twin), "id": uuid.uuid4().hex[:12], "result_id": rid, "reused_from": twin, "flow": "one_button"}
+    batch.pop("error", None)                                                    # the twin's old error is not this result's
+    _save_batch(rid, batch)
+    return batch
+
+
+def build_in_solidworks(rid, llm_name=None, again=False):
     """THE button: one uninterrupted flow for the whole drawing. The designer settled the doubts on the Review page and pressed it, which is
     the approval: build lists for every part (AI) -> the AI decides any remaining doubt -> every part is built in SolidWorks (one already
     built from the same list is reused, not rebuilt) -> when several parts were built, they are placed and built as ONE assembly."""
@@ -886,6 +953,15 @@ def build_in_solidworks(rid, llm_name=None):
     result = result_with_design(rid)
     if any("human review required" in q or "confirm this" in q for q in result["drawing_model"].get("issues", [])):
         raise ValueError("Approve the measurements on the Review step first")
+    with _BATCH_LOCK:
+        current = load_batch(rid)
+        if current and current.get("phase") in ("preparing", "resolving", "building", "assembling") and current["id"] in _ACTIVE:
+            return current
+        if not again and _finished(rid):                                        # already built: shown at once, not built again
+            return current
+        twin = None if again else _finished_twin(rid, result)
+        if twin:                                                                # the same drawing was built before: reuse it
+            return _reuse_twin(rid, twin)
     sw = solidworks_status()
     if not sw["ready"]:
         raise ValueError(f"SolidWorks is not ready: {sw['detail']}")
@@ -899,7 +975,8 @@ def build_in_solidworks(rid, llm_name=None):
             old = previous.get(p["id"], {})
             items.append({"part_id": p["id"], "name": p["name"], "status": "to_prepare",
                           **({"job_id": old["job_id"], "built_list": old.get("list_id")} if old.get("job_id") else {})})
-        batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name, "flow": "one_button"}
+        batch = {"id": uuid.uuid4().hex[:12], "result_id": rid, "phase": "preparing", "items": items, "llm": llm_name, "flow": "one_button",
+                 "again": bool(again)}               # "again": every part is built anew in SolidWorks, none reused
         _save_batch(rid, batch)
         _ACTIVE.add(batch["id"])
     _PREP_POOL.submit(_one_flow, rid, batch["id"], llm_name)
@@ -927,6 +1004,15 @@ def _one_flow(rid, bid, llm_name):
                 art = latest_lists(PART_LISTS, rid).get(item["part_id"]) or _early_list(rid, item["part_id"])
                 if not art:
                     art = create_part_list(rid, item["part_id"], llm_name)
+                elif art["check"]["status"] == "ready" and art["draft"].get("items"):
+                    # checked when it was written: the checker's rules may have grown since (a pin at a web's box centre). A list that fails
+                    # them now is edited by the AI with the checker's exact words (the earlier list is kept as the base), not rewritten
+                    from app.web.parts import _check
+                    fresh = _check(art["draft"])
+                    if fresh["status"] != "ready":
+                        art = create_part_list(rid, item["part_id"], llm_name, answers=[
+                            {"question": "The offline checker refused your build list. Fix exactly this and keep everything else",
+                             "answer": "; ".join(fresh["blocking"])[:3000]}])
                 if art["check"]["status"] != "ready":
                     if _only_doubts(art):
                         art = _decide_doubts(rid, item["part_id"], llm_name, art)
@@ -950,7 +1036,7 @@ def _one_flow(rid, bid, llm_name):
             list(pool.map(one, batch["items"]))
         for item in batch["items"]:                                              # built before from the same list: keep it, do not rebuild
             if item["status"] == "listed":
-                if item.get("job_id") and item.get("built_list") == item["list_id"] and _job_phase(item["job_id"]) in _BUILT:
+                if not batch.get("again") and item.get("job_id") and item.get("built_list") == item["list_id"] and _job_phase(item["job_id"]) in _BUILT:
                     mark(item, status=_job_phase(item["job_id"]), detail="built earlier from the same build list")
                 else:
                     mark(item, status="queued")
@@ -981,31 +1067,171 @@ def _build_each_then_assemble(rid, bid, llm_name):
             with _BATCH_LOCK:
                 batch = load_batch(rid); batch["phase"] = "assembling"; batch["assembly"] = {"status": "placing"}; _save_batch(rid, batch)
             try:
-                art = assemble_parts(rid, llm_name)
-                from app.assembly.from_parts import approve
-                plan = approve(AssemblyPlan.model_validate(art["plan"]))
-                saved = save_assembly(rid, plan, art.get("extracted", {}), art.get("harness"), art.get("review_notes"))
-                for key in ("left_out", "problems", "frame"):
-                    if key in art:
-                        saved[key] = art[key]
-                write_json(ASSEMBLIES / rid / f"{saved['id']}.json", saved)
-                write_json(ASSEMBLIES / rid / "latest.json", saved)
-                if saved["blockers"]:
-                    done = {"status": "not_buildable", "detail": "; ".join(saved["blockers"][:6])[:2000]}
-                else:
-                    with _BATCH_LOCK:
-                        batch = load_batch(rid); batch["assembly"] = {"status": "building", "attempt": saved["id"]}; _save_batch(rid, batch)
-                    _build_assembly(rid, saved["id"])
-                    done = None
+                _assemble_with_repairs(rid, llm_name)
             except Exception as ex:                                              # noqa: BLE001 - the parts stay built
-                done = {"status": "build_failed", "detail": f"{type(ex).__name__}: {ex}"[:2000]}
-            if done:
                 with _BATCH_LOCK:
-                    batch = load_batch(rid); batch["assembly"] = {**batch.get("assembly", {}), **done}; _save_batch(rid, batch)
+                    batch = load_batch(rid)
+                    batch["assembly"] = {**batch.get("assembly", {}), "status": "build_failed", "detail": f"{type(ex).__name__}: {ex}"[:2000]}
+                    _save_batch(rid, batch)
         with _BATCH_LOCK:
             batch = load_batch(rid); batch["phase"] = "done"; _save_batch(rid, batch)
     finally:
         _ACTIVE.discard(bid)
+
+
+ASSEMBLY_BUILDS = 5          # SolidWorks assembly builds per drawing in one run: the first, then up to four after repairs
+PART_FIXES = 3               # automatic corrections per part (one repair can expose the next: a cavity cut took the pin bore with it)
+
+
+def _assembly_note(rid, **fields):
+    with _BATCH_LOCK:
+        batch = load_batch(rid)
+        batch["assembly"] = {**batch.get("assembly", {}), **fields}
+        _save_batch(rid, batch)
+
+
+def _correct_part(rid: str, part_id: str, message: str, llm_name=None) -> str:
+    """The SolidWorks agent corrects one built part (it edits the saved part, as a designer's chat correction does). An edit can only ADD
+    features: when the agent adds nothing (a turned piston's ring grooves are in its base revolve profile: widening them means changing the
+    base), the part's build list is corrected by the AI instead and the part is built again. Returns what happened."""
+    batch = load_batch(rid) or {}
+    item = next((i for i in batch.get("items", []) if i.get("part_id") == part_id and i.get("job_id")), None)
+    if item is None:
+        return f"{part_id}: no built job to correct"
+    try:                                                                        # one part's failed repair never stops the assembly loop
+        # the last assembly build leaves its unsaved assembly open, and a part edit or build refuses to start beside it (a rod's rebuild
+        # stopped on "unexpected documents are open: Assem5"): close this app's own leftovers first, never anyone else's
+        from app.agent.review import close_saved_app_documents
+        close_saved_app_documents()
+        rec = WORKFLOW.status(item["job_id"])
+        if rec.get("phase") != "awaiting_review":
+            return f"{item['name']}: not correctable while {rec.get('phase')}"
+        out = WORKFLOW.action(item["job_id"], rec["revision"], "correct", message=message, review_hash=rec.get("review_hash"))
+        if (out.get("agent_reply") or {}).get("added"):
+            return f"{item['name']}: corrected in SolidWorks ({len(out['agent_reply']['added'])} feature(s) added)"
+        return _rebuild_part(rid, part_id, message, llm_name, (out.get("agent_reply") or {}).get("says", ""))
+    except Exception as ex:                                                     # noqa: BLE001 - logged in the repairs, the loop goes on
+        return f"{item['name']}: correction failed: {type(ex).__name__}: {ex}"[:400]
+
+
+def _rebuild_part(rid: str, part_id: str, message: str, llm_name=None, why: str = "") -> str:
+    """The build list is corrected by the AI (the earlier list is its base, the correction is the designer-style answer), then the part is
+    built again as a new job; the batch item then points at the new build."""
+    answer = message + (f"\nThe SolidWorks agent could not do it by adding features: {why}" if why else "")
+    art = create_part_list(rid, part_id, llm_name, answers=[{"question": "The assembly check found that the built part does not fit the parts "
+                                                             "it is assembled with. Correct the build list so it does; keep every other item",
+                                                             "answer": answer[:3000]}])
+    name = art.get("part", {}).get("name", part_id)
+    if art["check"]["status"] != "ready" and _only_doubts(art):                 # as the one-button flow: the AI decides its own questions
+        art = _decide_doubts(rid, part_id, llm_name, art)
+    if art["check"]["status"] != "ready":
+        return f"{name}: the corrected build list was refused: {'; '.join(art['check']['blocking'])[:300]}"
+    from app.agent.review import close_saved_app_documents
+    close_saved_app_documents()                                                 # the edit before it may have left its part open
+    job = WORKFLOW.create(rid, art["id"])
+    _hand_drawing_to_agent(rid, part_id, job["id"])
+    job = _no_pause(WORKFLOW.action(job["id"], job["revision"], "build", accepted_gaps=[u["id"] for u in art["check"]["unsupported"]]))
+    with _BATCH_LOCK:
+        batch = load_batch(rid)
+        for item in batch["items"]:
+            if item["part_id"] == part_id and job["phase"] in _BUILT:
+                item.update(job_id=job["id"], list_id=art["id"], built_list=art["id"], status=job["phase"], detail="rebuilt so it fits")
+        _save_batch(rid, batch)
+    return f"{name}: rebuilt from a corrected build list ({job['phase']})"
+
+
+def _assemble_with_repairs(rid: str, llm_name=None) -> None:
+    """Assemble the built parts, and repair what stops the assembly, with no designer in between:
+    - a part that does not match a fit (no bore of the shared diameter, a groove narrower than its ring) is corrected by the SolidWorks agent
+      BEFORE the assembly is built, and measured again;
+    - copies of one part that share space are placed again before SolidWorks (in assemble_parts);
+    - after a SolidWorks build that reports overlaps, the placement is redone with the overlaps (assemble_parts feeds them back), and a pair
+      that overlaps where a cavity fit says the host gives room, or overlaps AGAIN after the placement was redone, has its host part corrected.
+    At most ASSEMBLY_BUILDS SolidWorks builds and PART_FIXES corrections per part; what is still wrong is left for the designer."""
+    from collections import Counter
+    from app.assembly.fits import correction, pair_fits, size_text
+    from app.assembly.from_parts import approve
+    from app.web.parts import detect_parts
+    ensure_fits(rid, llm_name)                                                 # drawings whose lists were written before fits existed
+    fits = load_fits(rid)
+    names = {p["id"]: p["name"] for p in detect_parts(result_with_design(rid))}
+    fixes, builds, overlapped, log = Counter(), 0, set(), []
+    asked: dict[str, list[str]] = {}       # every problem each part was corrected for in this run: a rebuild from its list must keep
+                                           # them all (a piston rebuilt for its pin bore lost the cavity an earlier edit had cut)
+
+    def fix(pid, msgs):
+        asked[pid] = [m for m in asked.get(pid, []) if m not in msgs] + list(msgs)
+        log.append(_correct_part(rid, pid, correction(names.get(pid, pid), asked[pid]), llm_name)[:400])
+        fixes[pid] += 1
+
+    for _ in range(ASSEMBLY_BUILDS + 2 * PART_FIXES + 1):                       # a bound: every pass builds or corrects something
+        _assembly_note(rid, status="placing", repairs=log[-20:])
+        art = assemble_parts(rid, llm_name)
+        wrong = {pid: msgs for pid, msgs in (art.get("fit_problems") or {}).items() if fixes[pid] < PART_FIXES}
+        if wrong:
+            for pid, msgs in wrong.items():
+                _assembly_note(rid, status="correcting", detail=f"correcting {names.get(pid, pid)}: " + "; ".join(msgs)[:600], repairs=log[-20:])
+                fix(pid, msgs)
+            continue
+        plan = approve(AssemblyPlan.model_validate(art["plan"]))
+        saved = save_assembly(rid, plan, art.get("extracted", {}), art.get("harness"), art.get("review_notes"))
+        for key in ("left_out", "problems", "frame", "fit_problems"):
+            if key in art:
+                saved[key] = art[key]
+        write_json(ASSEMBLIES / rid / f"{saved['id']}.json", saved)
+        write_json(ASSEMBLIES / rid / "latest.json", saved)
+        if saved["blockers"]:
+            _assembly_note(rid, status="not_buildable", detail="; ".join(saved["blockers"][:6])[:2000], repairs=log[-20:])
+            return
+        builds += 1
+        _assembly_note(rid, status="building", attempt=saved["id"], build=builds, repairs=log[-20:])
+        _build_assembly(rid, saved["id"])
+        batch = load_batch(rid)
+        over = _last_overlaps(batch) if (batch.get("assembly") or {}).get("status") == "needs_human" else None
+        if not over or builds >= ASSEMBLY_BUILDS:
+            if log:
+                _assembly_note(rid, repairs=log[-20:])
+            if saved.get("left_out") and (load_batch(rid).get("assembly") or {}).get("status") == "awaiting_review":
+                # built, but without some parts: no overlap among the rest proves nothing about them (an engine "assembled cleanly"
+                # without its pistons and rods). Never shown as a finished assembly.
+                _assembly_note(rid, status="incomplete", detail="built WITHOUT: " + "; ".join(saved["left_out"])[:600])
+            return
+        part_of = {f"item-{pid}"[:40]: pid for pid in names}
+        bom = {o["id"]: o["bom_id"] for o in plan.model_dump()["occurrences"]}
+        volume, count = Counter(), Counter()
+        for o in over["overlaps"]:
+            a, b = part_of.get(bom.get(o["a"], "")), part_of.get(bom.get(o["b"], ""))
+            if a and b and a != b:
+                volume[frozenset((a, b))] += o["mm3"]
+                count[frozenset((a, b))] += 1
+        hosts: dict[str, list[str]] = {}
+        for pair, mm3 in volume.items():
+            a, b = sorted(pair)
+            for f in pair_fits(fits, a, b):
+                if f["kind"] == "cavity" or pair in overlapped:              # placement cannot help: the host must give room
+                    guest = names.get(f["guest"], f["guest"])
+                    hosts.setdefault(f["host"], []).append(
+                        f"{guest} overlaps it by {mm3 / 1000:.1f} cm3 at the {f['kind']} fit: its {f['host_feature'] or 'seat'} must hold "
+                        f"{guest}'s {f['guest_feature'] or 'fitting part'} ({size_text(f)})"
+                        + (". Make that room: on a turned part (revolve_base) it is the INSIDE line of the half-section, a bore open at the "
+                           "end the guest enters from (simplify what is not round, say so in unsupported); never leave it out"
+                           + (f". Size it to the guest, no larger: a round bore of diameter {math.hypot(f['width'], f['diameter']):.0f} mm "
+                              f"holds a {f['width']:g} x {f['diameter']:g} mm guest; the walls outside it must keep every other fit of this part "
+                              f"(a pin bore through them). A bore as wide as the part cut the pin bore away"
+                              if f.get("width") and f.get("diameter") else "")
+                           if f["kind"] == "cavity" else "")
+                        # a small overlap at a round fit whose diameters match: the fillet where the guest's cylinder meets its shoulder
+                        # runs under the sharp edge of the host's bore (an engine's rods touched the crankpin fillets by 31 mm3 each)
+                        + (". The diameters already match: this is the fillet at the end of the guest's cylinder reaching under the "
+                           "sharp edge of the bore. Chamfer both edges of the bore (fillet_chamfer_edges) by a little more than that fillet"
+                           if f["kind"] == "round" and mm3 / max(1, count[pair]) < 1000 else ""))
+        overlapped |= set(volume)
+        for host, msgs in hosts.items():
+            if fixes[host] < PART_FIXES:
+                _assembly_note(rid, status="correcting", detail=f"correcting {names.get(host, host)}: " + "; ".join(msgs)[:600], repairs=log[-20:])
+                fix(host, msgs)
+        log.append(f"assembly build {builds}: {len(over['overlaps'])} overlaps; placing again with them")
+    _assembly_note(rid, repairs=log[-20:])
 
 
 def _build_batch(rid, bid):
@@ -1066,6 +1292,7 @@ def _no_pause(job, rounds=4):
 
 
 def _build_each(rid):
+    from app.agent.review import close_saved_app_documents
     batch = load_batch(rid)
     for item in batch["items"]:
         if item["status"] != "queued":
@@ -1073,6 +1300,9 @@ def _build_each(rid):
         item["status"] = "building"
         _save_batch(rid, batch)
         try:
+            # the last run's assembly stays open in SolidWorks (unsaved), and a part build refuses to start beside it: an engine's piston
+            # and rod were "not built" and the assembly went ahead without them. Close this app's own leftovers, never anyone else's.
+            close_saved_app_documents()
             job = WORKFLOW.create(rid, item["list_id"])
             _hand_drawing_to_agent(rid, item["part_id"], job["id"])
             item["job_id"] = job["id"]                                           # the page shows this build's live progress
@@ -1145,31 +1375,135 @@ def _last_overlaps(batch: dict) -> dict | None:
     return {"overlaps": overlaps, "previous": previous} if overlaps else None
 
 
+def _jobs_of(rid: str, kind: str):
+    """(job folder, record) for every workflow job of this drawing of one kind ('part' / 'assembly')."""
+    for state in (WORKFLOW.root / "jobs").glob("*/state.json"):
+        try:
+            record = json.loads(state.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if record.get("result_id") == rid and record.get("kind") == kind:
+            yield state.parent, record
+
+
+def _part_versions(rid: str) -> dict[str, list[dict]]:
+    """{part id: [{sha256, source_name, bbox_mm, job, mtime}]}: every built version of each part of this drawing, from its part builds (the
+    file each job holds now) and from earlier assembly plans (a version a later edit replaced is kept by its hash in the model store)."""
+    from app.assembly.from_parts import built_part
+    out: dict[str, dict[str, dict]] = {}
+    part_of_list: dict[str, str | None] = {}
+    for folder, record in _jobs_of(rid, "part"):
+        attempt = record.get("attempt")
+        if attempt not in part_of_list:
+            art = (read_json(PART_LISTS / rid / f"{attempt}.json") if attempt and (PART_LISTS / rid / f"{attempt}.json").is_file() else {})
+            part_of_list[attempt] = (art.get("part") or {}).get("id")
+        pid = part_of_list[attempt]
+        found = built_part(WORKFLOW.root / "jobs", folder.name) if pid else None
+        if not found:
+            continue
+        sha = hashlib.sha256(found["path"].read_bytes()).hexdigest()
+        if not (MODELS / f"{sha}.SLDPRT").is_file():
+            import_model(found["path"].name, found["path"].read_bytes(), MODELS)
+        write_json(MODELS / f"{sha}.bbox.json", found["bbox_mm"])
+        out.setdefault(pid, {})[sha] = {"sha256": sha, "source_name": f"{sha}.SLDPRT", "bbox_mm": found["bbox_mm"], "job": folder.name,
+                                        "mtime": (folder / "state.json").stat().st_mtime}
+    for folder, record in _jobs_of(rid, "assembly"):
+        for plan_file in folder.glob("private/*/plan.json"):
+            try:
+                plan = json.loads(plan_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            for m in plan.get("models", []):
+                pid, sha = str(m.get("bom_id", ""))[5:], m.get("sha256", "")
+                box = MODELS / f"{sha}.bbox.json"
+                if pid and sha and sha not in out.get(pid, {}) and box.is_file() and (MODELS / f"{sha}.SLDPRT").is_file():
+                    out.setdefault(pid, {})[sha] = {"sha256": sha, "source_name": f"{sha}.SLDPRT", "bbox_mm": read_json(box), "job": None,
+                                                    "mtime": plan_file.stat().st_mtime}
+    return {pid: list(v.values()) for pid, v in out.items()}
+
+
+def _version_scores(rid: str, fits: list[dict]) -> dict[str, float]:
+    """{part version hash: the least overlap (mm3) it was to blame for in any SolidWorks assembly build of this drawing}."""
+    from app.assembly.versions import attributed, scores
+    builds, used = [], []
+    for folder, _record in _jobs_of(rid, "assembly"):
+        for report_file in folder.glob("private/*/report.json"):
+            try:
+                report = json.loads(report_file.read_text(encoding="utf-8"))
+                plan = json.loads((report_file.parent / "plan.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            checks = [c["readback"] for c in report.get("checks", []) if "interferences" in (c.get("readback") or {})]
+            if not checks or not checks[-1].get("interference_complete", True):
+                continue
+            part = {m["sha256"]: str(m.get("bom_id", ""))[5:] for m in plan.get("models", [])}
+            overlaps = []
+            for i in checks[-1]["interferences"]:
+                a, b = (c.rsplit("-", 1)[0] for c in i["components"][:2])
+                if a in part and b in part:
+                    overlaps.append((a, part[a], b, part[b], float(i.get("volume_m3", 0)) * 1e9))
+            builds.append(attributed(overlaps, fits))
+            used.append(set(part))
+    return scores(builds, used)
+
+
 def assemble_parts(rid: str, llm_name=None, client=None) -> dict:
     """"Assemble into one file": the parts the last batch built become the components; the AI drafts where each copy goes from the assembly
     views. Saved as the drawing's assembly plan, NOTHING confirmed: the designer approves it (approve_assembly) before it is built."""
     from app.assembly.assets import import_model
-    from app.assembly.from_parts import built_part, draft_placements, plan_from_parts
+    from app.assembly.from_parts import built_part, copy_overlaps, draft_placements, plan_from_parts
     from app.llm import make_client
     from app.web.parts import assembly_views, detect_parts, part_sheet, whole_pages
+    from app.assembly.fits import check_fits
+    from app.assembly.versions import choose
     result = result_with_design(rid)
     batch = load_batch(rid) or {}
     known = {p["id"]: p for p in detect_parts(result)}
-    built, left_out = [], []
+    fits = load_fits(rid)
+    history = _part_versions(rid) if client is None else {}
+    built, left_out, swapped = [], [], {}
     for item in batch.get("items", []):
-        found = built_part(WORKFLOW.root / "jobs", item["job_id"]) if item.get("job_id") else None
         part = known.get(item["part_id"])
-        if not (found and part):
-            left_out.append(f"{item['name']}: {'not built' if part else 'not on the sheet'}")
+        found = built_part(WORKFLOW.root / "jobs", item["job_id"]) if item.get("job_id") else None
+        if part is None:
+            left_out.append(f"{item['name']}: not on the sheet")
             continue
-        asset = import_model(found["path"].name, found["path"].read_bytes(), MODELS)
         qty = part.get("quantity") if isinstance(part.get("quantity"), int) and part["quantity"] > 0 else 1
-        built.append({"id": part["id"], "name": part["name"], "item": part.get("item", ""), "quantity": qty, "bbox_mm": found["bbox_mm"],
-                      "sha256": asset["sha256"], "source_name": asset["source_name"], "job": item["job_id"]})
+        base = {"id": part["id"], "name": part["name"], "item": part.get("item", ""), "quantity": qty}
+        current = None
+        candidates = []
+        if found:
+            asset = import_model(found["path"].name, found["path"].read_bytes(), MODELS)
+            write_json(MODELS / f"{asset['sha256']}.bbox.json", found["bbox_mm"])
+            current = asset["sha256"]
+            candidates.append({**base, "bbox_mm": found["bbox_mm"], "sha256": current, "source_name": asset["source_name"],
+                               "job": item["job_id"], "mtime": time.time()})
+        for version in history.get(part["id"], []):                            # every other version this part ever had
+            if version["sha256"] not in {c["sha256"] for c in candidates}:
+                candidates.append({**base, **version})
+        if not candidates:
+            left_out.append(f"{item['name']}: not built")
+            continue
+        if len(candidates) > 1 and client is None:                              # each version measured against the fits
+            _add_round_faces(rid, candidates)
+        problems = {c["sha256"]: len(check_fits(fits, [c]).get(part["id"], [])) for c in candidates}
+        best = choose(candidates, problems, _version_scores(rid, fits) if len(candidates) > 1 else {}, current)
+        if best["sha256"] != current:
+            swapped[item["part_id"]] = best.get("job")
+        built.append({k: best[k] for k in ("id", "name", "item", "quantity", "bbox_mm", "sha256", "source_name", "job")})
+    if swapped:                                                                 # the page and later repairs follow the version assembled
+        with _BATCH_LOCK:
+            b = load_batch(rid)
+            for item in b["items"]:
+                if item["part_id"] in swapped and swapped[item["part_id"]]:
+                    item.update(job_id=swapped[item["part_id"]], detail="an earlier, better-fitting version is used")
+            _save_batch(rid, b)
+        batch = load_batch(rid)
     if not built:
         raise ValueError("No part has been built yet: build the parts first, then assemble them")
     if client is None:                                                          # (a test's scripted client: no SolidWorks)
         _add_round_faces(rid, built)
+    fit_problems = check_fits(fits, built)                                     # {part id: what does not fit}, from the measured faces
     views = assembly_views(result)
     if not views:
         raise ValueError("The sheet has no assembly or section view to place the parts from")
@@ -1181,12 +1515,20 @@ def assemble_parts(rid: str, llm_name=None, client=None) -> dict:
     attempt = uuid.uuid4().hex[:12]
     with trace.run(attempt, RUNS / attempt, save_files=config.TRACE_FILES, drawing_result=rid, workflow="assembly_from_parts"):
         llm = client if client is not None else make_client(llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER, reasoning_effort=config.CAD_REASONING_EFFORT)
-        draft = draft_placements(llm, picture, built, _last_overlaps(batch))
-    unit = (result.get("drawing_model") or {}).get("unit") if (result.get("drawing_model") or {}).get("unit") in ("mm", "inch") else "mm"
-    name = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(str(result.get("name") or rid)).stem)[:60].strip("_") or "assembly"
-    plan, problems = plan_from_parts(name, digest(assembly_source(rid)), unit, built, draft)
+        draft = draft_placements(llm, picture, built, _last_overlaps(batch), fits)
+        unit = (result.get("drawing_model") or {}).get("unit") if (result.get("drawing_model") or {}).get("unit") in ("mm", "inch") else "mm"
+        name = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(str(result.get("name") or rid)).stem)[:60].strip("_") or "assembly"
+        plan, problems = plan_from_parts(name, digest(assembly_source(rid)), unit, built, draft)
+        crowded = copy_overlaps(plan, built)
+        if crowded:                                                             # two copies of one part in one place: once more, before SolidWorks
+            previous = [d.model_dump() for d in draft.placements]
+            draft = draft_placements(llm, picture, built, {"overlaps": crowded, "previous": previous,
+                                                           "how": "copies of the same part, from their measured boxes"}, fits)
+            plan, problems = plan_from_parts(name, digest(assembly_source(rid)), unit, built, draft)
+            if copy_overlaps(plan, built):
+                problems.append(f"copies of one part still share space after a second placement: {copy_overlaps(plan, built)[:6]}")
     artifact = save_assembly(rid, plan, {"draft": draft.model_dump(), "frame": draft.frame}, review_notes=None)
-    artifact.update(left_out=left_out, problems=problems, frame=draft.frame)
+    artifact.update(left_out=left_out, problems=problems, frame=draft.frame, fit_problems=fit_problems)
     write_json(ASSEMBLIES / rid / f"{artifact['id']}.json", artifact)
     write_json(ASSEMBLIES / rid / "latest.json", artifact)
     return artifact
@@ -1285,6 +1627,46 @@ def ensure_view_map(rid: str, llm_name=None, client=None) -> None:
             print(f"view map for {rid} not made: {type(ex).__name__}: {str(ex)[:200]}")
 
 
+_FITS_LOCK = threading.Lock()
+
+
+def _fits_path(rid: str) -> Path:
+    _batch_path(rid)                                                            # validates the id
+    return PART_LISTS / rid / "fits.json"
+
+
+def load_fits(rid: str) -> list[dict]:
+    path = _fits_path(rid)
+    return read_json(path).get("fits", []) if path.is_file() else []
+
+
+def ensure_fits(rid: str, llm_name=None, client=None) -> None:
+    """Once per drawing with several parts: one model call reads how the parts fit together (app.assembly.fits): which part holds which, at
+    what shared diameter / width. Saved as storage/parts/<rid>/fits.json; used by every part's build list and by the assembly checks. A failed
+    call is not fatal (no fits: the parts are built and placed as before)."""
+    from app.assembly.fits import PROMPT, parse_fits
+    from app.web.parts import detect_parts, numbered_sheet
+    path = _fits_path(rid)
+    with _FITS_LOCK:
+        if path.is_file():
+            return
+        result = result_with_design(rid)
+        parts = detect_parts(result)
+        if len(parts) < 2:
+            return
+        try:
+            from app.llm import make_client
+            from app.llm.base import FilePart
+            shas = {p["no"]: p["sha"] for p in result["pages"]}
+            picture = numbered_sheet(result, lambda no: default_cache().get_blob(shas[no]))
+            client = client or make_client(llm_name or result.get("llm") or config.WORKER_LLM_PROVIDER, reasoning_effort="medium")
+            listing = "\n".join(f"- id {p['id']}: {p['name']} x{p.get('quantity') or 1}" for p in parts)
+            reply = client.generate_json(PROMPT + "\n\nParts on this sheet:\n" + listing, [FilePart(picture, "image/png"), "How do these parts fit together?"])
+            write_json(path, {"fits": parse_fits(reply.data, [p["id"] for p in parts])})
+        except Exception as ex:                                                 # noqa: BLE001 - the parts are still built without it
+            print(f"fits for {rid} not read: {type(ex).__name__}: {str(ex)[:200]}")
+
+
 def _part(result: dict, part_id: str) -> dict:
     from app.web.parts import detect_parts
     part = next((p for p in detect_parts(result) if p["id"] == part_id), None)
@@ -1304,6 +1686,7 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
     from app.agent.prompts import reader_system
     if client is None:                                                          # (a test's scripted client answers the list only)
         ensure_view_map(rid, llm_name)                                          # the part's section / unlabelled views come with it
+        ensure_fits(rid, llm_name)                                              # how it fits the other parts: its bores, grooves, room
     result = result_with_design(rid)
     if any("human review required" in q or "confirm this" in q for q in result["drawing_model"].get("issues", [])):
         raise ValueError("Approve the measurements on the Review step first: the build list uses the reviewed values")
@@ -1313,6 +1696,9 @@ def create_part_list(rid: str, part_id: str, llm_name=None, client=None, answers
     from app.web.parts import latest_lists
     previous = latest_lists(PART_LISTS, rid).get(part_id)
     context = reader_context(result, part, result["drawing_model"], answers, work_it_out)
+    from app.assembly.fits import fits_text
+    from app.web.parts import detect_parts
+    context += fits_text(load_fits(rid), part_id, {p["id"]: p["name"] for p in detect_parts(result)})
     effort = config.CAD_REASONING_EFFORT
     if answers and previous and previous["draft"].get("items"):
         # An EDIT, not a new list: the earlier list + the designer's answers. Measured on a connecting rod: a full rewrite at high effort
@@ -1677,7 +2063,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/parts/build-in-solidworks":
                 if not self._same_origin_json():
                     return self._json(403, {"error": "Start builds from this drawing workspace"})
-                return self._json(200, build_in_solidworks(str(body.get("result_id", "")), llm))
+                return self._json(200, build_in_solidworks(str(body.get("result_id", "")), llm, again=body.get("again") is True))
             if self.path in ("/api/parts/assemble", "/api/parts/assemble-approve"):
                 if not self._same_origin_json():
                     return self._json(403, {"error": "Start this from the drawing workspace"})

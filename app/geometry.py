@@ -84,3 +84,32 @@ def profile_bounds(profile: list[dict]) -> tuple[float, float, float, float]:
                     xs.append(s["cx"] + r * math.cos(ang))
                     ys.append(s["cy"] + r * math.sin(ang))
     return min(xs), max(xs), min(ys), max(ys)
+
+
+def outline_crossing(profile: list[dict], pieces: int = 32):
+    """(i, j, (x, y)): the first place where segment i and a later segment j of a closed outline of lines and arcs CROSS (meeting at a
+    shared end point is not a crossing), or None. Arcs are followed as `pieces` chords. SolidWorks refuses a crossing outline with no
+    reason ("Feature creation returned null"): a connecting rod's tangent line ran on through the big end's shoulder."""
+    paths = []
+    for s in profile:
+        if s["kind"] == "arc":
+            r = math.hypot(s["x1"] - s["cx"], s["y1"] - s["cy"])
+            a1, sweep = _arc_sweep(s)
+            pts = [(s["cx"] + r * math.cos(a1 + sweep * k / pieces), s["cy"] + r * math.sin(a1 + sweep * k / pieces)) for k in range(pieces + 1)]
+            pts[0], pts[-1] = (s["x1"], s["y1"]), (s["x2"], s["y2"])
+        else:
+            pts = [(s["x1"], s["y1"]), (s["x2"], s["y2"])]
+        paths.append(pts)
+    eps = 1e-6
+    for i in range(len(paths)):
+        for j in range(i + 1, len(paths)):
+            for (ax, ay), (bx, by) in zip(paths[i], paths[i][1:]):
+                for (cx, cy), (dx, dy) in zip(paths[j], paths[j][1:]):
+                    den = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx)
+                    if abs(den) < 1e-12:
+                        continue
+                    t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / den
+                    u = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / den
+                    if eps < t < 1 - eps and eps < u < 1 - eps:
+                        return i, j, (ax + t * (bx - ax), ay + t * (by - ay))
+    return None

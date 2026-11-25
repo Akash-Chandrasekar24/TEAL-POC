@@ -52,12 +52,17 @@ Decide this BEFORE writing items. The family decides the base feature and the or
   (the outline ABOVE the axis, all diameters / 2, all shoulders' positions along the axis).
 - Then: `turned_axial` (an eccentric section: crankpins, cam lobes, offset bosses), `cross_hole` (pin bores across), `turned_keyway`,
   `radial_blades` (impellers, fins), `drill` for anything else.
+- A HOLLOW turned part (a piston, a cup, a bush, a bell housing) is hollow IN its half-section: the profile runs up the outside, across the
+  crown / closed end, and back down the INSIDE to the open end, so the wall thickness, the crown thickness and the bore are one revolve
+  (grooves are notches in the outside line). A part that another part enters (a rod's small end inside a piston's skirt) needs that inside
+  bore: never list it as unsupported. Only what is not round about the axis (pin bosses, skirt reliefs) is simplified: say so in unsupported.
 
 **Stacked along an axis, with sections that are NOT round** (crankshafts, camshafts with webs, stepped levers, rotors with arms): build it
 as a STACK of plate features along the axis, not as a revolve. The first web is the base (`extrude_profile_boss` with the web's outline,
-its thickness as depth); then, face after face, `circle_boss` for a journal or a pin (`on` the previous item's top face, at its own axis:
-the main axis for a journal, offset by the throw for a crankpin), `extrude_profile_boss` `on` that face for the next web, and so on to the
-end; flanges and end shafts are `circle_boss` too. A web drawn in a section (R around the pin, R around the counterweight, the angle
+its thickness as depth); then, face after face, `circle_boss` for a journal or a pin and `extrude_profile_boss` for the next web, each with
+`face` + `offset` (its station along the axis) and its position in the SAME base-outline coordinates as the webs: the main axis for a
+journal, the web's pin-arc centre (offset by the throw) for a crankpin; flanges and end shafts are `circle_boss` too. Never place a pin at
+(0, 0) `on` a web's top: (0, 0) there is the centre of the web outline's bounding box, not its pin arc. A web drawn in a section (R around the pin, R around the counterweight, the angle
 between its sides) is one outline: lines and arcs, or a `tangent_chain` of its circles. Throws that alternate (+44, -44) turn each web.
 Never answer 'cannot follow a revolve': choose this stack instead.
 
@@ -100,6 +105,10 @@ bearings, pins) are built too, from their designation.
   LAST (they fail on edges that later features change).
 - Place features on faces by `face` / `on` (a face an earlier item made) rather than by guessed heights.
 - Prefer one clear feature per shape: a boss with a hole is a `circle_boss` then a `hole`.
+- A boss that joins another boss OVERLAPS it by a few mm; it never just touches it at a point or along a tangent (SolidWorks then refuses
+  it with "Feature creation returned null"): a connecting rod's shank pad that stopped exactly where the small-end eye begins (y = centre
+  minus radius) failed on every retry. Run the pad on into the eye or the big end (say so in `derived_from`; the overlap adds no volume).
+- An outline goes ONCE around the boundary of the shape and never crosses itself: where a tangent line meets a shoulder or lug, end it there.
 - Patterns: give every position, or the pattern (linear / circular) when the feature supports it.
 
 ## 6. The SolidWorks agent: tools and how to use them (when you are the agent at the SolidWorks screen)

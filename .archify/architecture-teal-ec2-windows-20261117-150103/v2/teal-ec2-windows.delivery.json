@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "b27c8608-0500-4120-a873-0fcc81c3bbb3",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "E:\\New folder (2)\\GWC\\TEAL\\drawing-to-solidworks\\.archify\\architecture-teal-ec2-windows-20261117-150103\\candidate.json",
+  "output": "E:\\New folder (2)\\GWC\\TEAL\\drawing-to-solidworks\\.archify\\architecture-teal-ec2-windows-20261117-150103\\v2\\teal-ec2-windows.html",
+  "specification": {
+    "sha256": "98bdabfd0fc8ed7d553c3c9de0cd57211869daed4608257f3e9821749a0175ec",
+    "bytes": 6995
+  },
+  "artifact": {
+    "sha256": "691b6eb4fde0d1d4c1d99af3fcb38cffdfe5a3ca71218ee3e40c1a58198409bc",
+    "bytes": 770503
+  }
+}

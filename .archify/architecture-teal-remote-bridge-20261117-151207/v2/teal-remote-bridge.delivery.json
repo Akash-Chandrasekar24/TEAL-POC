@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "59d8c3e9-7a6b-422f-b264-9f26e3ea1b2b",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "E:\\New folder (2)\\GWC\\TEAL\\drawing-to-solidworks\\.archify\\architecture-teal-remote-bridge-20261117-151207\\candidate.json",
+  "output": "E:\\New folder (2)\\GWC\\TEAL\\drawing-to-solidworks\\.archify\\architecture-teal-remote-bridge-20261117-151207\\v2\\teal-remote-bridge.html",
+  "specification": {
+    "sha256": "3d83ed3f668ff961ba7105ef044c4daf489f6aa527a444cfbf35bc1db25326b8",
+    "bytes": 4242
+  },
+  "artifact": {
+    "sha256": "2d4451680714c0ab627c41ed542a22caae8e15047a10a818006e9df01c693fdf",
+    "bytes": 768148
+  }
+}

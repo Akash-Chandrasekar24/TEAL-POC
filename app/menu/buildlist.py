@@ -150,6 +150,77 @@ def seen_violations(bl: BuildList) -> list[str]:
     return problems
 
 
+def off_lobe_bosses(bl: BuildList) -> list[str]:
+    """A round boss placed 'on' a profile boss's top at (0, 0) sits at the centre of that outline's BOUNDING BOX (the anchor's centre), which
+    is not where a pin goes when the outline has rounded ends: an engine's two middle crankpins came out 22 mm off their webs' pin arcs and
+    the rods could not be assembled. Refused when the outline has an arc the circle could sit in but none centred on the box centre."""
+    import math
+    from app.geometry import profile_bounds
+    hosts = {it.id: it for it in bl.items if it.feature == "extrude_profile_boss" and isinstance(it.params, dict)}
+    reasons = []
+    for it in bl.items:
+        p = it.params if isinstance(it.params, dict) else {}
+        on = str(p.get("on") or "")
+        if it.feature != "circle_boss" or not on.endswith(".top") or on.split(".")[0] not in hosts:
+            continue
+        profile = hosts[on.split(".")[0]].params.get("profile")
+        segs = profile.get("segments") if isinstance(profile, dict) else None
+        if not isinstance(segs, list) or not segs or not all(isinstance(s, dict) and s.get("kind") in ("line", "arc") for s in segs):
+            continue
+        try:
+            x0, x1, y0, y1 = profile_bounds(segs)
+            arcs = [(s["cx"], s["cy"], math.hypot(s["x1"] - s["cx"], s["y1"] - s["cy"])) for s in segs if s["kind"] == "arc"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        for c in p.get("circles") or []:
+            pos = c.get("position") if isinstance(c, dict) else None
+            if not isinstance(c, dict) or c.get("pattern") or not isinstance(c.get("diameter"), (int, float)):
+                continue
+            if pos is not None and (not isinstance(pos, dict) or abs(float(pos.get("x") or 0)) > 1e-9 or abs(float(pos.get("y") or 0)) > 1e-9
+                                    or pos.get("x_from", "centre") != "centre" or pos.get("y_from", "centre") != "centre"):
+                continue
+            lobes = [a for a in arcs if a[2] >= c["diameter"] / 2 - 1e-6]
+            if lobes and not any(math.hypot(a[0] - cx, a[1] - cy) < 0.5 for a in lobes):
+                where = ", ".join(f"({a[0]:g}, {a[1]:g}) R{a[2]:g}" for a in lobes[:4])
+                reasons.append(f"{it.id}: its diameter-{c['diameter']:g} circle 'on' {on} at (0, 0) lands on the centre of the BOUNDING BOX of "
+                               f"{on.split('.')[0]}'s outline ({cx:g}, {cy:g} in that outline's coordinates), not on a rounded end it could sit "
+                               f"in ({where}): a pin or boss is concentric with the arc around it. Place {it.id} like the other pins: `face` + "
+                               f"`offset` (the station of {on.split('.')[0]}'s top) and the arc centre's position in the base outline's "
+                               f"coordinates, or the arc centre's offset from that box centre")
+    return reasons
+
+
+def crossing_outlines(bl: BuildList) -> list[str]:
+    """An outline that crosses itself cannot be extruded (SolidWorks only says 'Feature creation returned null'): refused before the build
+    with WHERE it crosses, so the list is fixed instead of the part stopping at that step."""
+    from app.geometry import outline_crossing
+    reasons = []
+    for it in bl.items:
+        profile = it.params.get("profile") if isinstance(it.params, dict) else None
+        if not isinstance(profile, dict):
+            continue
+        segs, pts = profile.get("segments"), profile.get("points")
+        if isinstance(pts, list) and len(pts) >= 3 and segs is None:
+            try:
+                segs = [{"kind": "line", "x1": a[0], "y1": a[1], "x2": b[0], "y2": b[1]} for a, b in zip(pts, pts[1:] + pts[:1])]
+            except (TypeError, IndexError):
+                continue
+        if not isinstance(segs, list) or not all(isinstance(s, dict) and s.get("kind") in ("line", "arc") for s in segs):
+            continue
+        try:
+            hit = outline_crossing(segs)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if hit:
+            i, j, (x, y) = hit
+            reasons.append(f"{it.id}: its outline crosses itself: segment {i + 1} ({segs[i]['kind']}) crosses segment {j + 1} "
+                           f"({segs[j]['kind']}) at ({x:.3f}, {y:.3f}), and SolidWorks cannot extrude a crossing outline. Go once around "
+                           f"the BOUNDARY of the shape: where a line or arc meets another edge (a shoulder, a lug, a flat), end both at "
+                           f"that meeting point and continue along the edge that is on the outside; drop any piece that lies inside")
+    return reasons
+
+
 def list_gate(bl: BuildList) -> list[str]:
     """Reasons the build must NOT start (an empty list = go). Mirrors the old spec gate, for the new format."""
     reasons: list[str] = []
@@ -192,4 +263,6 @@ def list_gate(bl: BuildList) -> list[str]:
     if any(it.feature == "shell" for it in bl.items[2:]) or (bl.items and bl.items[0].feature == "shell"):
         reasons.append("a shell must be the second item, directly after its base (it hollows the plain base)")
     reasons += seen_violations(bl)
+    reasons += off_lobe_bosses(bl)
+    reasons += crossing_outlines(bl)
     return reasons

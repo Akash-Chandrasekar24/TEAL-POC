@@ -79,9 +79,13 @@ the orientation: choose them so the two axes are parallel (a rod pointing up to 
 they hang together: crankshaft, rods, caps, pins, pistons, rings."""
 
 FEEDBACK = """
-Your previous placements were built in SolidWorks and these parts OVERLAPPED (component ids, overlap volume in mm3): {overlaps}.
+Your previous placements were checked ({how}) and these parts OVERLAPPED (component ids, overlap volume in mm3): {overlaps}.
 Your previous placements: {previous}. Parts that only touch are fine; anything above about 1 mm3 means a part sits inside another.
 Correct the placements so they do not overlap: work from the round faces, keep what was right."""
+
+FITS = """
+How the parts fit together, read from the drawing (host holds guest; diameter / width in mm): {fits}
+Every "on" you give must realise one of these fits: the guest's round face of that diameter on the host's round face of the same diameter."""
 
 
 def _same_angle(pts, o, a) -> bool:
@@ -126,11 +130,14 @@ def round_faces(faces: list[dict], edges: list[dict], min_radius_m: float = 0.00
                 bounds.append((sum(ts) / 3, min(ts), max(ts)))
         # the edge list holds no partial arcs (measured): a HALF-round bore (a rod's big end, its cap) shows only its two seam lines
         tp = t_of(f["point"]) if f.get("point") else None
-        mine = [s for s in seams if tp is None or s[0] - 1e-5 <= tp <= s[1] + 1e-5] or seams
-        if not bounds and not mine:
+        own = [s for s in seams if tp is not None and s[0] - 1e-5 <= tp <= s[1] + 1e-5]
+        # a full cylinder (no seam of its own) is area / circumference long, centred on its point (SolidWorks gives the face's middle)
+        full = f["area"] / (2 * math.pi * r) if (f.get("area") and tp is not None and not own) else None
+        mine = own or seams
+        if not bounds and not mine and full is None:
             continue
-        lo = min([b[1] for b in bounds] + [s[0] for s in mine])
-        hi = max([b[2] for b in bounds] + [s[1] for s in mine])
+        lo = min([b[1] for b in bounds] + [s[0] for s in mine], default=0.0)
+        hi = max([b[2] for b in bounds] + [s[1] for s in mine], default=0.0)
         if tp is not None and bounds:
             # two crankpins on one throw line are separate faces on ONE axis line: this face lies between the nearest bounding edges on
             # either side of its own point (and along its own seam lines)
@@ -139,6 +146,11 @@ def round_faces(faces: list[dict], edges: list[dict], min_radius_m: float = 0.00
                 near_lo, near_hi = max(b[0] for b in below), min(b[0] for b in above)
                 lo = min([b[1] for b in below if b[0] >= near_lo - 1e-3] + [s[0] for s in mine if s in seams and mine is not seams])
                 hi = max([b[2] for b in above if b[0] <= near_hi + 1e-3] + [s[1] for s in mine if s in seams and mine is not seams])
+        if full is not None and (not (bounds or mine) or hi - lo > full + 5e-4):
+            # its ends are partial arcs, which the edge list leaves out (a pin meeting a web off its centre; journals meeting webs whose
+            # outline shares their radius): with no edge or seam of its own it vanished, or it spanned to the next full circle along the
+            # axis (an engine's middle crankpins were lost and every journal ran the whole shaft). Then its area decides its length.
+            lo, hi = tp - full / 2, tp + full / 2
         seg = [[round((o[i] + t * a[i]) * 1000, 2) for i in range(3)] for t in (lo, hi)]
         key = (round(r * 2000, 2), tuple(round(v, 3) for v in a), tuple(seg[0]), tuple(seg[1]))
         if any((c["diameter"], tuple(c["axis"]), tuple(c["from"]), tuple(c["to"])) == key for c in out):
@@ -147,12 +159,16 @@ def round_faces(faces: list[dict], edges: list[dict], min_radius_m: float = 0.00
     return sorted(out, key=lambda c: -c["diameter"])[:40]
 
 
-def draft_placements(llm, picture: bytes, parts: list[dict], feedback: dict | None = None) -> DraftAssembly:
+def draft_placements(llm, picture: bytes, parts: list[dict], feedback: dict | None = None, fits: list[dict] | None = None) -> DraftAssembly:
     context = [{"id": p["id"], "name": p["name"], "quantity": p["quantity"], "bbox_mm_own_frame": p["bbox_mm"],
                 **({"round_faces_mm": [{"i": i, **c} for i, c in enumerate(p["round_faces"])]} if p.get("round_faces") else {})} for p in parts]
     prompt = PROMPT + (ROUND_FACES if any(p.get("round_faces") for p in parts) else "")
+    if fits:
+        prompt += FITS.format(fits=json.dumps([{k: f.get(k) for k in ("host", "host_feature", "guest", "guest_feature", "kind", "diameter", "width")}
+                                               for f in fits], ensure_ascii=False)[:8000])
     if feedback and feedback.get("overlaps"):
-        prompt += FEEDBACK.format(overlaps=json.dumps(feedback["overlaps"]), previous=json.dumps(feedback.get("previous", []))[:12000])
+        prompt += FEEDBACK.format(how=feedback.get("how", "built in SolidWorks"), overlaps=json.dumps(feedback["overlaps"]),
+                                  previous=json.dumps(feedback.get("previous", []))[:12000])
     parts_json = json.dumps({"parts": context}, ensure_ascii=False)
     reply = llm.generate_json(prompt, [FilePart(picture, "image/png"), parts_json])
     try:
@@ -284,6 +300,35 @@ def plan_from_parts(name: str, source_hash: str, unit: str, built: list[dict], d
                         f"{expected.size}")
     plan = AssemblyPlan(name=name, source_hash=source_hash, unit=unit, bom=rows, models=models, occurrences=occurrences, expected=expected)
     return plan, problems + [f"AI note: {n}" for n in draft.notes]
+
+
+def copy_overlaps(plan: AssemblyPlan, built: list[dict]) -> list[dict]:
+    """Copies of the SAME part whose boxes intersect (in the assembly, from each copy's measured box at its placement): two pistons, two
+    rings or two rods never share space, so this is a placement error found before SolidWorks runs (an engine's pistons were spaced too
+    close). Returns [{"a", "b", "mm3"}] with the boxes' common volume; a common volume under 1 % of the smaller box is a touch, not an overlap."""
+    boxes = {f"item-{p['id']}"[:40]: p["bbox_mm"] for p in built}
+    by_part: dict[str, list[tuple[str, list, list]]] = {}
+    for occ in plan.occurrences:
+        bb = boxes.get(occ.bom_id)
+        if not bb or not occ.placement:
+            continue
+        pts = [_world(occ.placement.translation, occ.placement.rotation, (x, y, z))
+               for x in (bb[0][0], bb[1][0]) for y in (bb[0][1], bb[1][1]) for z in (bb[0][2], bb[1][2])]
+        lo = [min(p[k] for p in pts) for k in range(3)]
+        hi = [max(p[k] for p in pts) for k in range(3)]
+        by_part.setdefault(occ.bom_id, []).append((occ.id, lo, hi))
+    out = []
+    for copies in by_part.values():
+        for i in range(len(copies)):
+            for j in range(i + 1, len(copies)):
+                (a, alo, ahi), (b, blo, bhi) = copies[i], copies[j]
+                common = 1.0
+                for k in range(3):
+                    common *= max(0.0, min(ahi[k], bhi[k]) - max(alo[k], blo[k]))
+                own = min((ahi[0] - alo[0]) * (ahi[1] - alo[1]) * (ahi[2] - alo[2]), (bhi[0] - blo[0]) * (bhi[1] - blo[1]) * (bhi[2] - blo[2]))
+                if common > max(1.0, 0.01 * own):
+                    out.append({"a": a, "b": b, "mm3": round(common)})
+    return out
 
 
 def approve(plan: AssemblyPlan) -> AssemblyPlan:

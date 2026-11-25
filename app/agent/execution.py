@@ -19,19 +19,50 @@ def _write(path, data):
     os.replace(temp, path)
 
 
+def _alive(pid) -> bool:
+    """True while that process exists (unknown -> True: never take a lock from a process that may still run)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return True
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return code.value == 259                                               # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 @contextmanager
 def cad_execution(job_dir: Path, operation: str, plan_hash: str, *, lock_path: Path | None = None):
-    """No automatic stale-lock removal or replay of an uncertain native action."""
+    """No replay of an uncertain native action. The lock of a process that no longer exists is released (a server stopped mid-build left
+    it, and every later build stopped on "already reserved"); that job's own intent record still says what was interrupted."""
     lock = lock_path if lock_path is not None else config.PROJECT_ROOT / "storage/solidworks-execution.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     owner = uuid.uuid4().hex
     record = {"owner": owner, "pid": os.getpid(), "operation": operation, "plan_hash": plan_hash,
               "job_dir": str(Path(job_dir).resolve()), "started_at": datetime.now(timezone.utc).isoformat()}
-    try:
-        with lock.open("x", encoding="utf-8") as file:
-            json.dump(record, file)
-    except FileExistsError:
-        raise HarnessStopped("SolidWorks execution is already reserved; inspect the active job before another build") from None
+    for attempt in (1, 2):
+        try:
+            with lock.open("x", encoding="utf-8") as file:
+                json.dump(record, file)
+            break
+        except FileExistsError:
+            try:
+                holder = json.loads(lock.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                holder = {}
+            if attempt == 2 or _alive(holder.get("pid")):
+                raise HarnessStopped("SolidWorks execution is already reserved; inspect the active job before another build") from None
+            lock.unlink(missing_ok=True)
     intent = Path(job_dir) / "harness" / "native-intent.json"
     try:
         if intent.is_file():

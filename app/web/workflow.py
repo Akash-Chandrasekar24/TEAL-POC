@@ -99,11 +99,22 @@ class Workflow:
     def locked(self, jid, revision):
         folder = self.folder(jid)
         lock = folder / "request.lock"
-        try:
-            with lock.open("x") as file:
-                file.write(BOOT)
-        except FileExistsError:
-            raise ValueError("This job has an operation in progress; refresh its status before continuing") from None
+        for attempt in (1, 2):
+            try:
+                with lock.open("x") as file:
+                    file.write(BOOT)
+                break
+            except FileExistsError:
+                # a lock written by an earlier server process: that process is gone, so nothing is in progress (a server stopped during
+                # a part correction left one, and every later correction of that part failed). The record's own phase still guards an
+                # interrupted native action below.
+                try:
+                    holder = lock.read_text().strip()
+                except OSError:
+                    holder = BOOT
+                if attempt == 2 or holder == BOOT or not holder:
+                    raise ValueError("This job has an operation in progress; refresh its status before continuing") from None
+                lock.unlink(missing_ok=True)
         try:
             record = self.load(jid)
             if type(revision) is not int or revision != record["revision"]:
@@ -191,7 +202,10 @@ class Workflow:
             if report["status"] == "awaiting_review":
                 native = report["files"]
                 files = {"SLDASM": native["assembly"], "STL": native["mesh"], "PREVIEW": native["preview"]}
-                dependencies = [{"path": str(path.resolve()), "sha256": sha256(path)} for path in Path(native["components"]).glob("*.SLDPRT")]
+                # "~$name.SLDPRT" is SolidWorks' own lock file for an open document: it vanishes when the document closes, and every assembly then
+                # failed its check ("changed after review")
+                dependencies = [{"path": str(path.resolve()), "sha256": sha256(path)} for path in Path(native["components"]).glob("*.SLDPRT")
+                                if not path.name.startswith("~$")]
                 self._receipt(record, files, native["configuration"], dependencies)
             return
         deps = Deps(workers.extraction.llm, self.build, workers=workers)

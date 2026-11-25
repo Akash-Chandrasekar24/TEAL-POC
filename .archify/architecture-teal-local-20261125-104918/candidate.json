@@ -1,0 +1,529 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "TEAL Drawing to SolidWorks: Local Architecture",
+    "output": ".archify/architecture-teal-local-20261125-104918/teal-local.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Jayasri-Meenachi/drawing-to-solidworks.git",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "803df8400c0697a4137903ce1b2c5b3a2c5e5f10"
+    }
+  },
+  "components": [
+    {
+      "id": "designer",
+      "type": "external",
+      "label": "Designer",
+      "sublabel": "browser",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        130,
+        60
+      ]
+    },
+    {
+      "id": "domo",
+      "type": "external",
+      "label": "Domo AI",
+      "sublabel": "gpt-5.6-sol + fallback",
+      "pos": [
+        40,
+        120
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/config.py",
+          "line": 47,
+          "end_line": 49,
+          "label": "model and fallback"
+        }
+      ]
+    },
+    {
+      "id": "pages",
+      "type": "frontend",
+      "label": "Web pages",
+      "sublabel": "Upload, Review, SolidWorks",
+      "pos": [
+        245,
+        300
+      ],
+      "size": [
+        160,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/web/index.html",
+          "line": 158,
+          "label": "upload posts /api/read"
+        }
+      ]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "storage/ files",
+      "sublabel": "JSON results, lists, blobs",
+      "pos": [
+        245,
+        480
+      ],
+      "size": [
+        160,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/web/server.py",
+          "line": 47,
+          "end_line": 52,
+          "label": "result and model folders"
+        },
+        {
+          "path": "app/assembly/jobs.py",
+          "line": 20,
+          "label": "write_json"
+        },
+        {
+          "path": "app/cache.py",
+          "line": 41,
+          "label": "blob and answer cache"
+        }
+      ]
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "Web server",
+      "sublabel": "Python, port 8765",
+      "pos": [
+        460,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "reads drawings",
+      "sources": [
+        {
+          "path": "app/web/server.py",
+          "line": 1806,
+          "end_line": 1807,
+          "label": "ThreadingHTTPServer"
+        },
+        {
+          "path": "app/web/server.py",
+          "line": 881,
+          "label": "build_in_solidworks"
+        },
+        {
+          "path": "app/web/server.py",
+          "line": 1296,
+          "label": "create_part_list"
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "security",
+      "label": "LLM client",
+      "sublabel": "cached, retry, fallback",
+      "pos": [
+        460,
+        120
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/llm/__init__.py",
+          "line": 6,
+          "end_line": 22,
+          "label": "make_client + cache"
+        },
+        {
+          "path": "app/llm/domo.py",
+          "line": 124,
+          "label": "Domo call"
+        }
+      ]
+    },
+    {
+      "id": "workflow",
+      "type": "messagebus",
+      "label": "Workflow jobs",
+      "sublabel": "state.json per job",
+      "pos": [
+        675,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/web/workflow.py",
+          "line": 30,
+          "end_line": 35,
+          "label": "Workflow"
+        },
+        {
+          "path": "app/web/workflow.py",
+          "line": 117,
+          "label": "action"
+        },
+        {
+          "path": "app/web/server.py",
+          "line": 1439,
+          "label": "jobs under storage/"
+        }
+      ]
+    },
+    {
+      "id": "runner",
+      "type": "backend",
+      "label": "Part runner",
+      "sublabel": "build, verify each step",
+      "pos": [
+        890,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/agent/review.py",
+          "line": 30,
+          "label": "Runner for a part"
+        },
+        {
+          "path": "app/runner/runner.py",
+          "line": 193,
+          "label": "Runner"
+        },
+        {
+          "path": "app/verify/step_verifier.py",
+          "line": 167,
+          "label": "StepVerifier"
+        }
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "SolidWorks agent",
+      "sublabel": "fixes failed steps",
+      "pos": [
+        890,
+        120
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/agent/sw_agent.py",
+          "line": 96,
+          "label": "SolidWorksAgent"
+        },
+        {
+          "path": "app/agent/sw_agent.py",
+          "line": 159,
+          "label": "agent_for"
+        }
+      ]
+    },
+    {
+      "id": "assembly",
+      "type": "backend",
+      "label": "Assembly runner",
+      "sublabel": "place, mate, interference",
+      "pos": [
+        890,
+        480
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/agent/review.py",
+          "line": 229,
+          "label": "preview_assembly"
+        },
+        {
+          "path": "app/assembly/runner.py",
+          "line": 179,
+          "label": "run_assembly"
+        },
+        {
+          "path": "app/assembly/from_parts.py",
+          "line": 150,
+          "end_line": 185,
+          "label": "AI placements + snap"
+        }
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "backend",
+      "label": "SolidWorks client",
+      "sublabel": "MCP adapter, stdio",
+      "pos": [
+        1105,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/mcp_client/solidworks.py",
+          "line": 209,
+          "label": "SolidWorksClient"
+        },
+        {
+          "path": "app/mcp_client/solidworks.py",
+          "line": 232,
+          "end_line": 239,
+          "label": "stdio adapter host"
+        }
+      ]
+    },
+    {
+      "id": "bridge",
+      "type": "backend",
+      "label": "Execution bridge",
+      "sublabel": "C# Web API :5000",
+      "pos": [
+        1320,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "app/mcp_client/solidworks.py",
+          "line": 181,
+          "end_line": 184,
+          "label": "bridge address"
+        },
+        {
+          "path": "extensions/solidworks/GeometryExtensions.cs",
+          "line": 17,
+          "label": "extension controller"
+        },
+        {
+          "path": "app/config.py",
+          "line": 32,
+          "end_line": 33,
+          "label": "SolidworksExecution.exe"
+        }
+      ]
+    },
+    {
+      "id": "solidworks",
+      "type": "external",
+      "label": "SolidWorks",
+      "sublabel": "COM, licensed seat",
+      "pos": [
+        1535,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "This Windows PC",
+      "wraps": [
+        "pages",
+        "storage",
+        "server",
+        "llm",
+        "workflow",
+        "runner",
+        "agent",
+        "assembly",
+        "mcp",
+        "bridge",
+        "solidworks"
+      ],
+      "pad": 22
+    },
+    {
+      "kind": "security-group",
+      "label": "One Python process",
+      "wraps": [
+        "server",
+        "llm",
+        "workflow",
+        "runner",
+        "agent",
+        "assembly",
+        "mcp"
+      ],
+      "pad": 12
+    }
+  ],
+  "connections": [
+    {
+      "id": "designer-pages",
+      "from": "designer",
+      "to": "pages",
+      "label": "HTTP",
+      "variant": "emphasis"
+    },
+    {
+      "id": "pages-server",
+      "from": "pages",
+      "to": "server",
+      "label": "JSON API",
+      "variant": "emphasis"
+    },
+    {
+      "id": "server-storage",
+      "from": "server",
+      "to": "storage",
+      "label": "read / write",
+      "fromSide": "bottom",
+      "toSide": "right"
+    },
+    {
+      "id": "server-llm",
+      "from": "server",
+      "to": "llm",
+      "label": "read, plan",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "llm-domo",
+      "from": "llm",
+      "to": "domo",
+      "label": "HTTPS",
+      "variant": "security"
+    },
+    {
+      "id": "server-workflow",
+      "from": "server",
+      "to": "workflow",
+      "label": "build job",
+      "variant": "emphasis"
+    },
+    {
+      "id": "workflow-runner",
+      "from": "workflow",
+      "to": "runner",
+      "label": "part",
+      "variant": "emphasis"
+    },
+    {
+      "id": "workflow-assembly",
+      "from": "workflow",
+      "to": "assembly",
+      "label": "assembly",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "runner-agent",
+      "from": "runner",
+      "to": "agent",
+      "label": "step failed",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "agent-llm",
+      "from": "agent",
+      "to": "llm",
+      "label": "agent turns",
+      "variant": "dashed"
+    },
+    {
+      "id": "runner-mcp",
+      "from": "runner",
+      "to": "mcp",
+      "label": "tool calls",
+      "variant": "emphasis"
+    },
+    {
+      "id": "assembly-mcp",
+      "from": "assembly",
+      "to": "mcp",
+      "label": "tool calls",
+      "fromSide": "right",
+      "toSide": "bottom"
+    },
+    {
+      "id": "mcp-bridge",
+      "from": "mcp",
+      "to": "bridge",
+      "label": "HTTP",
+      "variant": "emphasis"
+    },
+    {
+      "id": "bridge-solidworks",
+      "from": "bridge",
+      "to": "solidworks",
+      "label": "COM",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "One build, end to end",
+      "items": [
+        "Upload: pages read once, AI answers cached by content",
+        "Review: the designer approves the measurements",
+        "Build in SolidWorks: build list per part, each part built and verified step by step, then one assembly"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "One SolidWorks at a time",
+      "items": [
+        "A single lock file reserves SolidWorks for one build (app/agent/execution.py:23)",
+        "Each job keeps its state and receipt under storage/workflow/jobs"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Uncommitted since 803df84",
+      "items": [
+        "Fits read from the drawing and checked on each built part",
+        "Best version of each part is assembled; automatic repair loop",
+        "Finished drawings reused instantly; 'again' rebuilds"
+      ]
+    }
+  ]
+}

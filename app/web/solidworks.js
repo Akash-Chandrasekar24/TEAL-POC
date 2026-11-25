@@ -40,7 +40,9 @@ function flowBox(r, data, reload, status) {
     disabled: running || !sw.ready });
   start.addEventListener("click", async () => {
     start.disabled = true;
-    try { await workflowRequest("/api/parts/build-in-solidworks", { result_id: r.id, llm: ($("#llm") && $("#llm").value) || r.llm }); await reload(); }
+    // "again" on a finished drawing rebuilds everything in SolidWorks; the first build may reuse a finished build of the same drawing
+    const again = batch?.flow === "one_button" && batch.phase === "done";
+    try { await workflowRequest("/api/parts/build-in-solidworks", { result_id: r.id, again, llm: ($("#llm") && $("#llm").value) || r.llm }); await reload(); }
     catch (error) { status.textContent = error.message; start.disabled = false; }
   });
   const items = (batch?.flow === "one_button" ? batch.items : []) || [];
@@ -59,8 +61,10 @@ function flowBox(r, data, reload, status) {
   });
   const nextPart = running && items.find((it) => ["to_prepare", "preparing", "listed", "queued"].includes(phaseOf(it)) && items.some((o) => phaseOf(o) === "building"));
   const asm = batch?.assembly;
-  const asmLine = asm ? el("p", { class: `flow-asm ${asm.status === "awaiting_review" || asm.status === "accepted" ? "ok" : ["building", "placing"].includes(asm.status) ? "busy" : "bad"}`,
-    text: asm.status === "placing" ? "Placing the parts into one assembly…" : asm.status === "building" ? "Building the assembly in SolidWorks…" :
+  const asmLine = asm ? el("p", { class: `flow-asm ${asm.status === "awaiting_review" || asm.status === "accepted" ? "ok" : ["building", "placing", "correcting"].includes(asm.status) ? "busy" : "bad"}`,
+    text: asm.status === "placing" ? "Placing the parts into one assembly…" : asm.status === "building" ? `Building the assembly in SolidWorks${asm.build > 1 ? ` (try ${asm.build}, after a repair)` : ""}…` :
+      asm.status === "correcting" ? `Repairing a part so it fits: ${(asm.detail || "").slice(0, 220)}` :
+      asm.status === "incomplete" ? `Assembly incomplete: ${(asm.detail || "").slice(0, 220)}` :
       ["awaiting_review", "accepted", "exported"].includes(asm.status) ? "Assembly built: one SolidWorks file for the whole drawing" : `Assembly not built: ${(asm.detail || asm.status).slice(0, 220)}` }) : null;
   const doneN = items.filter((it) => !["to_prepare", "preparing", "listed", "queued", "building"].includes(phaseOf(it))).length;
   const head = running ? el("div", { class: "batch-progress" }, el("span", { class: "spinner", "aria-hidden": "true" }),
@@ -284,7 +288,7 @@ function partsPanel(r) {
       const data = await (await fetch(`/api/parts/${r.id}`)).json();
       render(data);
       clearTimeout(timer);
-      if ((["preparing", "resolving", "building", "assembling"].includes(data.batch?.phase) || data.batch?.assembly?.status === "building") && state.result === r) timer = setTimeout(() => load(true), 2500);   // live progress
+      if ((["preparing", "resolving", "building", "assembling"].includes(data.batch?.phase) || ["building", "placing", "correcting"].includes(data.batch?.assembly?.status)) && state.result === r) timer = setTimeout(() => load(true), 2500);   // live progress
     }
     catch (error) { host.replaceChildren(el("p", { class: "hint", text: `Could not list the parts: ${error.message}` })); }
   };

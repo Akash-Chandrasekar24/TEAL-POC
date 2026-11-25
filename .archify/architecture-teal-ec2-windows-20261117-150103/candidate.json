@@ -1,0 +1,339 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "TEAL on AWS EC2 with Local SolidWorks",
+    "output": ".archify/architecture-teal-ec2-windows-20261117-150103/teal-ec2-windows.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "designer",
+      "type": "external",
+      "label": "Designer",
+      "sublabel": "browser",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        130,
+        60
+      ]
+    },
+    {
+      "id": "domo",
+      "type": "external",
+      "label": "Domo AI",
+      "sublabel": "gpt-5.6-sol + fallback",
+      "pos": [
+        240,
+        120
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "alb",
+      "type": "security",
+      "label": "Load balancer",
+      "sublabel": "HTTPS 443, ACM cert",
+      "pos": [
+        240,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "security",
+      "label": "LLM gateway",
+      "sublabel": "key, fallback, limits",
+      "pos": [
+        460,
+        120
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "app",
+      "type": "backend",
+      "label": "TEAL app",
+      "sublabel": "EC2 Linux, Docker",
+      "pos": [
+        460,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "read, review, plan"
+    },
+    {
+      "id": "rds",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "jobs queue, reviews",
+      "pos": [
+        460,
+        480
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "hub",
+      "type": "messagebus",
+      "label": "Connector hub",
+      "sublabel": "WebSocket, job leases",
+      "pos": [
+        690,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "s3",
+      "type": "database",
+      "label": "S3",
+      "sublabel": "drawings, SLDPRT, STEP",
+      "pos": [
+        690,
+        480
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "connector",
+      "type": "backend",
+      "label": "Connector agent",
+      "sublabel": "Windows service",
+      "pos": [
+        1010,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "tag": "outbound only"
+    },
+    {
+      "id": "runner",
+      "type": "backend",
+      "label": "Runner + SW agent",
+      "sublabel": "existing Python code",
+      "pos": [
+        1240,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "bridge",
+      "type": "backend",
+      "label": "Execution bridge",
+      "sublabel": "C# Web API, 127.0.0.1",
+      "pos": [
+        1240,
+        480
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "solidworks",
+      "type": "external",
+      "label": "SolidWorks",
+      "sublabel": "COM, licensed seat",
+      "pos": [
+        1240,
+        650
+      ],
+      "size": [
+        150,
+        60
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "AWS: VPC, EC2 Linux",
+      "wraps": [
+        "alb",
+        "llm",
+        "app",
+        "rds",
+        "hub",
+        "s3"
+      ],
+      "pad": 22
+    },
+    {
+      "kind": "region",
+      "label": "Local Windows PC (company network)",
+      "wraps": [
+        "connector",
+        "runner",
+        "bridge",
+        "solidworks"
+      ],
+      "pad": 22
+    }
+  ],
+  "connections": [
+    {
+      "id": "designer-alb",
+      "from": "designer",
+      "to": "alb",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "alb-app",
+      "from": "alb",
+      "to": "app",
+      "label": "SSO",
+      "variant": "security"
+    },
+    {
+      "id": "app-llm",
+      "from": "app",
+      "to": "llm",
+      "label": "prompts",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "llm-domo",
+      "from": "llm",
+      "to": "domo",
+      "label": "HTTPS",
+      "variant": "security"
+    },
+    {
+      "id": "app-rds",
+      "from": "app",
+      "to": "rds",
+      "label": "SQL",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "app-hub",
+      "from": "app",
+      "to": "hub",
+      "label": "queue job",
+      "variant": "emphasis"
+    },
+    {
+      "id": "hub-llm",
+      "from": "hub",
+      "to": "llm",
+      "label": "agent calls",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "right"
+    },
+    {
+      "id": "connector-hub",
+      "from": "connector",
+      "to": "hub",
+      "label": "dials out WSS",
+      "variant": "security"
+    },
+    {
+      "id": "connector-s3",
+      "from": "connector",
+      "to": "s3",
+      "label": "presigned GET / PUT",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "right"
+    },
+    {
+      "id": "connector-runner",
+      "from": "connector",
+      "to": "runner",
+      "label": "run job",
+      "variant": "emphasis"
+    },
+    {
+      "id": "runner-bridge",
+      "from": "runner",
+      "to": "bridge",
+      "label": "HTTP",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "bridge-solidworks",
+      "from": "bridge",
+      "to": "solidworks",
+      "label": "COM",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Handshake",
+      "items": [
+        "Pair once: a one-time code becomes a connector credential",
+        "Connector dials out WSS 443 with mTLS: no inbound port on the Windows PC",
+        "hello: id, version, SolidWorks version, licence OK, capacity 1"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Each job",
+      "items": [
+        "Hub offers a job; connector claims a lease and heartbeats every 15 s",
+        "Inputs and outputs move through S3 presigned URLs",
+        "Progress and agent reasoning stream back on the same socket",
+        "Corrections from the compare-page chat run as edit jobs on the same PC"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Why the runner stays local",
+      "items": [
+        "A build makes hundreds of bridge and COM calls: too slow and fragile across the internet",
+        "Runner, verifier and finish already use COM directly"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "When the PC is offline",
+      "items": [
+        "Jobs wait in the queue; the page shows SolidWorks offline",
+        "Lease expires mid-build: the job is retried, steps are idempotent",
+        "More Windows PCs = more connectors = more capacity"
+      ]
+    }
+  ]
+}
